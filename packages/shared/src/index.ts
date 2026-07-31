@@ -25,3 +25,32 @@ export function routeByConfidence(c: number): "auto" | "suggest" | "inbox" {
   if (c >= SUGGEST_MIN) return "suggest";
   return "inbox";
 }
+
+/** Capture type taxonomy — see 06_FEATURE_SPEC_AI_MEMORY.md §1. */
+export const captureType = z.enum([
+  "ui_screen",
+  "web_page",
+  "chat",
+  "document",
+  "chart",
+  "code",
+  "photo",
+  "other",
+]);
+export type CaptureType = z.infer<typeof captureType>;
+
+/**
+ * The single per-capture AI response contract (06_FEATURE_SPEC_AI_MEMORY.md §1).
+ * Shared so the server route and the client agree on one shape.
+ */
+export const classification = z.object({
+  title: z.string().min(1).max(120),
+  ocr_text: z.string(),
+  summary: z.string().min(1),
+  type: captureType,
+  intent,
+  project_suggestion: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+  why_saved: z.string().max(200),
+});
+export type Classification = z.infer<typeof classification>;

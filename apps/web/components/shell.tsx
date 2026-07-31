@@ -15,6 +15,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [over, setOver] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [palette, setPalette] = useState(false);
+  const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/classify")
+      .then((r) => r.json())
+      .then(setAi)
+      .catch(() => setAi({ configured: false, model: "" }));
+  }, []);
 
   // ⌘K from anywhere — the fastest path from "I remember something" to the capture.
   useEffect(() => {
@@ -93,9 +101,27 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </button>
         )}
 
+        {ai && (
+          <p
+            className="mt-8 px-2 text-[11px] text-muted"
+            title={
+              ai.configured
+                ? `Classifications come from ${ai.model}`
+                : "Set MINIMAX_TEXT_API_KEY in apps/web/.env.local for real classifications"
+            }
+          >
+            <span
+              className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
+                ai.configured ? "bg-accent" : "bg-muted"
+              }`}
+            />
+            {ai.configured ? ai.model : "AI: sample data"}
+          </p>
+        )}
+
         <button
           onClick={() => confirm("Reset demo data?") && void reset()}
-          className="mt-8 px-2 text-[11px] text-muted hover:text-accent"
+          className="mt-2 px-2 text-[11px] text-muted hover:text-accent"
         >
           Reset demo data
         </button>

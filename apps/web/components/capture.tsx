@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
-import { classify } from "@/lib/classify";
+import { classify, fewShotLines } from "@/lib/classify";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
 
 /**
@@ -13,7 +13,7 @@ import { newId, routeConfidence, type Screenshot } from "@/lib/store";
  * app's Tauri window will later render identically.
  */
 export function CaptureLayer() {
-  const { ready, threads, ingest, get } = useStore();
+  const { ready, threads, screenshots, corrections, ingest, get } = useStore();
   const [pending, setPending] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
 
@@ -45,7 +45,11 @@ export function CaptureLayer() {
       });
       setPending((p) => [id, ...p]);
 
-      const result = await classify(dataUrl, threads.map((t) => t.id));
+      const result = await classify(
+        dataUrl,
+        threads,
+        fewShotLines(corrections, screenshots, threads),
+      );
       const band = routeConfidence(result.confidence);
 
       await ingest({
@@ -69,7 +73,7 @@ export function CaptureLayer() {
         archived: false,
       });
     },
-    [ingest, threads],
+    [ingest, threads, screenshots, corrections],
   );
 
   const readFile = useCallback(
