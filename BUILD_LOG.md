@@ -197,6 +197,26 @@ Verified with the owner's exact question — answer: *"there's one mobile UI des
 
 ---
 
+## Loop 10 — Chrome extension
+**Date:** 2026-07-31 · **Phase:** demo track (D11) · **Outcome:** done
+
+`apps/extension/` — MV3: `captureVisibleTab` on hotkey (⌘⇧U) or toolbar popup, POST to `/api/ingest`, desktop notification on success or failure. Chrome-restricted pages (`chrome://`, Web Store) are reported rather than failing silently.
+
+**Bridge:** a service worker cannot write to the app's IndexedDB, so `/api/ingest` holds an in-memory queue (max 20, drain-once) and the open Capso tab polls it. Becomes the real Supabase ingest endpoint in P1.
+
+**Bug caught during verification:** the drain was gated on `document.visibilityState === "visible"`. That is wrong beyond the test harness — capturing from another Chrome tab leaves the Capso tab hidden, so nothing would land until the user switched back. Now polls unconditionally and drains immediately on focus/visibility change.
+
+**Verification**
+- `POST /api/ingest` → `{queued:1}`; `GET` drains once and returns `[]` after; malformed body → 400
+- Posted a real canvas PNG (English + 繁體中文 nav labels) → drained → classified by M3 → appeared top of grid as **"Mobile app navigation drawer mockup"**
+- typecheck + lint clean
+
+**Not verified by me:** loading the unpacked extension in Chrome itself — `chrome://extensions` is out of reach from the in-app browser. Owner must confirm the manifest loads and the hotkey registers.
+
+**Docs:** M10 added to `04_MVP_SCOPE.md`; capture path and its four limits documented in `05_FEATURE_SPEC_CAPTURE.md`; install steps in `apps/extension/README.md`.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

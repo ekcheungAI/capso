@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    width: 260px; margin: 0; padding: 14px;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: Canvas; color: CanvasText;
+  }
+  h1 { font-size: 13px; margin: 0 0 2px; }
+  p { margin: 0; font-size: 11px; opacity: .65; }
+  button {
+    width: 100%; margin-top: 12px; padding: 8px; border: 0; border-radius: 8px;
+    background: #e8683a; color: #fff; font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .last { margin-top: 10px; font-size: 11px; opacity: .65; }
+  .err { color: #c0392b; }
+</style>
+<h1>Capso</h1>
+<p>Captures the visible tab into your memory.</p>
+<button id="go">Capture tab</button>
+<div class="last" id="last"></div>
+<script src="popup.js"></script>

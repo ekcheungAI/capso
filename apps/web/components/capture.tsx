@@ -85,6 +85,44 @@ export function CaptureLayer() {
     [start],
   );
 
+  // Drain anything the Chrome extension queued while this tab was open.
+  useEffect(() => {
+    if (!ready) return;
+    let stop = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/ingest");
+        if (!res.ok) return;
+        const { items } = (await res.json()) as {
+          items: { imageDataUrl: string; pageTitle?: string }[];
+        };
+        for (const item of items) {
+          if (stop) return;
+          await start(item.imageDataUrl, "extension");
+        }
+      } catch {
+        // app runs fine without the extension; a failed poll is not an error
+      }
+    };
+
+    // Poll regardless of visibility: a capture taken from another tab must land
+    // without waiting for the user to come back to Capso. Also drain instantly
+    // when the tab is refocused so the overlay appears the moment you look.
+    const timer = setInterval(poll, 2500);
+    const onVisible = () => void poll();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    void poll();
+
+    return () => {
+      stop = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [ready, start]);
+
   useEffect(() => {
     const onDrop = (e: DragEvent) => {
       const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));

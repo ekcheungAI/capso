@@ -124,3 +124,16 @@ All paths converge on the same pipeline: local file → `screenshots` row (captu
 - Search → `08_FEATURE_SPEC_SEARCH_AND_RETRIEVAL.md`
 - Offline queue implementation, permissions onboarding, notarization → `12_MAC_APP_PLAN.md`
 - Billing/quotas (documented, not built) → pricing doc
+
+
+## Chrome extension capture path (Requirement — D11, added 2026-07-31)
+
+A Manifest V3 extension (`apps/extension/`) captures the **visible browser tab** and posts it to the same ingest pipeline as drag/paste. Hotkey defaults to ⌘⇧U / Ctrl+Shift+U; a toolbar popup offers the same action and shows the last capture.
+
+**Deliberate limits**
+- **Browser tabs only.** `chrome.tabs.captureVisibleTab` cannot see native app windows (Figma desktop, Xcode, Cursor, Simulator). The Mac app remains the only complete capture surface; the extension covers the browsing case with zero macOS permission friction.
+- **Viewport only.** No region crop and no scrolling capture — Chrome returns what is on screen. Region crop is a post-MVP addition inside the extension.
+- **Chrome-restricted pages** (`chrome://`, `edge://`, `about:`, the Web Store) refuse capture by policy. The extension reports this rather than failing silently.
+- **Requires an open Capso tab.** A service worker cannot write to the app's client-side store, so captures queue in memory at `/api/ingest` (max 20) and drain into whichever Capso tab is open. Captures queued with no tab open are lost on server restart. The Mac app's on-disk queue remains the durable path; see `12_MAC_APP_PLAN.md`.
+
+Install and file layout: `apps/extension/README.md`.

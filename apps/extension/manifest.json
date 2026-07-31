@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Capso",
+  "version": "0.1.0",
+  "description": "Capture the current tab into your Capso memory.",
+  "permissions": ["activeTab", "storage", "notifications"],
+  "host_permissions": ["http://localhost:3000/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Capture this tab" },
+  "commands": {
+    "capture-tab": {
+      "suggested_key": { "default": "Ctrl+Shift+U", "mac": "Command+Shift+U" },
+      "description": "Capture the visible tab"
+    }
+  },
+  "icons": { "128": "icons/icon128.png" }
+}
