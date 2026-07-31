@@ -87,6 +87,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Row href="/" label="All captures" />
           <Row href="/search" label="Search" />
           <Row href="/memory" label="Memory" />
+          <Row href="/extension" label="Get extension" />
         </nav>
 
         <p className="mt-6 mb-1 flex items-center gap-2 px-2 text-[11px] uppercase tracking-wide text-muted">

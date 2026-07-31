@@ -60,6 +60,44 @@ function notify(title, message) {
   });
 }
 
+/**
+ * Chrome only auto-updates Web Store extensions, so a self-hosted copy has to
+ * notice on its own. Compare our manifest version against the one the app
+ * publishes and tell the user once per version, not on every startup.
+ */
+async function checkForUpdate() {
+  try {
+    const res = await fetch(`${CAPSO_ORIGIN}/extension-version.json`, { cache: "no-store" });
+    if (!res.ok) return;
+    const { version } = await res.json();
+    const mine = chrome.runtime.getManifest().version;
+    if (!version || version === mine) return;
+    if (compare(version, mine) <= 0) return;
+
+    const { updateNotified } = await chrome.storage.local.get("updateNotified");
+    if (updateNotified === version) return;
+
+    await chrome.storage.local.set({ updateNotified: version });
+    notify(`Capso ${version} available`, `You are on ${mine}. Download it at ${CAPSO_ORIGIN}/extension`);
+  } catch {
+    // app not running — nothing to check against
+  }
+}
+
+/** Numeric semver-ish compare; returns >0 when a is newer than b. */
+function compare(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+chrome.runtime.onStartup.addListener(() => void checkForUpdate());
+chrome.runtime.onInstalled.addListener(() => void checkForUpdate());
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === "capture-tab") void captureActiveTab();
 });

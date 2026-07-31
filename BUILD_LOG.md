@@ -217,6 +217,17 @@ Verified with the owner's exact question — answer: *"there's one mobile UI des
 
 ---
 
+## Loop 11 — Extension distribution
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+`pnpm build:extension` zips `apps/extension` into `apps/web/public/` and writes `extension-version.json`; `/extension` serves the download with version, build time and install steps. Sidebar links to it.
+
+**Update mechanism, honestly.** Chrome auto-updates only Web Store extensions and refuses self-hosted `.crx` outside enterprise policy, so there is no silent update. The background worker fetches the published version on startup and notifies once per version when behind; the popup shows the same nudge; updating is replace-folder + Reload, which preserves the extension ID and hotkey because the path is unchanged. Web Store publishing (real auto-update) needs a US$5 registration and review — **owner decision, STOP rule 4, not taken**.
+
+**Verification:** `/capso-extension.zip` serves 200 (7.4 KB, 6 files, README excluded); `extension-version.json` reports v0.1.0; `/extension` renders. Zip and version file are gitignored as build artefacts.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

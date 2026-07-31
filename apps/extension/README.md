@@ -2,6 +2,10 @@
 
 Captures the **visible browser tab** into your Capso memory. Browser tabs only — native app windows (Figma desktop, Xcode, Cursor, Simulator) still need the Mac app. That limit is the whole reason the extension complements rather than replaces it (decision D11).
 
+## Download
+
+`pnpm build:extension` zips this folder into `apps/web/public/`, then the running app serves it at **`/extension`** with the version, install steps and a download button.
+
 ## Install (unpacked, local only)
 
 1. Start the web app: `pnpm dev:web` — the extension posts to `http://localhost:3000`.
@@ -28,6 +32,12 @@ A service worker cannot write to the web app's IndexedDB, so the extension POSTs
 | `manifest.json` | MV3 manifest: `activeTab`, `storage`, `notifications`, localhost host permission, hotkey command |
 | `background.js` | Service worker: `chrome.tabs.captureVisibleTab` → POST → notification |
 | `popup.html` / `popup.js` | Toolbar popup with a capture button and the last capture |
+
+## Updating
+
+Chrome only auto-updates Web Store extensions and refuses `.crx` files served from a website unless the machine is under enterprise policy. So updates are: download the new zip, replace the contents of the **same folder**, press **Reload** on `chrome://extensions`. Keeping the path stable preserves the extension ID and your hotkey.
+
+The background worker fetches `/extension-version.json` on startup and notifies once per version when your copy is behind. The popup shows the same nudge. That is the closest honest equivalent to auto-update without publishing.
 
 ## Not built yet
 

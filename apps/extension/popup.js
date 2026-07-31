@@ -21,3 +21,17 @@ go.addEventListener("click", async () => {
     last.className = "last err";
   }
 });
+
+// Nudge toward the download page when the hosted build is newer.
+fetch("http://localhost:3000/extension-version.json", { cache: "no-store" })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((info) => {
+    if (!info) return;
+    const mine = chrome.runtime.getManifest().version;
+    if (info.version !== mine) {
+      last.innerHTML =
+        'Update available: v' + info.version +
+        ' — <a href="http://localhost:3000/extension" target="_blank">download</a>';
+    }
+  })
+  .catch(() => {});

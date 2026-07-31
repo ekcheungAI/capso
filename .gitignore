@@ -12,6 +12,10 @@ apps/mac/src-tauri/target/
 .env.local
 .env.*.local
 
+# generated extension build
+apps/web/public/capso-extension.zip
+apps/web/public/extension-version.json
+
 # tooling
 .DS_Store
 *.log
