@@ -169,6 +169,17 @@ Rejected: page-transition animation between routes (frequent, keyboard-driven, w
 
 ---
 
+## Loop 08 — Spec conflicts closed; build ready for design review
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+All four cross-doc conflicts found during exploration are now resolved in the owning docs: overlay position (05 → bottom-right, F1 wins), `why_saved` editability (06 → editable, D14), `screenshots.archived` (10), and the `captures`/`screenshots` table-name split normalised to `screenshots` across 04/05/06/07/08/19 with storage buckets aligned to `originals`/`thumbs` per 14.
+
+**Verification:** `pnpm --filter web build` green — 9 routes (5 static, 4 dynamic: both API routes, `/s/[id]`, `/threads/[id]`). Typecheck and lint clean.
+
+**Paused here for owner design review before starting the Chrome extension.**
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 
