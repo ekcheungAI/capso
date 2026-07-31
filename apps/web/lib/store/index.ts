@@ -150,3 +150,15 @@ export function routeConfidence(c: number): "auto" | "suggest" | "inbox" {
   if (c >= 0.5) return "suggest";
   return "inbox";
 }
+
+/** Archiving keeps the record but drops it out of the library, search and centroids. */
+export async function setArchived(s: Screenshot, archived: boolean) {
+  const next = { ...s, archived };
+  await idb.put("screenshots", next);
+  return next;
+}
+
+/** "Forget this" — removing a correction removes it from the few-shot window. */
+export async function forgetCorrection(id: string) {
+  await idb.del("corrections", id);
+}

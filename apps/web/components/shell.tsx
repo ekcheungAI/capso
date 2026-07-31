@@ -45,6 +45,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Row href="/inbox" label="Inbox" badge={ready ? inbox.length : undefined} />
           <Row href="/" label="All captures" />
           <Row href="/search" label="Search" />
+          <Row href="/memory" label="Memory" />
         </nav>
 
         <p className="mt-6 mb-1 px-2 text-[11px] uppercase tracking-wide text-muted">Projects</p>

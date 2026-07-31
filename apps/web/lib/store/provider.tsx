@@ -25,6 +25,8 @@ type Api = State & {
   remove: (s: Screenshot) => Promise<void>;
   visit: (id: string, kind: Revisit["kind"]) => Promise<void>;
   ingest: (s: Screenshot) => Promise<void>;
+  archive: (s: Screenshot, archived: boolean) => Promise<void>;
+  forget: (correctionId: string) => Promise<void>;
   reset: () => Promise<void>;
 };
 
@@ -97,6 +99,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       async ingest(shot) {
         await store.putScreenshot(shot);
         upsert(shot);
+      },
+      async archive(shot, archived) {
+        const next = await store.setArchived(shot, archived);
+        upsert(next);
+      },
+      async forget(correctionId) {
+        await store.forgetCorrection(correctionId);
+        setS((p) => ({ ...p, corrections: p.corrections.filter((c) => c.id !== correctionId) }));
       },
       async reset() {
         const data = await store.resetAll();
