@@ -110,6 +110,23 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           />
         </button>
 
+        {/* Filmstrip of neighbours (Apple Photos / Faire) — position in the set is
+            visible, and moving is one click instead of a blind arrow press. */}
+        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+          {ordered.slice(Math.max(0, idx - 4), idx + 5).map((n) => (
+            <Link
+              key={n.id}
+              href={`/s/${n.id}`}
+              className={`w-14 shrink-0 overflow-hidden rounded-md border transition-[border-color,opacity] duration-[120ms] ${
+                n.id === s.id ? "border-accent" : "border-line opacity-60 hover:opacity-100"
+              }`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
+              <img src={imageFor(n)} alt="" className="h-10 w-full object-cover object-top" />
+            </Link>
+          ))}
+        </div>
+
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={() => {

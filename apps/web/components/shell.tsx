@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store/provider";
 import { CaptureLayer } from "@/components/capture";
 import { CommandPalette } from "@/components/palette";
+import { useToast } from "@/components/toast";
 
 /**
  * Sidebar: Inbox pinned above projects, no folder tree. Project rows are drop
@@ -15,6 +16,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [over, setOver] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [palette, setPalette] = useState(false);
+  const toast = useToast();
   const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
 
   useEffect(() => {
@@ -38,7 +40,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   const drop = async (threadId: string, id: string) => {
     const s = get(id);
-    if (s) await assign(s, threadId, "manual");
+    if (s) {
+      const previous = s.threadId;
+      await assign(s, threadId, "manual");
+      toast(`Moved to ${threads.find((t) => t.id === threadId)?.name ?? "Inbox"}`, () =>
+        void assign(s, previous, "manual"),
+      );
+    }
     setOver(null);
   };
 

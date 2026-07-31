@@ -141,6 +141,34 @@ Key applied to `apps/web/.env.local` (gitignored, chmod 600; `git check-ignore` 
 
 ---
 
+## Loop 07 — Motion pass + Photos-app patterns + persona walkthrough
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+**Motion audit (skill `optimize-ui-motion`).** `scripts/audit-motion.sh` returned zero candidates in every category — because there was essentially no motion, including **no reduced-motion coverage**. Findings and fixes:
+
+| Finding | Fix |
+|---|---|
+| Card used Tailwind's bare `transition` (animates every property) | Scoped to `transition-[box-shadow,transform]`, 120ms, + 2px hover lift |
+| Overlay appeared instantly with no spatial origin | Anchored entrance from the Capture button: 12/16px travel + `scale(.96)`, 220ms `--ease-out-strong` |
+| Chip state change (loading→suggestion) swapped with no transition | Keyed crossfade, 160ms |
+| ⌘K palette had no entrance | Opacity + `scale(.98)` only, 160ms — **no travel**, because standards put keyboard-driven surfaces at "instant action" |
+| `ready === false` rendered the text "Loading…" | `SkeletonGrid` preserving masonry shape with a 1.6s shimmer |
+| Filing was silent | Toast with **Undo** on inbox triage and drag-to-file |
+| No `prefers-reduced-motion` | Global guard added |
+
+Rejected: page-transition animation between routes (frequent, keyboard-driven, would add latency to every navigation) and any card entrance stagger (the grid is re-rendered on every filter change; staggering would make filtering feel slower).
+
+**Photos-app patterns** ([Apple Photos](https://mobbin.com/screens/9368ed10-5916-4de5-846c-175a5301923c), [Google Photos](https://mobbin.com/screens/28fa6013-5b82-4b74-8199-bfdb14d1a0e8), [Faire](https://mobbin.com/screens/3701c325-f3d6-49fd-a3ac-9bd0bbd5c70d)): detail view gains a **filmstrip of neighbouring captures**, current one outlined, neighbours dimmed — position in the set is visible and moving is one click instead of a blind arrow press.
+
+**Persona walkthroughs**
+- *Solo founder, keyboard triage*: ⏎ filed the top capture, toast offered Undo, inbox and sidebar counts updated live. No friction.
+- *Designer scanning references*: filmstrip + prev/next + editable `why_saved` all reachable without returning to the grid.
+- *Growth operator*: covered by the ⌘K palette and `/memory` verified in loops 04–05.
+
+**Also fixed:** the Inbox "Try again" button still alerted "wired up in Loop C" after Loop C shipped. It now re-runs classification for real and reports whether the re-read used MiniMax M3 or sample data.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

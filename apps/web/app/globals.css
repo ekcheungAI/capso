@@ -33,3 +33,85 @@ body {
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
 }
+
+/* ---- Motion tokens ----------------------------------------------------
+   Entrances use ease-out-strong; state morphs use ease-in-out. Durations stay
+   under 250ms because every surface here is repeated daily. */
+:root {
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 120ms;
+  --dur-pop: 160ms;
+  --dur-panel: 220ms;
+}
+
+/* Overlay is anchored to the Capture button (bottom-right), so it arrives from
+   there rather than fading in place. */
+@keyframes capso-overlay-in {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 16px, 0) scale(0.96);
+  }
+}
+.capso-overlay {
+  animation: capso-overlay-in var(--dur-panel) var(--ease-out-strong);
+}
+
+/* ⌘K is keyboard-driven and hit many times a day: no travel, just a fast
+   settle so it never feels like it is catching up with the user. */
+@keyframes capso-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+.capso-pop {
+  animation: capso-pop-in var(--dur-pop) var(--ease-out-strong);
+}
+
+@keyframes capso-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.capso-fade {
+  animation: capso-fade-in var(--dur-pop) ease-out;
+}
+
+/* Skeletons: a slow sweep reads as "working", not as a spinner. */
+@keyframes capso-shimmer {
+  to {
+    background-position-x: -200%;
+  }
+}
+.capso-skeleton {
+  background: linear-gradient(
+      90deg,
+      var(--surface) 0%,
+      color-mix(in srgb, var(--foreground) 6%, var(--surface)) 50%,
+      var(--surface) 100%
+    )
+    0 0 / 200% 100%;
+  animation: capso-shimmer 1.6s linear infinite;
+}
+
+@keyframes capso-toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+}
+.capso-toast {
+  animation: capso-toast-in var(--dur-pop) var(--ease-out-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -133,7 +133,7 @@ export function CaptureLayer() {
       </button>
 
       {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+        <div className="capso-fade pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm">
           <p className="rounded-xl border-2 border-dashed border-accent px-8 py-6 text-sm">
             Drop to capture
           </p>
@@ -185,12 +185,12 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
     <div
       onMouseEnter={() => (hovering.current = true)}
       onMouseLeave={() => (hovering.current = false)}
-      className="w-64 overflow-hidden rounded-xl bg-surface shadow-xl ring-1 ring-line"
+      className="capso-overlay w-64 overflow-hidden rounded-xl bg-surface shadow-xl ring-1 ring-line"
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
       <img src={s.imageDataUrl ?? ""} alt="" className="h-28 w-full object-cover object-top" />
 
-      <div className="space-y-2 p-3">
+      <div key={state} className="capso-fade space-y-2 p-3">
         {state === "loading" && (
           <p className="animate-pulse text-[11px] text-muted">Analysing…</p>
         )}

@@ -4,13 +4,27 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { ConfidenceBar, EmptyState, IntentChip, Thumb } from "@/components/ui";
+import { useToast } from "@/components/toast";
+import { classify, fewShotLines } from "@/lib/classify";
 
 /**
  * Inbox triage — keyboard-first per 07: j/k navigate, ⏎ accepts the suggestion,
  * number keys pick a project. Three verbs only (Notion Mail): Confirm / Try again / Ignore.
  */
 export default function InboxPage() {
-  const { ready, inbox, threads, threadName, assign } = useStore();
+  const { ready, inbox, threads, threadName, assign, ingest, screenshots, corrections } = useStore();
+  const [rerunning, setRerunning] = useState<string | null>(null);
+  const toast = useToast();
+
+  // Filing is one click, so it needs a receipt and a way back.
+  const file = useCallback(
+    async (s: (typeof inbox)[number], threadId: string | null) => {
+      const previous = s.threadId;
+      await assign(s, threadId, "inbox_triage");
+      toast(`Filed to ${threadName(threadId)}`, () => void assign(s, previous, "manual"));
+    },
+    [assign, toast, threadName],
+  );
   const [cursor, setCursor] = useState(0);
 
   const current = inbox[Math.min(cursor, inbox.length - 1)];
@@ -24,14 +38,14 @@ export default function InboxPage() {
       if (e.key === "j") setCursor((c) => Math.min(c + 1, inbox.length - 1));
       if (e.key === "k") setCursor((c) => Math.max(c - 1, 0));
       if (e.key === "Enter" && current.suggestedThreadId) {
-        void assign(current, current.suggestedThreadId, "inbox_triage");
+        void file(current, current.suggestedThreadId);
       }
       const n = Number(e.key);
       if (n >= 1 && n <= threads.length) {
-        void assign(current, threads[n - 1]!.id, "inbox_triage");
+        void file(current, threads[n - 1]!.id);
       }
     },
-    [current, inbox.length, threads, assign],
+    [current, inbox.length, threads, file],
   );
 
   useEffect(() => {
@@ -91,7 +105,7 @@ export default function InboxPage() {
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => void assign(s, s.suggestedThreadId, "inbox_triage")}
+                  onClick={() => void file(s, s.suggestedThreadId)}
                   className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white"
                 >
                   Confirm
@@ -99,7 +113,7 @@ export default function InboxPage() {
 
                 <select
                   defaultValue=""
-                  onChange={(e) => e.target.value && void assign(s, e.target.value, "inbox_triage")}
+                  onChange={(e) => e.target.value && void file(s, e.target.value)}
                   className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
                 >
                   <option value="" disabled>
@@ -113,10 +127,35 @@ export default function InboxPage() {
                 </select>
 
                 <button
-                  onClick={() => alert("Reclassify runs a fresh AI pass — wired up in Loop C.")}
-                  className="rounded-md border border-line px-3 py-1.5 text-xs"
+                  disabled={rerunning === s.id}
+                  onClick={async () => {
+                    if (!s.imageDataUrl) {
+                      toast("Sample captures have no image to re-read.");
+                      return;
+                    }
+                    setRerunning(s.id);
+                    const r = await classify(
+                      s.imageDataUrl,
+                      threads,
+                      fewShotLines(corrections, screenshots, threads),
+                    );
+                    await ingest({
+                      ...s,
+                      title: r.title,
+                      summary: r.summary,
+                      whySaved: r.whySaved,
+                      ocrText: r.ocrText,
+                      intent: r.intent,
+                      type: r.type,
+                      confidence: r.confidence,
+                      suggestedThreadId: r.projectSuggestion,
+                    });
+                    setRerunning(null);
+                    toast(r.simulated ? "Re-read with sample data" : "Re-read with MiniMax M3");
+                  }}
+                  className="rounded-md border border-line px-3 py-1.5 text-xs disabled:opacity-40"
                 >
-                  Try again
+                  {rerunning === s.id ? "Reading…" : "Try again"}
                 </button>
                 <span className="text-[11px] text-muted">Ignoring leaves it here</span>
               </div>

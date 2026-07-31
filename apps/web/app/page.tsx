@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Intent, Screenshot } from "@/lib/store";
-import { EmptyState, INTENT_LABEL, INTENTS, Masonry } from "@/components/ui";
+import { EmptyState, INTENT_LABEL, INTENTS, Masonry, SkeletonGrid } from "@/components/ui";
 
 type DateRange = "all" | "7d" | "30d" | "90d";
 
@@ -34,7 +34,7 @@ export default function LibraryPage() {
     [filed, intent, project, range],
   );
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
   if (filed.length === 0)
     return (
       <EmptyState

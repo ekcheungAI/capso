@@ -65,12 +65,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[12vh] backdrop-blur-sm"
+      className="capso-fade fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[12vh] backdrop-blur-sm"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-line"
+        className="capso-pop w-full max-w-xl overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-line"
       >
         <input
           autoFocus

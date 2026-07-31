@@ -77,7 +77,7 @@ export function ScreenshotCard({
     <div
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/capso-id", s.id)}
-      className={`group relative mb-4 break-inside-avoid rounded-xl bg-surface p-2 ring-1 transition ${
+      className={`group relative mb-4 break-inside-avoid rounded-xl bg-surface p-2 ring-1 transition-[box-shadow,transform] duration-[120ms] ease-out hover:-translate-y-0.5 ${
         selected ? "ring-2 ring-accent" : "ring-line hover:ring-accent/60"
       }`}
     >
@@ -142,6 +142,24 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
       <p className="text-sm font-medium">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted">{body}</p>
       <p className="mt-4 text-xs text-accent">{action}</p>
+    </div>
+  );
+}
+
+/** Loading placeholder that keeps the grid's shape instead of collapsing to text. */
+export function SkeletonGrid({ count = 8 }: { count?: number }) {
+  const heights = [180, 260, 210, 300, 190, 240, 280, 200];
+  return (
+    <div className="columns-2 gap-4 lg:columns-3 xl:columns-4" aria-busy="true" aria-label="Loading captures">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="mb-4 break-inside-avoid rounded-xl bg-surface p-2 ring-1 ring-line">
+          <div
+            className="capso-skeleton rounded-lg"
+            style={{ height: heights[i % heights.length] }}
+          />
+          <div className="capso-skeleton mt-2 h-3 w-2/3 rounded" />
+        </div>
+      ))}
     </div>
   );
 }
