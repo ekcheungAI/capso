@@ -79,10 +79,18 @@ Before Loop 1, the owner should: (a) confirm or replace the "Capso" name (non-bl
 
 ## 8. Status ledger (update after every loop)
 
+**Current status (2026-07-31):** P0 in progress, loops 01–02 done, **blocked on owner** for the remaining P0 tasks.
+
+Known blockers (all STOP-rule items from [20_AGENT_LOOP_INSTRUCTIONS.md](20_AGENT_LOOP_INSTRUCTIONS.md) §7):
+1. **Supabase project** — org `vibemarketing99's Org` already runs 4 active projects; a 5th likely adds recurring compute cost (rules 3 + 4). Blocks auth, schema, all of P1.
+2. **GitHub remote + Vercel** — external accounts/pushes (rules 3 + 6). Blocks CI and web deploy.
+3. **Screen Recording permission for the build shell** — `screencapture` is blocked from the agent shell, so tray/overlay pixel QA can't run. Same permission surface P2 capture depends on.
+4. **Next.js version** — scaffold installed 16.2.12; pack docs say 15. Accept 16 (and update version strings) or pin to 15.
+
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | ⬜ not started | — |
+| P0 Foundation | 🟡 in progress | loop 01 scaffold ✅, loop 02 tray shell ✅; auth/CI/deploy blocked on owner |
 | P1 Core backend | ⬜ not started | — |
 | P2 Screenshot ingestion | ⬜ not started | riskiest (macOS permissions) — surface early |
 | P3 OCR/classification | ⬜ not started | needs embedding-provider decision |

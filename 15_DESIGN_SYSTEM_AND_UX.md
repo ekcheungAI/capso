@@ -111,3 +111,44 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 | Shadow | one level only, low-spread, for overlay + hover cards |
 
 Rule of use: tokens are the vocabulary; principles above are the grammar. When a build decision conflicts with a token, keep the principle, change the token.
+
+## Reference board (Mobbin, sourced 2026-07-31)
+
+Requirement: before building any surface listed here, open its references and match the *mechanic*, not the skin. Each row names exactly what to take — and, where it matters, what to leave.
+
+### Library / Inbox grid — `apps/web` home
+
+| Reference | Take | Leave |
+|---|---|---|
+| [mymind](https://mobbin.com/screens/c539be44-c979-481c-942a-99d5aaa02a92) | Search is the hero: an oversized ghost input ("Search my mind…") sits where a page title would, and there is no folder tree at all. Masonry with mixed card heights. Tag editing happens in a small inline popover **on the card**, never on a separate edit page. | Their tag-entry affordance is manual filing; ours is confirm-a-suggestion |
+| [Fabric](https://mobbin.com/screens/afa559f5-1faa-40ea-8a91-cd1e2ed00fb9) | Filter row of plain dropdowns above the grid (`Any kind ▾ / Any tag ▾ / Any creator ▾`) → ours becomes `Any intent ▾ / Any project ▾ / Any date ▾`. Date-group headers between rows. Floating pill toolbar bottom-center for the primary actions. | Multi-type kind filter (screenshots only in v1) |
+| [Savee](https://mobbin.com/screens/11d32646-9294-4f5d-bbe1-e5bcad09bda3) | Dark moodboard density: image-first, zero captions until hover, tight gutters. This is the dark-mode target for the grid. | Follower/social counts |
+
+### Inbox triage — the confirm/correct moment
+
+| Reference | Take |
+|---|---|
+| [Notion Mail](https://mobbin.com/screens/c76eb3bd-f70d-4235-baf4-f24c06421205) | The AI action menu is exactly three verbs — **Accept / Discard / Try again**. Adopt this vocabulary for the overlay chip and Inbox rows: Confirm / Ignore / Reclassify. "Try again" is the cheap escape hatch that stops a wrong suggestion from feeling like a dead end. |
+| [Cohere Classify](https://mobbin.com/screens/826e308b-d76d-456f-85dc-38b590ea82ec) | Confidence rendered as a small bar + percentage next to each label. Use in Inbox only, to explain *why* an item landed there (<0.5). Never show confidence on a high-confidence auto-assign — it invites second-guessing. |
+| [Asana Inbox](https://mobbin.com/screens/97d38ac9-183b-4602-a52c-eeaa774a5e6a) | A dismissible summary card pinned above the list with its own timeframe selector — the correct home for the weekly digest when it ships (post-MVP), rather than a separate page. |
+
+### Thread view + chat
+
+| Reference | Take |
+|---|---|
+| [Mistral Le Chat](https://mobbin.com/screens/181ce284-3dcd-4d44-bb1f-368d2e5db997) | Sidebar with a **Projects** section sitting above loose **Chats** — validates our ProjectThread-as-nav model and the Inbox-on-top ordering. |
+| [ChatGPT](https://mobbin.com/screens/73833b79-1dd5-4354-8fc4-a2e99c33a75e) | Right-hand rail toggling `Activity | N Sources`, plus inline citation chips inside the answer text. This is how we satisfy the "answer names which screenshots it used" requirement (AC-CHAT-02) without cluttering the prose: chips inline, full list in the rail. |
+| [Perplexity](https://mobbin.com/screens/255cd6bc-8136-4a3b-962e-34834e7caede) | Progressive status lines while retrieval runs ("Searching seminal patents…"). Ours: "Searching your memory… 3 screenshots found" while `search_memory` executes — turns latency into visible work. |
+| [Google Gemini](https://mobbin.com/screens/bcc65f48-0e66-49d4-b648-0566d26b6c56) | Collapsible "Show thinking" trace with source pills. Use collapsed-by-default for the retrieval trace; calm surface stays calm, debuggability stays available. |
+| [ClickUp Brain](https://mobbin.com/screens/8af1437b-71a4-4b50-b7e1-3964b5d19dab) | Fresh-image chat pattern: the image renders as its own bubble and the assistant opens with a description of what it sees, then offers next actions. This is precisely the overlay "Ask AI" entry point (UC1, UX-bug debugging). |
+| [Front](https://mobbin.com/screens/a25fd5f3-a74a-4abc-b5f5-11b38cb684fa) | Three-pane layout — list ‖ conversation ‖ context rail — as the thread-view skeleton at desktop widths. |
+
+### Search results
+
+| Reference | Take |
+|---|---|
+| [Air](https://mobbin.com/screens/5715ed4a-aa84-452b-8883-8ecb9a330731) | Filter chip row directly above the results grid plus a plain result count ("16 ASSETS"). Saved searches live in the sidebar — note as post-MVP, not built. |
+| [GoFundMe](https://mobbin.com/screens/ef3070ca-c46f-4859-ab97-0fa76c448552) · [Unity](https://mobbin.com/screens/d009669f-31a0-46ce-b29d-b44645c4a924) | Applied filters echo back as removable pills (`Past 30 days ×`) with a single `Reset`. Required for our date-extraction feature: when the query "pricing page saved in March" auto-applies a date filter, the pill is what makes that visible and reversible. |
+| [Pinterest](https://mobbin.com/screens/8f7e7e74-7eb0-4d17-b68d-6d9c7159cf31) | Horizontally scrollable chip row under the search field for one-tap refinement → our seven intents. |
+
+**Anti-pattern noted across references:** every one of these tools eventually grows a filter drawer with a dozen facets. Capso ships three filters (intent, project, date) and adds a fourth only when a real query fails without it — see the tripwire table in `04_MVP_SCOPE.md`.

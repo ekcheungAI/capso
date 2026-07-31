@@ -41,10 +41,11 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 **Entry criteria:** Pack docs approved; Supabase + Vercel accounts confirmed by owner.
 
 **Tasks:**
-- [ ] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas)
-- [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed
-- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint
-- [ ] Tauri menu-bar app boots with tray icon + empty popover window
+- [x] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas) <!-- loop 01; Next 16.2.12 shipped by create-next-app, see BUILD_LOG deviation -->
+- [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed <!-- partial: .env.example done (loop 01); project creation BLOCKED on owner, STOP rules 3+4 -->
+- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- blocked by Supabase project -->
+- [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
+
 - [ ] Vercel deploy of `apps/web` (empty shell with sign-in)
 - [ ] CI: GitHub Actions running `pnpm typecheck`, `pnpm lint`, `pnpm test` on push
 - [ ] Sentry + PostHog SDK initialized in both apps (keys via env, no events beyond init yet)
