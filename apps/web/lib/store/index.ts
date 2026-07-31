@@ -1,6 +1,6 @@
 import { idb } from "./db";
 import { seedScreenshots, seedThreads } from "./seed";
-import type { Correction, Revisit, Screenshot, Thread } from "./types";
+import type { Correction, Message, Revisit, Screenshot, Thread } from "./types";
 
 export * from "./types";
 export { placeholder } from "./placeholder";
@@ -23,12 +23,13 @@ export async function loadAll() {
     screenshots = seedScreenshots;
   }
 
-  const [corrections, revisits] = await Promise.all([
+  const [corrections, revisits, messages] = await Promise.all([
     idb.all<Correction>("corrections"),
     idb.all<Revisit>("revisits"),
+    idb.all<Message>("messages"),
   ]);
 
-  return { threads, screenshots, corrections, revisits };
+  return { threads, screenshots, corrections, revisits, messages };
 }
 
 export async function resetAll() {
@@ -37,6 +38,7 @@ export async function resetAll() {
     idb.clear("screenshots"),
     idb.clear("corrections"),
     idb.clear("revisits"),
+    idb.clear("messages"),
   ]);
   return loadAll();
 }
@@ -161,4 +163,10 @@ export async function setArchived(s: Screenshot, archived: boolean) {
 /** "Forget this" — removing a correction removes it from the few-shot window. */
 export async function forgetCorrection(id: string) {
   await idb.del("corrections", id);
+}
+
+export async function addMessage(m: Omit<Message, "id" | "createdAt">): Promise<Message> {
+  const msg: Message = { ...m, id: uid(), createdAt: new Date().toISOString() };
+  await idb.put("messages", msg);
+  return msg;
 }

@@ -110,6 +110,17 @@ Owner's verdict on the static demo: "I don't see and feel much demo experience �
 
 ---
 
+## Loop 05 — Thread chat with retrieval and citations
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+`messages` store added (IndexedDB v2), `POST /api/chat` calling M3 with a system prompt that forbids inventing captures and requires `[id]` citations. Citations are filtered server-side against the ids actually supplied, so the model cannot cite something it was never given. The thread page now has a real composer, persisted turns, citation chips resolving to the capture, and a sources rail that switches from "in this project" to "sources" once an answer cites.
+
+**Deviation (deliberate):** retrieval runs client-side — the demo store is local IndexedDB, so the scope (this project's captures + keyword matches elsewhere) is assembled in the browser and passed as context. `specs/api_contracts.md` specifies a model-invoked `search_memory` tool; that arrives when data moves to Supabase in P1.
+
+**Verification:** typecheck/lint clean; asked "What do these pricing pages have in common?" in Pricing page redesign — turn persisted, and without a key the UI states exactly what to set rather than failing silently.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

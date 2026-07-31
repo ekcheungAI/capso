@@ -72,3 +72,13 @@ export type Revisit = {
   kind: "opened_detail" | "referenced_in_chat" | "copied" | "search_clicked";
   createdAt: string;
 };
+
+/** Chat turns, scoped to a thread. `citedIds` is what the answer claims to have read. */
+export type Message = {
+  id: string;
+  threadId: string;
+  role: "user" | "assistant";
+  text: string;
+  citedIds: string[];
+  createdAt: string;
+};

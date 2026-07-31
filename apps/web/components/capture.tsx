@@ -257,6 +257,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
           <div className="flex items-center gap-2 border-t border-line pt-2 text-[11px] text-muted">
             <button
               onClick={() => router.push(`/threads/${s.threadId ?? s.suggestedThreadId ?? "inbox"}`)}
+              title="Open this project's chat"
               className="hover:text-accent"
             >
               Ask AI

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as store from "./index";
-import type { Correction, Revisit, Screenshot, Thread } from "./types";
+import type { Correction, Message, Revisit, Screenshot, Thread } from "./types";
 
 type State = {
   ready: boolean;
@@ -10,6 +10,7 @@ type State = {
   screenshots: Screenshot[];
   corrections: Correction[];
   revisits: Revisit[];
+  messages: Message[];
 };
 
 type Api = State & {
@@ -27,6 +28,8 @@ type Api = State & {
   ingest: (s: Screenshot) => Promise<void>;
   archive: (s: Screenshot, archived: boolean) => Promise<void>;
   forget: (correctionId: string) => Promise<void>;
+  say: (m: Omit<Message, "id" | "createdAt">) => Promise<Message>;
+  threadMessages: (threadId: string) => Message[];
   reset: () => Promise<void>;
 };
 
@@ -39,6 +42,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     screenshots: [],
     corrections: [],
     revisits: [],
+    messages: [],
   });
 
   useEffect(() => {
@@ -108,6 +112,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         await store.forgetCorrection(correctionId);
         setS((p) => ({ ...p, corrections: p.corrections.filter((c) => c.id !== correctionId) }));
       },
+      async say(m) {
+        const msg = await store.addMessage(m);
+        setS((p) => ({ ...p, messages: [...p.messages, msg] }));
+        return msg;
+      },
+      threadMessages: (threadId) =>
+        s.messages
+          .filter((m) => m.threadId === threadId)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
       async reset() {
         const data = await store.resetAll();
         setS({ ready: true, ...data });

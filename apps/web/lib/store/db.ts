@@ -5,9 +5,9 @@
  */
 
 const DB_NAME = "capso";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-export const STORES = ["screenshots", "threads", "corrections", "revisits"] as const;
+export const STORES = ["screenshots", "threads", "corrections", "revisits", "messages"] as const;
 export type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
