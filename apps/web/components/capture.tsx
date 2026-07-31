@@ -284,16 +284,50 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
   );
 }
 
-/** A tiny fake "screen" so the Capture button works with nothing to drag. */
+/**
+ * A fake "screen" for the Capture button. Rendered to PNG via canvas, not SVG:
+ * the classify route only accepts base64 raster data, so an SVG sample would
+ * silently fall back to simulated output and hide whether the model works.
+ */
 function sampleCapture() {
+  const c = document.createElement("canvas");
+  c.width = 900;
+  c.height = 560;
+  const x = c.getContext("2d");
+  if (!x) return "";
+
   const hue = Math.floor(Math.random() * 360);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400">
-    <rect width="640" height="400" fill="hsl(${hue} 30% 95%)"/>
-    <rect width="640" height="52" fill="hsl(${hue} 36% 88%)"/>
-    <rect x="40" y="110" width="380" height="22" rx="11" fill="hsl(${hue} 24% 64%)"/>
-    <rect x="40" y="150" width="300" height="14" rx="7" fill="hsl(${hue} 20% 72%)"/>
-    <rect x="40" y="200" width="220" height="14" rx="7" fill="hsl(${hue} 20% 72%)"/>
-    <rect x="440" y="300" width="150" height="44" rx="22" fill="hsl(${hue} 55% 58%)"/>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  x.fillStyle = "#ffffff";
+  x.fillRect(0, 0, 900, 560);
+  x.fillStyle = `hsl(${hue} 40% 92%)`;
+  x.fillRect(0, 0, 900, 76);
+
+  x.fillStyle = "#141412";
+  x.font = "bold 30px -apple-system, sans-serif";
+  x.fillText(SAMPLES[0]!.heading, 56, 150);
+
+  x.font = "20px -apple-system, sans-serif";
+  x.fillStyle = "#44443f";
+  SAMPLES[0]!.lines.forEach((line, i) => x.fillText(line, 56, 210 + i * 42));
+
+  x.fillStyle = `hsl(${hue} 55% 55%)`;
+  x.fillRect(56, 430, 210, 52);
+  x.fillStyle = "#ffffff";
+  x.font = "18px -apple-system, sans-serif";
+  x.fillText(SAMPLES[0]!.cta, 84, 463);
+
+  return c.toDataURL("image/png");
 }
+
+const SAMPLES = [
+  {
+    heading: "Onboarding checklist",
+    lines: [
+      "1. Connect your account",
+      "2. Import your first data",
+      "3. Invite a teammate   完成率 68%",
+      "Skip for now",
+    ],
+    cta: "繼續設定",
+  },
+];

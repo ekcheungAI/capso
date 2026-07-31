@@ -121,6 +121,26 @@ Owner's verdict on the static demo: "I don't see and feel much demo experience �
 
 ---
 
+## Loop 06 — MiniMax M3 live
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+Key applied to `apps/web/.env.local` (gitignored, chmod 600; `git check-ignore` confirmed).
+
+**Open assumption resolved: the coding-plan key DOES accept base64 image blocks** on `/anthropic/v1/messages`. No fallback to the OpenAI-compatible path needed.
+
+**Classification** — canvas PNG (English + 繁體中文), 200 in 3.9s:
+- OCR verbatim and correct, including `最受歡迎`, `年繳可省 20%`, `開始免費試用`
+- `project_suggestion: "Pricing page redesign"`, `confidence: 0.92` → auto-assign band
+- Latency inside the <5s p50 target from `21_ACCEPTANCE_CRITERIA.md`
+
+**Chat** — asked "Which of these mentions an annual discount, and what percent?" in Pricing page redesign. Answer quoted "Billed annually · Save 20%" from OCR, cited 5 captures, and correctly stated which captures do *not* mention it rather than inventing. Cross-project retrieval pulled in matches from outside the project.
+
+**Fixed:** the Capture button generated SVG, which the route rejects, so it silently fell back to simulated output — exactly the failure that would hide a broken model. Now renders a canvas PNG.
+
+**Note:** the key has appeared twice in the session transcript. Rotate after testing.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 
