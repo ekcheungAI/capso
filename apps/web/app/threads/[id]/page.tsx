@@ -1,28 +1,24 @@
-import { byThread, threadName } from "@/lib/mock";
+"use client";
+
+import { use } from "react";
+import Link from "next/link";
+import { useStore } from "@/lib/store/provider";
 import { EmptyState, IntentChip, Thumb } from "@/components/ui";
 
-/**
- * Thread view: transcript ‖ sources rail (Front three-pane, ChatGPT sources panel).
- * Citations appear inline as chips AND in the rail — the answer never claims
- * something without naming which captures it read (AC-CHAT-02).
- */
-export default async function ThreadPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
+export default function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const { ready, byThread, threadName } = useStore();
   const shots = byThread(id);
 
-  if (shots.length === 0) {
+  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (shots.length === 0)
     return (
       <EmptyState
-        title="Nothing in this project yet"
-        body="Captures land here once you confirm the suggestion on the overlay, or move them from the Inbox."
-        action="Capture something with ⌃⇧C"
+        title={`Nothing in ${threadName(id)} yet`}
+        body="Captures land here once you confirm the suggestion, or drag a card onto this project in the sidebar."
+        action="Drop a screenshot anywhere to add one"
       />
     );
-  }
 
   const cited = shots.slice(0, 2);
 
@@ -34,39 +30,43 @@ export default async function ThreadPage({
           <p className="mt-1 text-xs text-muted">{shots.length} captures in this project</p>
         </div>
 
-        {/* Pinned strip of everything the thread knows about */}
         <div className="flex gap-2 overflow-x-auto pb-1">
           {shots.map((s) => (
-            <div key={s.id} className="w-24 shrink-0">
+            <Link key={s.id} href={`/s/${s.id}`} className="w-24 shrink-0">
               <Thumb s={s} />
-            </div>
+            </Link>
           ))}
         </div>
 
         <div className="space-y-4 border-t border-line pt-5">
-          <Bubble side="user">
-            <p>What&apos;s the common pattern across the pricing pages I saved?</p>
-          </Bubble>
+          <div className="flex justify-end">
+            <div className="max-w-xl rounded-xl bg-surface px-4 py-3 text-sm ring-1 ring-line">
+              What&apos;s the common pattern across these?
+            </div>
+          </div>
 
-          <Bubble side="ai">
-            {/* Retrieval status line (Perplexity) — latency made visible */}
+          <div className="max-w-xl text-sm leading-relaxed">
             <p className="mb-2 text-[11px] text-muted">
               Searched your memory · {shots.length} captures read
             </p>
             <p>
-              Two of them put the savings message on the billing toggle itself rather than
-              beneath the price
+              Two of them put the savings message on the billing toggle itself rather than beneath
+              the price
               {cited.map((s) => (
-                <Cite key={s.id} n={s.title} />
+                <Link
+                  key={s.id}
+                  href={`/s/${s.id}`}
+                  className="mx-1 inline-flex items-center rounded border border-line px-1.5 py-0.5 align-middle text-[11px] text-muted hover:border-accent"
+                >
+                  {s.title.split(" — ")[0]}
+                </Link>
               ))}
-              . Both also lead with the middle tier — the annual price is the default state, so
-              the discount reads as the normal price rather than a promotion.
+              . Both also lead with the middle tier.
             </p>
-            <p className="mt-2">
-              The one exception is the changelog capture, which isn&apos;t a pricing page at all —
-              worth moving to another project.
+            <p className="mt-2 text-[11px] text-muted italic">
+              Canned response — real streaming answers arrive in Loop E.
             </p>
-          </Bubble>
+          </div>
         </div>
 
         <div className="rounded-lg border border-line bg-surface px-4 py-3 text-sm text-muted">
@@ -75,16 +75,16 @@ export default async function ThreadPage({
       </div>
 
       <aside className="hidden w-64 shrink-0 lg:block">
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-          Sources · {cited.length}
-        </p>
+        <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">Sources · {cited.length}</p>
         <ul className="space-y-2">
           {cited.map((s) => (
             <li key={s.id} className="rounded-lg bg-surface p-2 ring-1 ring-line">
-              <Thumb s={s} />
+              <Link href={`/s/${s.id}`}>
+                <Thumb s={s} />
+              </Link>
               <p className="mt-1.5 truncate text-[11px] font-medium">{s.title}</p>
               <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted">
-                {s.ocrExcerpt}
+                {s.ocrText.split("\n")[0]}
               </p>
               <div className="mt-1.5">
                 <IntentChip intent={s.intent} />
@@ -96,35 +96,3 @@ export default async function ThreadPage({
     </div>
   );
 }
-
-function Bubble({ side, children }: { side: "user" | "ai"; children: React.ReactNode }) {
-  const user = side === "user";
-  return (
-    <div className={user ? "flex justify-end" : ""}>
-      <div
-        className={`max-w-xl rounded-xl px-4 py-3 text-sm leading-relaxed ${
-          user ? "bg-surface ring-1 ring-line" : ""
-        }`}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Cite({ n }: { n: string }) {
-  const short = n.split(" — ")[0];
-  return (
-    <span className="mx-1 inline-flex items-center rounded border border-line px-1.5 py-0.5 align-middle text-[11px] text-muted">
-      {short}
-    </span>
-  );
-}
-
-export function generateStaticParams() {
-  return ["pricing-redesign", "onboarding-teardown", "capso-bugs", "q3-launch", "inbox"].map(
-    (id) => ({ id }),
-  );
-}
-
-export const dynamicParams = false;

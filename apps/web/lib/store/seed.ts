@@ -1,64 +1,35 @@
-/**
- * Offline demo fixtures. Swapped for Supabase queries in P1–P4 —
- * shapes intentionally mirror 10_DATA_MODEL.md.
- */
+import type { Screenshot, Thread } from "./types";
 
-export type Intent =
-  | "design_inspiration"
-  | "ux_bug"
-  | "competitor"
-  | "marketing_hook"
-  | "content_idea"
-  | "reference"
-  | "other";
+/** First-run fixtures. Real ingests join these; "Reset demo data" restores them. */
 
-export type Screenshot = {
-  id: string;
-  title: string;
-  summary: string;
-  whySaved: string;
-  ocrExcerpt: string;
-  intent: Intent;
-  threadId: string | null;
-  suggestedThreadId?: string;
-  confidence: number;
-  capturedAt: string;
-  aspect: "tall" | "wide" | "square";
-  hue: number;
-};
+export const seedThreads: Thread[] = [
+  { id: "pricing-redesign", name: "Pricing page redesign" },
+  { id: "onboarding-teardown", name: "Onboarding teardown" },
+  { id: "capso-bugs", name: "Capso UI bugs" },
+  { id: "q3-launch", name: "Q3 launch campaign" },
+].map((t) => ({
+  ...t,
+  createdAt: "2026-03-01T00:00:00Z",
+  lastActiveAt: "2026-07-30T00:00:00Z",
+  archived: false,
+}));
 
-export type Thread = {
-  id: string;
-  name: string;
-  screenshotCount: number;
-};
+type SeedInput = Omit<
+  Screenshot,
+  "status" | "assignmentSource" | "source" | "imageDataUrl" | "archived" | "suggestedThreadId"
+> & { suggestedThreadId?: string | null };
 
-export const INTENT_LABEL: Record<Intent, string> = {
-  design_inspiration: "Design inspiration",
-  ux_bug: "UX bug",
-  competitor: "Competitor",
-  marketing_hook: "Marketing hook",
-  content_idea: "Content idea",
-  reference: "Reference",
-  other: "Other",
-};
-
-export const threads: Thread[] = [
-  { id: "pricing-redesign", name: "Pricing page redesign", screenshotCount: 4 },
-  { id: "onboarding-teardown", name: "Onboarding teardown", screenshotCount: 3 },
-  { id: "capso-bugs", name: "Capso UI bugs", screenshotCount: 2 },
-  { id: "q3-launch", name: "Q3 launch campaign", screenshotCount: 2 },
-];
-
-export const screenshots: Screenshot[] = [
+const raw: SeedInput[] = [
   {
     id: "s1",
     title: "Linear — pricing, annual toggle",
     summary:
-      "Three-tier pricing with an annual/monthly toggle that shows savings inline on the toggle itself.",
+      "Three-tier pricing with an annual/monthly toggle that shows the saving inline on the toggle itself.",
     whySaved: "The savings badge sits on the toggle, not under the price — worth stealing.",
-    ocrExcerpt: "Free · Basic $8 /user /month · Business $14 · Save 20% annually",
+    ocrText:
+      "Pricing\nFree — for individuals\nBasic $8 /user /month\nBusiness $14 /user /month\nEnterprise — contact us\nBilled annually · Save 20%\nStart free trial",
     intent: "competitor",
+    type: "web_page",
     threadId: "pricing-redesign",
     confidence: 0.94,
     capturedAt: "2026-03-14T09:12:00Z",
@@ -70,8 +41,9 @@ export const screenshots: Screenshot[] = [
     title: "Stripe — checkout empty state",
     summary: "Empty cart state using a single line of copy and one primary action.",
     whySaved: "Reference for our own empty states — one action, no illustration.",
-    ocrExcerpt: "Nothing here yet. Add your first product to get started.",
+    ocrText: "Nothing here yet.\nAdd your first product to get started.\nAdd product",
     intent: "design_inspiration",
+    type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.88,
     capturedAt: "2026-03-16T14:40:00Z",
@@ -84,8 +56,9 @@ export const screenshots: Screenshot[] = [
     summary:
       "The suggestion chip renders under the window controls at 1280px width on the second display.",
     whySaved: "Reproducible bug — only on the external monitor.",
-    ocrExcerpt: "Project = Pricing page redesign   Confirm   Ignore",
+    ocrText: "Project = Pricing page redesign · Type = web_page\nConfirm   Adjust   Ignore",
     intent: "ux_bug",
+    type: "ui_screen",
     threadId: "capso-bugs",
     confidence: 0.91,
     capturedAt: "2026-07-28T11:02:00Z",
@@ -97,8 +70,9 @@ export const screenshots: Screenshot[] = [
     title: "Notion — AI accept / discard menu",
     summary: "Three-verb AI action menu: Accept, Discard, Try again.",
     whySaved: "Exactly the vocabulary our overlay chip should use.",
-    ocrExcerpt: "Accept   Discard   Try again   Get unlimited AI",
+    ocrText: "Accept\nDiscard\nTry again\nGet unlimited AI",
     intent: "design_inspiration",
+    type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.86,
     capturedAt: "2026-07-21T16:20:00Z",
@@ -110,8 +84,9 @@ export const screenshots: Screenshot[] = [
     title: "Superhuman — onboarding step 3",
     summary: "Keyboard-shortcut teaching screen with a single practice action per step.",
     whySaved: "One concept per screen — the pacing we want for hotkey onboarding.",
-    ocrExcerpt: "Press ⌘K to jump anywhere. Try it now.",
+    ocrText: "Step 3 of 6\nPress ⌘K to jump anywhere.\nTry it now.",
     intent: "reference",
+    type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.79,
     capturedAt: "2026-06-02T08:55:00Z",
@@ -123,8 +98,9 @@ export const screenshots: Screenshot[] = [
     title: "Ad hook — 'stop losing screenshots'",
     summary: "Short-form ad with the pain stated in the first three words.",
     whySaved: "Hook structure for the launch reel.",
-    ocrExcerpt: "You screenshot it. You forget it. Every time.",
+    ocrText: "You screenshot it.\nYou forget it.\nEvery time.",
     intent: "marketing_hook",
+    type: "photo",
     threadId: "q3-launch",
     confidence: 0.83,
     capturedAt: "2026-07-09T19:31:00Z",
@@ -136,8 +112,9 @@ export const screenshots: Screenshot[] = [
     title: "Raycast — command palette",
     summary: "Command palette with inline result grouping and a persistent footer of actions.",
     whySaved: "Footer action bar pattern for our search omnibox.",
-    ocrExcerpt: "Search for apps and commands…  ↵ Open  ⌘K Actions",
+    ocrText: "Search for apps and commands…\nSuggestions\nCommands\n↵ Open   ⌘K Actions",
     intent: "design_inspiration",
+    type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.9,
     capturedAt: "2026-05-11T13:05:00Z",
@@ -149,8 +126,9 @@ export const screenshots: Screenshot[] = [
     title: "Arc — sidebar project grouping",
     summary: "Sidebar splits pinned spaces from loose tabs with a hairline divider.",
     whySaved: "Model for Inbox-above-projects ordering.",
-    ocrExcerpt: "Spaces  ·  Pinned  ·  Today",
+    ocrText: "Spaces\nPinned\nToday",
     intent: "reference",
+    type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.81,
     capturedAt: "2026-04-22T10:14:00Z",
@@ -162,8 +140,9 @@ export const screenshots: Screenshot[] = [
     title: "Thumbnail stretches on retina",
     summary: "Grid thumbnail loses aspect ratio when the source capture is HiDPI.",
     whySaved: "Second display again — likely the same scale-factor bug.",
-    ocrExcerpt: "captured 2026-07-29 · 3024 × 1964",
+    ocrText: "captured 2026-07-29 · 3024 × 1964 · scale 2x",
     intent: "ux_bug",
+    type: "ui_screen",
     threadId: "capso-bugs",
     confidence: 0.87,
     capturedAt: "2026-07-29T15:48:00Z",
@@ -172,25 +151,26 @@ export const screenshots: Screenshot[] = [
   },
   {
     id: "s10",
-    title: "Competitor changelog page",
+    title: "競品 changelog 頁面",
     summary: "Changelog with screenshots per release and a filter by product area.",
     whySaved: "Format reference if we ever ship a public changelog.",
-    ocrExcerpt: "July 2026 — Improved search ranking, faster capture",
+    ocrText: "更新日誌\n2026 年 7 月 — 改進搜尋排序、加快擷取速度\n2026 年 6 月 — 新增專案分類",
     intent: "competitor",
+    type: "web_page",
     threadId: "q3-launch",
     confidence: 0.74,
     capturedAt: "2026-07-18T12:26:00Z",
     aspect: "wide",
     hue: 220,
   },
-  // --- Inbox: unassigned / low-confidence ---
   {
     id: "s11",
     title: "Untitled capture",
     summary: "A settings panel with toggles for notification frequency and quiet hours.",
     whySaved: "Unclear — no strong signal from surrounding context.",
-    ocrExcerpt: "Notifications · Quiet hours · Daily digest",
+    ocrText: "Notifications\nQuiet hours  22:00 – 08:00\nDaily digest",
     intent: "other",
+    type: "ui_screen",
     threadId: null,
     suggestedThreadId: "onboarding-teardown",
     confidence: 0.41,
@@ -203,8 +183,9 @@ export const screenshots: Screenshot[] = [
     title: "Dashboard with revenue chart",
     summary: "Analytics dashboard showing MRR growth and churn side by side.",
     whySaved: "Possibly competitor research, possibly your own metrics.",
-    ocrExcerpt: "MRR $12,480 · Churn 2.1% · Net new 34",
+    ocrText: "MRR $12,480\nChurn 2.1%\nNet new 34\nLast 30 days",
     intent: "competitor",
+    type: "chart",
     threadId: null,
     suggestedThreadId: "q3-launch",
     confidence: 0.63,
@@ -217,8 +198,9 @@ export const screenshots: Screenshot[] = [
     title: "Mobile nav drawer",
     summary: "Slide-over navigation with large tap targets and a search field pinned to the top.",
     whySaved: "Layout reference for a future mobile read view.",
-    ocrExcerpt: "Home · Library · Projects · Settings",
+    ocrText: "Home\nLibrary\nProjects\nSettings",
     intent: "design_inspiration",
+    type: "ui_screen",
     threadId: null,
     suggestedThreadId: "onboarding-teardown",
     confidence: 0.58,
@@ -228,39 +210,12 @@ export const screenshots: Screenshot[] = [
   },
 ];
 
-export const inbox = screenshots.filter((s) => s.threadId === null);
-export const filed = screenshots.filter((s) => s.threadId !== null);
-
-export function byThread(threadId: string) {
-  return filed.filter((s) => s.threadId === threadId);
-}
-
-export function find(id: string) {
-  return screenshots.find((s) => s.id === id);
-}
-
-export function threadName(id: string) {
-  return threads.find((t) => t.id === id)?.name ?? "Inbox";
-}
-
-/** Deterministic placeholder standing in for a real capture thumbnail. */
-export function placeholder(s: Screenshot): string {
-  const h = s.hue;
-  const height = s.aspect === "tall" ? 420 : s.aspect === "wide" ? 200 : 300;
-  const rows = Array.from({ length: Math.floor(height / 46) }, (_, i) => {
-    const w = 190 - ((i * 37) % 110);
-    return `<rect x="18" y="${64 + i * 46}" width="${w}" height="12" rx="6" fill="hsl(${h} 22% 62% / 0.5)"/>
-      <rect x="18" y="${82 + i * 46}" width="${w - 40}" height="8" rx="4" fill="hsl(${h} 18% 66% / 0.32)"/>`;
-  }).join("");
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="${height}" viewBox="0 0 320 ${height}">
-    <rect width="320" height="${height}" fill="hsl(${h} 34% 94%)"/>
-    <rect width="320" height="40" fill="hsl(${h} 40% 88%)"/>
-    <circle cx="22" cy="20" r="5" fill="hsl(${h} 30% 70%)"/>
-    <circle cx="40" cy="20" r="5" fill="hsl(${h} 30% 76%)"/>
-    <circle cx="58" cy="20" r="5" fill="hsl(${h} 30% 82%)"/>
-    <rect x="232" y="${height - 46}" width="70" height="26" rx="13" fill="hsl(${h} 55% 58%)"/>
-    ${rows}
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
+export const seedScreenshots: Screenshot[] = raw.map((s) => ({
+  ...s,
+  suggestedThreadId: s.suggestedThreadId ?? null,
+  status: "done",
+  assignmentSource: s.threadId ? "auto" : null,
+  source: "seed",
+  imageDataUrl: null,
+  archived: false,
+}));
