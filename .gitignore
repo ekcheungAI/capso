@@ -1,0 +1,19 @@
+node_modules/
+.pnpm-store/
+
+# builds
+.next/
+out/
+dist/
+apps/mac/src-tauri/target/
+
+# env / secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# tooling
+.DS_Store
+*.log
+.vercel/
+coverage/

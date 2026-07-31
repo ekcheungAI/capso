@@ -1,0 +1,93 @@
+# Capso — Master Plan
+
+> Canonical entry point for the Capso planning pack. Every planning or build session starts here.
+> Status: **Planning pack complete — ready for Build Loop 1.** Last updated: 2026-07-31.
+
+## 1. Product summary
+
+**Capso** (working name — see Assumptions) is a Mac + Web screenshot-first AI memory tool. It replaces a CleanShot X subscription on the capture side, then goes where CleanShot never does: every screenshot is automatically OCR'd, summarized, classified by intent, and attached to a **project thread** the AI suggests and the user confirms in one click. Later, the user types a plain-language sentence ("the pricing page I saved in March") and Capso finds it — or discusses it inside an ongoing project conversation.
+
+The core loop:
+
+```
+capture (hotkey) → overlay + background upload → cheap AI pass (OCR/summary/intent/project suggestion)
+→ one-click confirm (or Inbox) → later: natural-language search + thread chat that cites prior screenshots
+```
+
+Not a social bookmarking app, not a notes app, not a dev-only screenshot pipe, not a flat auto-tagged gallery.
+
+## 2. Target user
+
+Solo marketers, founders, and product-builder hybrids who screenshot design inspiration, UX bugs, competitor moves, and marketing references daily — and lose them. **Customer zero is the owner (Elvin)**; the product is a personal tool first with SaaS-ready architecture and economics from day one. See [03_PERSONAS_AND_USE_CASES.md](03_PERSONAS_AND_USE_CASES.md).
+
+## 3. Document map
+
+| Area | Docs |
+|---|---|
+| Orientation | [README.md](README.md) (how to use this pack) |
+| Product core | [01_PRODUCT_BRIEF.md](01_PRODUCT_BRIEF.md) · [02_USER_PROBLEMS_AND_JTBD.md](02_USER_PROBLEMS_AND_JTBD.md) · [03_PERSONAS_AND_USE_CASES.md](03_PERSONAS_AND_USE_CASES.md) · [04_MVP_SCOPE.md](04_MVP_SCOPE.md) ← scope authority |
+| Feature specs | [05_FEATURE_SPEC_CAPTURE.md](05_FEATURE_SPEC_CAPTURE.md) · [06_FEATURE_SPEC_AI_MEMORY.md](06_FEATURE_SPEC_AI_MEMORY.md) · [07_FEATURE_SPEC_PROJECT_THREADS.md](07_FEATURE_SPEC_PROJECT_THREADS.md) · [08_FEATURE_SPEC_SEARCH_AND_RETRIEVAL.md](08_FEATURE_SPEC_SEARCH_AND_RETRIEVAL.md) |
+| System | [09_AI_SYSTEM_AND_MODEL_ROUTING.md](09_AI_SYSTEM_AND_MODEL_ROUTING.md) ← cost authority · [10_DATA_MODEL.md](10_DATA_MODEL.md) ← schema authority · [11_ARCHITECTURE.md](11_ARCHITECTURE.md) · [14_BACKEND_AND_STORAGE.md](14_BACKEND_AND_STORAGE.md) |
+| Platform plans | [12_MAC_APP_PLAN.md](12_MAC_APP_PLAN.md) · [13_WEB_APP_PLAN.md](13_WEB_APP_PLAN.md) · [15_DESIGN_SYSTEM_AND_UX.md](15_DESIGN_SYSTEM_AND_UX.md) |
+| Business | [16_PRICING_AND_PACKAGING.md](16_PRICING_AND_PACKAGING.md) · [17_METRICS_AND_ANALYTICS.md](17_METRICS_AND_ANALYTICS.md) · [18_RISKS_AND_OPEN_QUESTIONS.md](18_RISKS_AND_OPEN_QUESTIONS.md) |
+| Execution | [19_BUILD_SEQUENCE.md](19_BUILD_SEQUENCE.md) ← phase authority · [20_AGENT_LOOP_INSTRUCTIONS.md](20_AGENT_LOOP_INSTRUCTIONS.md) ← loop contract · [21_ACCEPTANCE_CRITERIA.md](21_ACCEPTANCE_CRITERIA.md) · [22_TEST_PLAN.md](22_TEST_PLAN.md) · [23_LAUNCH_CHECKLIST.md](23_LAUNCH_CHECKLIST.md) |
+| Deep specs | [specs/user_flows.md](specs/user_flows.md) · [specs/edge_cases.md](specs/edge_cases.md) · [specs/api_contracts.md](specs/api_contracts.md) · [specs/event_schema.md](specs/event_schema.md) · [specs/permission_model.md](specs/permission_model.md) |
+| Agent modes | [prompts/FABLE5_DISCOVERY_PROMPT.md](prompts/FABLE5_DISCOVERY_PROMPT.md) · [prompts/FABLE5_ARCHITECTURE_PROMPT.md](prompts/FABLE5_ARCHITECTURE_PROMPT.md) · [prompts/FABLE5_MVP_BUILD_PROMPT.md](prompts/FABLE5_MVP_BUILD_PROMPT.md) · [prompts/FABLE5_REVIEW_PROMPT.md](prompts/FABLE5_REVIEW_PROMPT.md) |
+
+Where docs conflict, the "authority" doc for that domain wins; fix the conflict in the same session you find it.
+
+## 4. Decisions made (log)
+
+| # | Date | Decision |
+|---|---|---|
+| D1 | 2026-07-31 | v1 input = **screenshots only**. Links/PDFs/files are schema-ready (`capture_kind`) but not built. |
+| D2 | 2026-07-31 | Capture bar to cancel CleanShot X: hotkey **region + window capture, clipboard copy, basic annotation** (arrow/box/text/blur). Scrolling capture and recording/GIF deferred. |
+| D3 | 2026-07-31 | Post-capture default: **floating thumbnail overlay + background auto-save**, AI project/type suggestion inline (~3–5s), one-click confirm or ignore → Inbox. "Ask AI" opens thread chat. |
+| D4 | 2026-07-31 | Privacy posture (MVP): **cloud for everything** on owner's Supabase; AI providers see images transiently. Sensitive-exclude toggle + app blocklist post-MVP. |
+| D5 | 2026-07-31 | Build ambition: **lean — usable core loop in ~2–4 weeks** of agent build loops. Scope is cut to protect this. |
+| D6 | 2026-07-31 | Monetization: **freemium subscription** documented (free: capture+OCR+limited AI; Pro ~US$9/mo). Billing **not built** in MVP. |
+| D7 | 2026-07-31 | Mac shell: **Tauri 2** menu-bar app; MVP capture via macOS `screencapture -i`/`-iw`. Fallback rule: switch to Electron if Tauri friction burns >2 days. |
+| D8 | 2026-07-31 | Backend: **Supabase** (Postgres + pgvector, Storage, Auth, Edge Functions, jobs + pg_cron). Web: **Next.js 15 on Vercel**. |
+| D9 | 2026-07-31 | AI routing: **one Haiku-class vision call per capture** (OCR+summary+intent+project suggestion, structured JSON) + embedding, target <US$0.01/capture; **Sonnet/Fable-class only** for chat turns and weekly digests. |
+| D10 | 2026-07-31 | Learning loop: confirmations/corrections stored as data, injected as **few-shot context** into classification. No fine-tuning in MVP. |
+
+## 5. Current assumptions (unverified — challenge freely)
+
+- **"Capso" is a working name** taken from the project folder; no trademark/domain check has been done.
+- Single-user (owner) usage for the entire MVP phase; SaaS-readiness is architectural only.
+- macOS `screencapture -i` picker quality is acceptable as the MVP capture UX (validated only anecdotally).
+- One cheap vision call can deliver good-enough OCR (incl. Traditional Chinese) + classification in a single structured response.
+- Supabase Edge Function limits are sufficient for the vision-call worker (verify timeout in P1; escalate per 11_ARCHITECTURE.md if not).
+- Per-call cost figures in 09/16 use placeholder pricing marked "verify at build time."
+
+## 6. Unresolved questions
+
+| Q | Owner decision needed | Blocking? |
+|---|---|---|
+| Final product name (trademark + domain + App Store availability) | Before any external tester | Not blocking build |
+| Embedding provider/model choice (2 candidates in 09) | P3 (OCR/classification phase) | Blocks P3 start |
+| Digest cadence + delivery channel (weekly? email vs in-app) | Post-MVP feature | No |
+| Direct distribution (dmg) vs Mac App Store | Before external testers; dmg assumed | No |
+| When to enable links/PDF ingestion | Post-MVP review | No |
+
+## 7. Recommended next action
+
+**Run Build Loop 1 (Phase P0 — Foundation)** using [prompts/FABLE5_MVP_BUILD_PROMPT.md](prompts/FABLE5_MVP_BUILD_PROMPT.md):
+scaffold the monorepo (Tauri app + Next.js app), create the Supabase project, wire auth, and stand up CI/typecheck — entry/done criteria in [19_BUILD_SEQUENCE.md](19_BUILD_SEQUENCE.md).
+
+Before Loop 1, the owner should: (a) confirm or replace the "Capso" name (non-blocking), (b) create the Supabase project + AI provider keys in `.env.local` (never in git).
+
+## 8. Status ledger (update after every loop)
+
+| Phase | Status | Notes |
+|---|---|---|
+| Planning pack | ✅ complete | 2026-07-31 |
+| P0 Foundation | ⬜ not started | — |
+| P1 Core backend | ⬜ not started | — |
+| P2 Screenshot ingestion | ⬜ not started | riskiest (macOS permissions) — surface early |
+| P3 OCR/classification | ⬜ not started | needs embedding-provider decision |
+| P4 Project threads | ⬜ not started | — |
+| P5 Chat retrieval | ⬜ not started | — |
+| P6 Search | ⬜ not started | — |
+| P7 Polish + dogfood gate | ⬜ not started | exit = CleanShot X cancelled |
+| P8 Billing | 🅿 parked | build only when external users exist |
