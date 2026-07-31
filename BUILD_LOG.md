@@ -180,6 +180,23 @@ All four cross-doc conflicts found during exploration are now resolved in the ow
 
 ---
 
+## Loop 09 — Search becomes an agent; drag becomes physical
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+Owner: *"I want to know 'what are some good designs I have put together for mobile UI'"* and *"I should feel like I can rearrange screenshots into folders."* Search filtered instead of answering, and drag had no physical feedback.
+
+**Search is now an agent over the library.** `lib/retrieve.ts` scores term overlap across title, the user's own `why_saved` note, summary, the human intent label (so "mobile UI design" reaches `design_inspiration`), project name and OCR text, with a mild recency nudge. Typing filters instantly; Enter/Ask sends the top 12 to the model and answers in prose with citation chips that carry thumbnails. Results below are marked ★ cited and say what they matched on.
+
+Verified with the owner's exact question — answer: *"there's one mobile UI design reference saved: [Mobile nav drawer] … That's the only mobile-related design in the available captures"*, and it volunteered that other folders might hold more rather than padding the list. Grounded, and honest about scope.
+
+**Drag now has weight.** Dragged card drops to 0.35 opacity and scales down; the sidebar advertises every project with a dashed ring while a drag is live and shows a "drop N" badge; the hovered target scales and fills with accent. Dragging a selected card carries the whole selection. Drops and filter changes run inside `document.startViewTransition` (feature-guarded) so surviving cards travel to new positions instead of teleporting. Multi-move gets one Undo toast that restores every capture's previous project.
+
+**Bug caught by screenshotting:** the translucent sticky header let the accent Ask button bleed through while scrolling, which read as a rendering fault. Header is now opaque.
+
+**Verification:** typecheck, lint, production build all green.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

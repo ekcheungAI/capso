@@ -67,17 +67,31 @@ export function ScreenshotCard({
   note,
   selected,
   onSelect,
+  selectedIds,
 }: {
   s: Screenshot;
   note?: string;
   selected?: boolean;
   onSelect?: (id: string) => void;
+  selectedIds?: string[];
 }) {
   return (
     <div
       draggable
-      onDragStart={(e) => e.dataTransfer.setData("text/capso-id", s.id)}
-      className={`group relative mb-4 break-inside-avoid rounded-xl bg-surface p-2 ring-1 transition-[box-shadow,transform] duration-[120ms] ease-out hover:-translate-y-0.5 ${
+      onDragStart={(e) => {
+        // Carry the whole selection when the dragged card is part of one.
+        const payload = selected && selectedIds?.length ? selectedIds.join(",") : s.id;
+        e.dataTransfer.setData("text/capso-id", payload);
+        e.dataTransfer.effectAllowed = "move";
+        e.currentTarget.classList.add("capso-dragging");
+        window.dispatchEvent(new CustomEvent("capso:dragcount", { detail: payload.split(",").length }));
+      }}
+      onDragEnd={(e) => {
+        e.currentTarget.classList.remove("capso-dragging");
+        window.dispatchEvent(new CustomEvent("capso:dragcount", { detail: 0 }));
+      }}
+      style={{ viewTransitionName: `capso-${s.id}` }}
+      className={`group relative mb-4 cursor-grab break-inside-avoid rounded-xl bg-surface p-2 ring-1 transition-[box-shadow,transform,opacity] duration-[120ms] ease-out hover:-translate-y-0.5 active:cursor-grabbing ${
         selected ? "ring-2 ring-accent" : "ring-line hover:ring-accent/60"
       }`}
     >
@@ -130,6 +144,7 @@ export function Masonry({
           note={noteFor?.(s)}
           selected={selected?.has(s.id)}
           onSelect={onSelect}
+          selectedIds={selected ? [...selected] : undefined}
         />
       ))}
     </div>

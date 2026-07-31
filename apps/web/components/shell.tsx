@@ -17,7 +17,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [adding, setAdding] = useState(false);
   const [palette, setPalette] = useState(false);
   const toast = useToast();
+  const [dragCount, setDragCount] = useState(0);
   const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
+
+  // While a drag is in flight the sidebar advertises itself as a target.
+  useEffect(() => {
+    const onCount = (e: Event) => setDragCount((e as CustomEvent<number>).detail);
+    window.addEventListener("capso:dragcount", onCount);
+    return () => window.removeEventListener("capso:dragcount", onCount);
+  }, []);
 
   useEffect(() => {
     fetch("/api/classify")
@@ -38,16 +46,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const drop = async (threadId: string, id: string) => {
-    const s = get(id);
-    if (s) {
-      const previous = s.threadId;
-      await assign(s, threadId, "manual");
-      toast(`Moved to ${threads.find((t) => t.id === threadId)?.name ?? "Inbox"}`, () =>
-        void assign(s, previous, "manual"),
-      );
-    }
+  const drop = async (threadId: string, payload: string) => {
+    const ids = payload.split(",").filter(Boolean);
+    const moved = ids.map((id) => get(id)).filter((s): s is NonNullable<typeof s> => Boolean(s));
     setOver(null);
+    setDragCount(0);
+    if (moved.length === 0) return;
+
+    const previous = moved.map((s) => [s, s.threadId] as const);
+    const run = () => Promise.all(moved.map((s) => assign(s, threadId, "manual")));
+
+    // View Transitions make the cards travel to their new positions instead of
+    // snapping. Guarded because Safari/Firefox lag on support.
+    if (typeof document.startViewTransition === "function") {
+      await new Promise<void>((res) =>
+        document.startViewTransition!(async () => {
+          await run();
+          res();
+        }),
+      );
+    } else {
+      await run();
+    }
+
+    const name = threads.find((t) => t.id === threadId)?.name ?? "Inbox";
+    toast(`Moved ${moved.length > 1 ? `${moved.length} captures` : "1 capture"} to ${name}`, () => {
+      for (const [s, prev] of previous) void assign(s, prev, "manual");
+    });
   };
 
   return (
@@ -64,7 +89,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Row href="/memory" label="Memory" />
         </nav>
 
-        <p className="mt-6 mb-1 px-2 text-[11px] uppercase tracking-wide text-muted">Projects</p>
+        <p className="mt-6 mb-1 flex items-center gap-2 px-2 text-[11px] uppercase tracking-wide text-muted">
+          Projects
+          {dragCount > 0 && (
+            <span className="capso-fade rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-white">
+              drop {dragCount}
+            </span>
+          )}
+        </p>
         <nav className="space-y-0.5">
           {threads.map((t) => (
             <div
@@ -79,7 +111,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 const id = e.dataTransfer.getData("text/capso-id");
                 if (id) void drop(t.id, id);
               }}
-              className={`rounded-md ${over === t.id ? "ring-2 ring-accent" : ""}`}
+              className={`capso-drop rounded-md ${
+                over === t.id ? "capso-drop-active bg-accent/10 ring-2 ring-accent" : ""
+              } ${dragCount > 0 && over !== t.id ? "ring-1 ring-dashed ring-accent/30" : ""}`}
             >
               <Row href={`/threads/${t.id}`} label={t.name} badge={byThread(t.id).length} />
             </div>
@@ -136,7 +170,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-20 border-b border-line bg-background/80 px-6 py-3 backdrop-blur">
+        <header className="sticky top-0 z-20 border-b border-line bg-background px-6 py-3">
           <button
             onClick={() => setPalette(true)}
             className="flex w-full max-w-2xl items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"

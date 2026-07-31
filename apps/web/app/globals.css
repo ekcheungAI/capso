@@ -115,3 +115,29 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Drag ----------------------------------------------------------- */
+/* The dragged card tilts and lifts so it reads as picked up rather than
+   duplicated, and the source position goes quiet instead of vanishing. */
+.capso-dragging {
+  opacity: 0.35;
+  transform: scale(0.97);
+}
+
+.capso-drop {
+  transition:
+    background-color var(--dur-press) ease-out,
+    transform var(--dur-press) var(--ease-out-strong);
+}
+.capso-drop-active {
+  transform: scale(1.03);
+}
+
+/* Cards settle into new grid positions instead of teleporting after a filter
+   change or a move. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(*) {
+    animation-duration: var(--dur-panel);
+    animation-timing-function: var(--ease-out-strong);
+  }
+}

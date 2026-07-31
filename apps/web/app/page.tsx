@@ -183,10 +183,20 @@ function Select({
   onChange: (v: string) => void;
   children: React.ReactNode;
 }) {
+  // Filtering re-flows the grid; a view transition makes surviving cards travel
+  // to their new slot rather than the whole page repainting at once.
+  const apply = (v: string) => {
+    if (typeof document.startViewTransition === "function") {
+      document.startViewTransition(() => onChange(v));
+    } else {
+      onChange(v);
+    }
+  };
+
   return (
     <select
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => apply(e.target.value)}
       className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs"
     >
       {children}
