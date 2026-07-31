@@ -88,6 +88,28 @@ Owner's verdict on the static demo: "I don't see and feel much demo experience �
 
 ---
 
+## Loop 04 — Mobbin optimisation pass + memory surface + real M3 client
+**Date:** 2026-07-31 · **Phase:** demo track · **Outcome:** done
+
+**Mobbin-grounded fixes.** Pulled references for the two ungrounded surfaces. Bonsai/Gusto showed search as a ⌘K overlay with recents, not a page — mine was a dead link, the slowest path to the one job the product exists for. Runway/Air showed prev/next and a file meta line on asset detail — mine was a dead end you had to back out of. Both built. Library filters made real (intent, project, date range, count, Reset) — they were decorative pills, the most obviously hollow thing left.
+
+**Memory surface** (`/memory`, three tabs) — see the new `24_FEATURE_SPEC_MEMORY.md`. Reads the correction ledger and shows it back in plain language, with per-correction Forget. Verified live: the project move made during loop 03 testing surfaces as "When you correct it, you usually move things to Q3 launch campaign (1 time · mostly Competitor)".
+
+**MiniMax M3 client.** `lib/ai/minimax.ts` (server-only, Anthropic-compatible endpoint, base64 image blocks) + `POST /api/classify` returning the 8-field contract validated against a shared zod schema with one repair retry, few-shot correction lines injected, and a prompt rule that OCR text is content and never instructions. `GET /api/classify` is a status probe; the sidebar states whether output is MiniMax M3 or sample data.
+
+**Verification**
+- `pnpm --filter web typecheck` / `lint` — clean (fixed two React Compiler errors properly: `Date.now()` out of render, palette cursor reset out of an effect)
+- `curl POST /api/classify` without a key → `503 {"configured":false}`; capture still completes via fallback; sidebar reads "AI: sample data"
+- Browser pane: ⌘K palette, detail prev/next ("7 of 14"), memory tabs, capture → overlay → filed
+
+**Doc debt paid:** `24_FEATURE_SPEC_MEMORY.md` written; MASTER_PLAN decisions D11–D14 recorded (extension, M3, memory surface, editable `why_saved`).
+
+**Still owed:** `05_FEATURE_SPEC_CAPTURE.md` overlay position (bottom-right), `06_FEATURE_SPEC_AI_MEMORY.md` §5 (`why_saved` now editable), `10_DATA_MODEL.md` (`screenshots.archived`), and the `captures`/`screenshots` table-name conflict across docs.
+
+**Next loop:** thread chat with real retrieval (`/api/chat` + `search_memory`), then the Chrome extension.
+
+---
+
 ## Design reference pass — Mobbin
 **Date:** 2026-07-31 · **Phase:** P0 (out-of-band, owner-requested) · **Outcome:** done
 

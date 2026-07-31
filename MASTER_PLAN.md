@@ -31,6 +31,7 @@ Solo marketers, founders, and product-builder hybrids who screenshot design insp
 | Platform plans | [12_MAC_APP_PLAN.md](12_MAC_APP_PLAN.md) · [13_WEB_APP_PLAN.md](13_WEB_APP_PLAN.md) · [15_DESIGN_SYSTEM_AND_UX.md](15_DESIGN_SYSTEM_AND_UX.md) |
 | Business | [16_PRICING_AND_PACKAGING.md](16_PRICING_AND_PACKAGING.md) · [17_METRICS_AND_ANALYTICS.md](17_METRICS_AND_ANALYTICS.md) · [18_RISKS_AND_OPEN_QUESTIONS.md](18_RISKS_AND_OPEN_QUESTIONS.md) |
 | Execution | [19_BUILD_SEQUENCE.md](19_BUILD_SEQUENCE.md) ← phase authority · [20_AGENT_LOOP_INSTRUCTIONS.md](20_AGENT_LOOP_INSTRUCTIONS.md) ← loop contract · [21_ACCEPTANCE_CRITERIA.md](21_ACCEPTANCE_CRITERIA.md) · [22_TEST_PLAN.md](22_TEST_PLAN.md) · [23_LAUNCH_CHECKLIST.md](23_LAUNCH_CHECKLIST.md) |
+| Memory | [24_FEATURE_SPEC_MEMORY.md](24_FEATURE_SPEC_MEMORY.md) |
 | Deep specs | [specs/user_flows.md](specs/user_flows.md) · [specs/edge_cases.md](specs/edge_cases.md) · [specs/api_contracts.md](specs/api_contracts.md) · [specs/event_schema.md](specs/event_schema.md) · [specs/permission_model.md](specs/permission_model.md) |
 | Agent modes | [prompts/FABLE5_DISCOVERY_PROMPT.md](prompts/FABLE5_DISCOVERY_PROMPT.md) · [prompts/FABLE5_ARCHITECTURE_PROMPT.md](prompts/FABLE5_ARCHITECTURE_PROMPT.md) · [prompts/FABLE5_MVP_BUILD_PROMPT.md](prompts/FABLE5_MVP_BUILD_PROMPT.md) · [prompts/FABLE5_REVIEW_PROMPT.md](prompts/FABLE5_REVIEW_PROMPT.md) |
 
@@ -50,6 +51,10 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 | D8 | 2026-07-31 | Backend: **Supabase** (Postgres + pgvector, Storage, Auth, Edge Functions, jobs + pg_cron). Web: **Next.js 15 on Vercel**. |
 | D9 | 2026-07-31 | AI routing: **one Haiku-class vision call per capture** (OCR+summary+intent+project suggestion, structured JSON) + embedding, target <US$0.01/capture; **Sonnet/Fable-class only** for chat turns and weekly digests. |
 | D10 | 2026-07-31 | Learning loop: confirmations/corrections stored as data, injected as **few-shot context** into classification. No fine-tuning in MVP. |
+| D11 | 2026-07-31 | **Chrome extension (MV3) added as a capture path.** Captures browser tabs only — native apps (Figma desktop, Xcode, Cursor) still need the Mac app, so it complements rather than replaces it. Not yet built. |
+| D12 | 2026-07-31 | **MiniMax M3 replaces the Haiku/Sonnet split.** Coding-plan key on the Anthropic-compatible endpoint; one provider for both the per-capture pass and chat. Revises D9. The `lib/ai` seam keeps swapping back to a one-file change. |
+| D13 | 2026-07-31 | **Memory optimisation is a first-class surface** (new M10) — see [24_FEATURE_SPEC_MEMORY.md](24_FEATURE_SPEC_MEMORY.md). No pack doc had specified any UI for viewing or editing what the system learned. |
+| D14 | 2026-07-31 | **`why_saved` is user-editable**, superseding `06_FEATURE_SPEC_AI_MEMORY.md` §5. Each edit writes a correction row. |
 
 ## 5. Current assumptions (unverified — challenge freely)
 
@@ -79,18 +84,22 @@ Before Loop 1, the owner should: (a) confirm or replace the "Capso" name (non-bl
 
 ## 8. Status ledger (update after every loop)
 
-**Current status (2026-07-31):** P0 in progress, loops 01–02 done, **blocked on owner** for the remaining P0 tasks.
+**Current status (2026-07-31):** P0 partially done; a **demo track** now runs ahead of it at the owner's direction — an interactive web app on a local IndexedDB store, so UX questions get answered before Supabase exists.
+
+Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers (all STOP-rule items from [20_AGENT_LOOP_INSTRUCTIONS.md](20_AGENT_LOOP_INSTRUCTIONS.md) §7):
 1. **Supabase project** — org `vibemarketing99's Org` already runs 4 active projects; a 5th likely adds recurring compute cost (rules 3 + 4). Blocks auth, schema, all of P1.
 2. **GitHub remote + Vercel** — external accounts/pushes (rules 3 + 6). Blocks CI and web deploy.
 3. **Screen Recording permission for the build shell** — `screencapture` is blocked from the agent shell, so tray/overlay pixel QA can't run. Same permission surface P2 capture depends on.
 4. **Next.js version** — scaffold installed 16.2.12; pack docs say 15. Accept 16 (and update version strings) or pin to 15.
+5. **MiniMax key** — rotate the one pasted in chat, then set `MINIMAX_TEXT_API_KEY` in `apps/web/.env.local`. Until then classification is sample data. First real call must confirm the Anthropic-compatible endpoint accepts base64 image blocks.
 
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
 | P0 Foundation | 🟡 in progress | loop 01 scaffold ✅, loop 02 tray shell ✅; auth/CI/deploy blocked on owner |
+| Demo track | 🟢 running ahead | state layer, capture, detail, organise, ⌘K, memory surface, M3 client. Chat + extension next |
 | P1 Core backend | ⬜ not started | — |
 | P2 Screenshot ingestion | ⬜ not started | riskiest (macOS permissions) — surface early |
 | P3 OCR/classification | ⬜ not started | needs embedding-provider decision |
