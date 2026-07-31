@@ -14,15 +14,35 @@ import { imageFor, INTENT_LABEL, INTENTS } from "@/components/ui";
 export default function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { ready, get, threads, threadName, assign, saveWhySaved, saveIntent, remove, visit } =
+  const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, remove, visit } =
     useStore();
   const s = get(id);
+
+  // Ordered the same way the library shows them, so ←/→ match what you just scrolled.
+  const ordered = [...screenshots]
+    .filter((x) => !x.archived)
+    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+  const idx = ordered.findIndex((x) => x.id === id);
+  const prev = idx > 0 ? ordered[idx - 1] : undefined;
+  const next = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : undefined;
 
   const [zoom, setZoom] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(true);
   const [draft, setDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const visited = useRef(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName))
+        return;
+      if (e.key === "ArrowLeft" && prev) router.push(`/s/${prev.id}`);
+      if (e.key === "ArrowRight" && next) router.push(`/s/${next.id}`);
+      if (e.key === "Escape") router.push("/");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prev, next, router]);
 
   useEffect(() => {
     if (s && !visited.current) {
@@ -50,6 +70,31 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   return (
     <div className="flex flex-col gap-6 lg:flex-row">
       <div className="min-w-0 flex-1">
+        <div className="mb-3 flex items-center gap-2 text-xs">
+          <Link href="/" className="text-muted hover:text-accent">
+            ← Library
+          </Link>
+          <span className="ml-auto text-muted">
+            {idx + 1} of {ordered.length}
+          </span>
+          <button
+            disabled={!prev}
+            onClick={() => prev && router.push(`/s/${prev.id}`)}
+            className="rounded-md border border-line px-2 py-1 disabled:opacity-30"
+            aria-label="Previous capture"
+          >
+            ←
+          </button>
+          <button
+            disabled={!next}
+            onClick={() => next && router.push(`/s/${next.id}`)}
+            className="rounded-md border border-line px-2 py-1 disabled:opacity-30"
+            aria-label="Next capture"
+          >
+            →
+          </button>
+        </div>
+
         <button
           onClick={() => setZoom((z) => !z)}
           className="block w-full cursor-zoom-in"
@@ -101,8 +146,12 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         <div>
           <h1 className="text-sm font-semibold">{s.title}</h1>
           <p className="mt-1 text-xs text-muted">
-            {new Date(s.capturedAt).toLocaleString("en-GB")} · {s.source.replace(/_/g, " ")} ·{" "}
-            {s.type.replace(/_/g, " ")}
+            {new Date(s.capturedAt).toLocaleString("en-GB")} · {s.source.replace(/_/g, " ")}
+          </p>
+          {/* File meta line, Air/Squarespace style */}
+          <p className="mt-1 text-[11px] tracking-wide text-muted uppercase">
+            {s.imageDataUrl ? "PNG" : "SVG"} · {s.type.replace(/_/g, " ")} ·{" "}
+            {Math.max(1, Math.round((s.imageDataUrl?.length ?? 2000) / 1024))} KB
           </p>
         </div>
 

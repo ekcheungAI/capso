@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store/provider";
 import { CaptureLayer } from "@/components/capture";
+import { CommandPalette } from "@/components/palette";
 
 /**
  * Sidebar: Inbox pinned above projects, no folder tree. Project rows are drop
@@ -13,6 +14,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { ready, inbox, threads, byThread, get, assign, addThread, reset } = useStore();
   const [over, setOver] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [palette, setPalette] = useState(false);
+
+  // ⌘K from anywhere — the fastest path from "I remember something" to the capture.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const drop = async (threadId: string, id: string) => {
     const s = get(id);
@@ -88,16 +102,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 border-b border-line bg-background/80 px-6 py-3 backdrop-blur">
-          <Link
-            href="/search"
-            className="block w-full max-w-2xl rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"
+          <button
+            onClick={() => setPalette(true)}
+            className="flex w-full max-w-2xl items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"
           >
             Search your memory…
-          </Link>
+            <kbd className="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+          </button>
         </header>
         <main className="px-6 py-6">{children}</main>
       </div>
       <CaptureLayer />
+      <CommandPalette open={palette} onClose={() => setPalette(false)} />
     </div>
   );
 }
