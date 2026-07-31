@@ -40,7 +40,7 @@ Validation (requirement): parse strictly; on invalid JSON retry once with an app
 ## 2. OCR handling (requirement)
 
 - OCR comes from the **same vision call** (`ocr_text` field). No separate OCR service in MVP.
-- Stored in `captures.ocr_text` (text column) + indexed into a `tsvector` for keyword search (see `08_FEATURE_SPEC_SEARCH_AND_RETRIEVAL.md`).
+- Stored in `screenshots.ocr_text` (text column) + indexed into a `tsvector` for keyword search (see `08_FEATURE_SPEC_SEARCH_AND_RETRIEVAL.md`).
 - Tradeoff, stated: LLM OCR is worse than dedicated OCR on dense/small text and costs tokens, but collapses two calls into one and is "good enough" for search recall. **Post-MVP cost optimization (idea)**: run Apple Vision framework OCR on-device in the Mac app, ship `ocr_text` up with the capture, and drop that field from the LLM call — cuts output tokens (the dominant cost) and improves dense-text accuracy. Architecture note: keep `ocr_source` enum (`llm | apple_vision`) on the row from day one so the switch is non-breaking.
 - Blurred regions (annotation) are pixelated before upload, so OCR never sees them — documented user-facing behavior (see `05_FEATURE_SPEC_CAPTURE.md` §3).
 
@@ -48,7 +48,7 @@ Validation (requirement): parse strictly; on invalid JSON retry once with an app
 
 - **summary**: 1–2 sentences, written for retrieval ("Stripe pricing page showing the new usage-based tier at $0.30/unit"), not description-for-the-blind. This is the primary embedded text and the card subtitle in UI.
 - **type**: what the image *is* (mechanical). **intent**: why it was *saved* (motivational) — uses the locked taxonomy: `design_inspiration, ux_bug, competitor, marketing_hook, content_idea, reference, other`. Both are filterable metadata.
-- **why_saved**: one-liner shown on hover/detail ("Competitor's onboarding uses a 3-step checklist — steal the pattern"). It is a guess; corrections to intent implicitly correct it over time via few-shot examples. Not separately editable in MVP (idea: inline edit post-MVP).
+- **why_saved**: one-liner shown on hover/detail ("Competitor's onboarding uses a 3-step checklist — steal the pattern"). It is a guess; corrections to intent implicitly correct it over time via few-shot examples. **Editable in MVP** (owner decision D14, 2026-07-31 — supersedes the earlier "not separately editable"). Each edit writes a `user_corrections` row with `field: "why_saved"`; see 24_FEATURE_SPEC_MEMORY.md.
 - Taxonomy is fixed in MVP — no user-defined intents (idea: custom intents post-MVP; schema uses text column, not DB enum, to keep that door open — see `10_DATA_MODEL.md`).
 
 ## 4. Memory extraction / embedding (requirement)
@@ -61,7 +61,7 @@ Intent: {intent}. Type: {type}.
 {first ~1,500 chars of ocr_text}
 ```
 
-- Single embedding per capture, stored in pgvector (`captures.embedding`). No image embeddings in MVP (idea: CLIP-style visual embedding post-MVP for "looks like" search).
+- Single embedding per capture, stored in pgvector (`screenshots.embedding`). No image embeddings in MVP (idea: CLIP-style visual embedding post-MVP for "looks like" search).
 - OCR excerpt is truncated, not summarized — cheap and deterministic. 1,500 chars ≈ enough for headlines/pricing/labels, which is what queries target.
 - Re-embedding triggers: user edits summary (not in MVP UI) or intent correction → re-embed with corrected intent line. Keep it: corrections are rare and re-embeds cost fractions of a cent.
 

@@ -17,7 +17,7 @@ A ProjectThread is one row (`project_threads`) owning:
 - `system_summary` — a rolling 3–6 sentence AI-maintained summary of what this thread is about, regenerated (Haiku-class) when the thread gains 10 new captures or on manual "refresh summary" (idea: also on rename)
 - `status`: `active | archived`
 - `last_active_at` — bumped by capture attach or chat message
-- messages (`thread_messages`) and captures (`captures.thread_id` FK)
+- messages (`thread_messages`) and captures (`screenshots.thread_id` FK)
 
 **Inbox** is a real, undeletable, unarchivable system thread per user (simplest model: same table, `is_inbox = true`). Everything unclassified lives there. Inbox has no chat in MVP — chatting requires filing (keeps context assembly sane; idea: allow Inbox chat later).
 
@@ -105,7 +105,7 @@ Benchmark: mymind's calm density — generous whitespace, no folder chrome, no b
 - **Empty Inbox**: the goal state. Show a quiet checkmark, nothing else (idea: mymind-style single line of copy).
 - **Success metrics** (requirement, measured from existing rows — no extra instrumentation):
   - Suggestion acceptance rate >70% by week 4 (`UserCorrection`, see `06_FEATURE_SPEC_AI_MEMORY.md` §6)
-  - Inbox unfiled count trends toward 0 within 48h of capture (staleness query on `captures`)
+  - Inbox unfiled count trends toward 0 within 48h of capture (staleness query on `screenshots`)
   - ≥3 chat turns/week that trigger `RevisitEvent(referenced_in_chat)` — proves memory is being *used*, not hoarded
 
 ## Out of scope

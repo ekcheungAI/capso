@@ -67,7 +67,7 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 **Tasks:**
 - [ ] Migration implementing full schema from `10_DATA_MODEL.md` (screenshots, projects, threads, messages, jobs, corrections, embeddings via pgvector; links/PDF columns schema-ready but unused)
 - [ ] RLS policies: owner-only access on every table (single-user MVP, but enforce anyway)
-- [ ] Storage buckets: `captures` (originals), `thumbs` (thumbnails), private, RLS-scoped
+- [ ] Storage buckets: `originals`, `thumbs`, private, RLS-scoped
 - [ ] Jobs table + `pg_cron` tick + Edge Function worker skeleton: claim job (`FOR UPDATE SKIP LOCKED`), execute, mark done/failed, retry with backoff, `attempts` cap → `poisoned` status
 - [ ] Generated TS types from schema into `packages/shared`
 - [ ] Seed script for local dev (1 project, 3 fake screenshot rows)

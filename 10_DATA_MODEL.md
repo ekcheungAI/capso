@@ -54,6 +54,7 @@ CREATE TYPE message_role AS ENUM ('user','assistant','system','tool');
 | rolling_summary_msg_count | int DEFAULT 0 | msgs since last resummarize |
 | is_inbox | boolean DEFAULT false | exactly one per user (partial unique index) |
 | archived_at | timestamptz NULL | soft archive, not delete |
+| archived | boolean NOT NULL DEFAULT false | screenshots only — set from the Tidy tab (24_FEATURE_SPEC_MEMORY.md). Archived rows leave the library, search scope and thread centroids but keep their data. Added 2026-07-31. |
 | created_at / updated_at | timestamptz | |
 
 Indexes: `(user_id)`, partial unique `(user_id) WHERE is_inbox`.

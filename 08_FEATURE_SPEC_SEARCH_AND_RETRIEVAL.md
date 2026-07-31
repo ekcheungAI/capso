@@ -20,7 +20,7 @@ One query box, three retrieval modes fused under it (§2–4). The user never ch
 
 ## 2. Natural-language semantic search (requirement)
 
-- Embed the query string (one embedding call, ~free) → cosine similarity vs `captures.embedding` via pgvector (HNSW index, `vector_cosine_ops`).
+- Embed the query string (one embedding call, ~free) → cosine similarity vs `screenshots.embedding` via pgvector (HNSW index, `vector_cosine_ops`).
 - Retrieve top 50 candidates → hand to hybrid ranker (§5).
 - No query rewriting/expansion in MVP (idea: Haiku query-rewrite post-MVP if recall disappoints).
 

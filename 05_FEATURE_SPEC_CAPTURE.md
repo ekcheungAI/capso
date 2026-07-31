@@ -2,6 +2,9 @@
 
 > Capso (working name — see Assumptions). This doc specifies everything between "user presses hotkey" and "PNG lands in Supabase Storage + AI pipeline kicks off". Downstream AI behavior: see `06_FEATURE_SPEC_AI_MEMORY.md`. Thread assignment: see `07_FEATURE_SPEC_PROJECT_THREADS.md`. Offline/queue internals: see `12_MAC_APP_PLAN.md`. Data shapes: see `10_DATA_MODEL.md`.
 
+> **Resolved 2026-07-31:** overlay sits **bottom-right**, matching `specs/user_flows.md` F1 (this doc previously said bottom-left). Built and verified in the web demo.
+> **Resolved 2026-07-31:** the overlay action row includes **Ignore**, which F2/F4 assumed but this doc's action table omitted.
+
 ## Assumptions
 
 - "Capso" is a working name, unconfirmed. No branding decisions are load-bearing in this doc.
@@ -39,7 +42,7 @@ Copy-to-clipboard toggle (requirement): global setting, default ON (matches Clea
 
 ## 2. Post-capture overlay (requirement — this is the product's signature moment)
 
-CleanShot-style floating thumbnail, bottom-left of the active display, ~200px wide, drop shadow, floats above all windows (non-activating panel — must not steal focus).
+CleanShot-style floating thumbnail, bottom-right of the active display, ~200px wide, drop shadow, floats above all windows (non-activating panel — must not steal focus).
 
 ### Lifecycle
 
@@ -77,7 +80,7 @@ Quick editor window opened from the overlay (or later from any screenshot detail
 
 ## 4. Ingestion paths (non-hotkey)
 
-All paths converge on the same pipeline: local file → `captures` row (capture_kind = `screenshot`) → Storage upload → cheap AI pass. `capture_kind` is an enum (`screenshot | link | pdf | file`) — only `screenshot` implemented in v1 (locked decision #1); others exist in schema only (see `10_DATA_MODEL.md`).
+All paths converge on the same pipeline: local file → `screenshots` row (capture_kind = `screenshot`) → Storage upload → cheap AI pass. `capture_kind` is an enum (`screenshot | link | pdf | file`) — only `screenshot` implemented in v1 (locked decision #1); others exist in schema only (see `10_DATA_MODEL.md`).
 
 - **Drag into Mac app**: menu-bar window accepts image drops (png/jpg/webp). Non-image files rejected with toast "Screenshots only for now".
 - **Web app drop zone**: full-page drop target on the library view; same validation; uploads directly to Supabase Storage from browser, then invokes the same Edge Function pipeline.
