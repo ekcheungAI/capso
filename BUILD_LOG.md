@@ -373,3 +373,20 @@ Loop 15 shipped thumbs and said plainly that they cut what the grid *renders*, n
 
 - The detail file-meta line read `PNG` for every capture and sized it from the row. The import path encodes JPEG, so that label had been wrong for every real capture since it shipped. Now reports the actual MIME type, the true pixel dimensions, and the loaded original's size — `JPEG · UI SCREEN · 900×560 · 27 KB`.
 - The first version of the on-demand load reset state synchronously inside the effect, which the React Compiler lint correctly rejected as a cascading render. Rewritten to key the loaded image by capture id, which also closes a window where the previous capture's original could show under the new title.
+
+## Loop 17 — Phase 0: stop corrupting data
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done
+
+A three-way audit (extension readiness, functional gaps, experience) surfaced two data-integrity bugs that had to land before extension work, because making the extension real multiplies the captures flowing through this exact pipeline.
+
+**Every failed classify was writing fabricated metadata into a real capture.** `classify.ts` was `if (res.ok) { … }` with no `else`, so any 502, network error or unparseable body fell into `simulated()` — one of three hardcoded rows selected by `imageDataUrl.length % 3`, **including invented `ocrText`**, at `confidence: 0.86`. That clears `AUTO_ASSIGN_MIN`, so the capture auto-filed itself into a **randomly chosen project**. The `simulated` flag lived only in memory, so nothing downstream could tell; the invented text went into the search index and was quoted back by chat as fact. `status: "unprocessed"` had been declared in the type since loop 03 and was never written by any code path.
+
+Now split three ways: **503** (no key) is a deliberate demo mode and still returns canned output, but the row is flagged `simulated` and says "Sample data" on the card and in the Inbox. **Any other failure** returns `failed()` — honest empties, `confidence: 0` so nothing can auto-file, `status: "unprocessed"`, surfaced as "Couldn't be read — try again". Verified across 200/401/500/502/503/network-throw: only 503 produces canned text, only a real 200 auto-files.
+
+**Classification was overwriting concurrent user edits.** The second write was a whole-object `put` rebuilt from the pre-classify snapshot, hardcoding `userTags: []` and `archived: false`. Anything done during the classify window — up to 60s — was silently destroyed, which is exactly the window in which the overlay invites Confirm. Replaced with `patchScreenshot`, which re-reads the row and merges only model-owned fields. It takes an optional function so the caller can decide *based on current state*: `why_saved` and `intent` are the model's guesses but the user's to correct, so if the user got there first their answer wins.
+
+**Verified live, not reasoned about.** Fired a real capture, wrote `userTags`, `archived`, `whySaved` and `intent` while `status === "processing"`, then waited for the model: all four survived, and the model's title, tags and confidence still landed. Before this change all four were destroyed.
+
+**Also:** `classify` gained an `AbortSignal.timeout` — a hung connection used to park a row at `processing` forever with no recovery but deletion. The Inbox re-read now patches instead of writing a full object, so `status` actually moves; without it a re-read capture stayed "Analysing…" permanently, undraggable and invisible to `/review`. And Inbox **Confirm is disabled when there is no suggestion** — it used to assign `null → null`, a visible no-op that still wrote a correction teaching the model to file into Inbox.
+
+**Next:** Phase 1, the extension — direct-to-Supabase, image processing moved into the service worker, and `/api/ingest` deleted along with its in-memory queue and `access-control-allow-origin: *`.

@@ -42,6 +42,14 @@ export type Screenshot = {
   suggestedThreadId: string | null;
   confidence: number;
   status: Status;
+  /**
+   * True when the metadata came from canned demo output rather than the model —
+   * i.e. no API key was configured. Persisted rather than inferred, because the
+   * flag used to live only in memory: a demo capture was indistinguishable from
+   * a real one the moment it was written, and its invented `ocrText` went
+   * straight into the search index.
+   */
+  simulated: boolean;
   assignmentSource: AssignmentSource | null;
   source: "hotkey_region" | "hotkey_window" | "drag" | "clipboard" | "web_upload" | "extension" | "seed";
   capturedAt: string;
@@ -120,6 +128,7 @@ export type Screenshot = {
 export function withScreenshotDefaults(s: Screenshot): Screenshot {
   return {
     ...s,
+    simulated: s.simulated ?? false,
     thumbDataUrl: s.thumbDataUrl ?? null,
     width: s.width ?? null,
     height: s.height ?? null,

@@ -192,6 +192,15 @@ export function ScreenshotCard({
           )}
         </div>
         <div className="px-1 pt-2 pb-1">
+          {/* Provenance, before the title. A capture whose classification failed
+              or came from demo data must never read as a real one — its text was
+              either absent or invented, and it is about to be indexed by search
+              either way. */}
+          {(s.status === "unprocessed" || s.simulated) && !processing && (
+            <p className="mb-1 inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[11px] text-muted">
+              {s.status === "unprocessed" ? "Not read yet" : "Sample data"}
+            </p>
+          )}
           <p className="flex items-center gap-1.5 text-sm font-medium">
             {/* Intent is only meaningful once the model has classified it, so the
                 dot waits for the card to leave `processing`. Decorative here —

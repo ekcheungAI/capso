@@ -151,6 +151,30 @@ export async function putScreenshot(s: Screenshot) {
 }
 
 /**
+ * Merge fields onto a capture as it exists *now*, rather than overwriting it
+ * with a snapshot taken earlier.
+ *
+ * Classification takes up to a minute, and the write that followed it used to be
+ * a whole-object `put` built from the pre-classify state — so filing, tagging,
+ * archiving or editing the capture while the model was still looking at it was
+ * silently undone. Reading immediately before writing keeps the window small
+ * enough not to matter in a single-user app.
+ */
+export async function patchScreenshot(
+  id: string,
+  patch: Partial<Screenshot> | ((current: Screenshot) => Partial<Screenshot>),
+): Promise<Screenshot | null> {
+  const raw = await idb.get<Screenshot>("screenshots", id);
+  if (!raw) return null;
+  const current = withScreenshotDefaults(raw);
+  // The functional form exists so a caller can decide *based on the current
+  // row* — the model should fill `why_saved` and `intent`, but not overwrite
+  // them if the user got there first.
+  const fields = typeof patch === "function" ? patch(current) : patch;
+  return putScreenshot({ ...current, ...fields });
+}
+
+/**
  * The full-size original, on demand. Only the detail view (hero, zoom, copy,
  * download) and re-classification need it; everything else renders `thumbDataUrl`.
  */

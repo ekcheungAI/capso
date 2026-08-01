@@ -55,6 +55,9 @@ type SeedInput = Omit<
   | "thumbDataUrl"
   | "width"
   | "height"
+  // Fixtures are demo data by definition, but they are hand-written rather than
+  // model output, so they are not "simulated classifications" either.
+  | "simulated"
 > & {
   suggestedThreadId?: string | null;
   /** Fixtures may opt into tags or page context to exercise the real surfaces. */
@@ -291,4 +294,5 @@ export const seedScreenshots: Screenshot[] = raw.map((s) => ({
   thumbDataUrl: null,
   width: null,
   height: null,
+  simulated: false,
 }));

@@ -14,7 +14,7 @@ import { newId, routeConfidence, type Screenshot } from "@/lib/store";
  * app's Tauri window will later render identically.
  */
 export function CaptureLayer() {
-  const { ready, threads, screenshots, corrections, ingest, get } = useStore();
+  const { ready, threads, screenshots, corrections, ingest, patch, get } = useStore();
   const toast = useToast();
   const router = useRouter();
   const [pending, setPending] = useState<string[]>([]);
@@ -80,6 +80,7 @@ export function CaptureLayer() {
         hue: 210,
         aspect,
         archived: false,
+        simulated: false,
         tags: [],
         ocrSource: null,
         ocrLangs: [],
@@ -105,32 +106,40 @@ export function CaptureLayer() {
        */
       const filedTo = band === "auto" ? result.projectSuggestion : null;
 
-      await ingest({
-        id,
+      /**
+       * A patch of model-owned fields, not a whole-object write.
+       *
+       * The previous version rebuilt the entire row from the pre-classify
+       * snapshot — hardcoding `userTags: []` and `archived: false` — so
+       * anything the user did during the up-to-60s classification window was
+       * silently destroyed: filing it, tagging it, archiving it, editing why
+       * they saved it. That is exactly the window in which the overlay invites
+       * them to press Confirm.
+       *
+       * `threadId` is only asserted when the model actually earned it; a
+       * user-filed capture keeps the destination they chose.
+       */
+      await patch(id, (current) => ({
         title: result.title,
         summary: result.summary,
-        whySaved: result.whySaved,
         ocrText: result.ocrText,
-        intent: result.intent,
         type: result.type,
-        threadId: filedTo,
         suggestedThreadId: result.projectSuggestion,
         confidence: result.confidence,
-        status: "done",
-        assignmentSource: filedTo ? "auto" : null,
-        source,
-        capturedAt: now,
-        imageDataUrl: dataUrl,
-        hue: 210,
-        aspect,
-        archived: false,
+        status: result.status,
+        simulated: result.simulated,
         tags: result.tags,
         ocrSource: result.ocrSource,
         ocrLangs: result.ocrLangs,
-        ...context,
-      });
+        // `why_saved` and `intent` are the model's guesses but the user's to
+        // correct, and correcting either writes to the learning ledger. If they
+        // got there first while the model was still running, their answer wins.
+        ...(current.whySaved ? {} : { whySaved: result.whySaved }),
+        ...(current.intent === "other" ? { intent: result.intent } : {}),
+        ...(filedTo ? { threadId: filedTo, assignmentSource: "auto" as const } : {}),
+      }));
     },
-    [ingest, threads, screenshots, corrections],
+    [ingest, patch, threads, screenshots, corrections],
   );
 
   /**

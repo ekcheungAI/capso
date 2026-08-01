@@ -1,9 +1,19 @@
 import type { Correction, Screenshot, Thread } from "@/lib/store";
 
 /**
- * Per-capture classification. Calls the real MiniMax pass via /api/classify and
- * falls back to canned output when no key is configured or the call fails —
- * a capture must never be lost because the model was unavailable (06 §fallback).
+ * Per-capture classification. Calls the real MiniMax pass via /api/classify.
+ *
+ * Two very different non-success paths, which this file used to conflate:
+ *
+ * - **No key configured** (503) is a deliberate demo mode. Canned output is fine
+ *   there, because the user has opted into it and the sidebar says so — but the
+ *   row is marked `simulated` so nothing downstream mistakes it for real.
+ * - **A genuine failure** (502, network, unparseable) must produce *nothing*.
+ *   It used to fall into the same canned branch, which meant a real screenshot
+ *   got a fabricated title, fabricated tags and **fabricated `ocrText`** picked
+ *   by `imageDataUrl.length % 3`, at a confidence high enough to auto-file it
+ *   into a randomly chosen project. That invented text was then indexed by
+ *   search and quoted back by chat as fact.
  */
 
 export type Classification = Pick<
@@ -18,14 +28,43 @@ export type Classification = Pick<
   | "tags"
   | "ocrSource"
   | "ocrLangs"
-> & { projectSuggestion: string | null; simulated: boolean };
+  | "status"
+  | "simulated"
+> & { projectSuggestion: string | null };
+
+/** Give up rather than invent. The capture is kept; the metadata is not faked. */
+function failed(): Classification {
+  return {
+    title: "Couldn’t read this one",
+    summary: "",
+    whySaved: "",
+    ocrText: "",
+    intent: "other",
+    type: "other",
+    // Zero, so `routeConfidence` can never auto-file a capture the model never
+    // actually saw.
+    confidence: 0,
+    projectSuggestion: null,
+    tags: [],
+    ocrSource: null,
+    ocrLangs: [],
+    status: "unprocessed",
+    simulated: false,
+  };
+}
 
 /** Page context a browser capture can supply; absent for files and pastes. */
 export type CaptureContext = { pageUrl?: string | null; pageTitle?: string | null };
 
+/**
+ * The route allows 60s (`maxDuration`). This sits just past it so a request the
+ * server has genuinely abandoned cannot leave the client waiting forever.
+ */
+const CLASSIFY_TIMEOUT_MS = 65_000;
+
 const CANNED: Omit<
   Classification,
-  "projectSuggestion" | "simulated" | "ocrSource" | "ocrLangs"
+  "projectSuggestion" | "simulated" | "ocrSource" | "ocrLangs" | "status"
 >[] = [
   {
     title: "Pricing page with plan comparison",
@@ -83,10 +122,15 @@ export async function classify(
   corrections: string[] = [],
   context: CaptureContext = {},
 ): Promise<Classification> {
+  // A hung connection used to park the row at `status: "processing"` forever,
+  // with no recovery except deleting the capture.
+  const abort = AbortSignal.timeout(CLASSIFY_TIMEOUT_MS);
+
   try {
     const res = await fetch("/api/classify", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: abort,
       body: JSON.stringify({
         imageDataUrl,
         // Descriptions travel with the names: "Hooks & copy swipe file" alone
@@ -98,7 +142,12 @@ export async function classify(
       }),
     });
 
-    if (res.ok) {
+    // 503 means the key is not configured — a deliberate demo mode, not a
+    // failure. Every other non-OK status is a real failure and must not invent.
+    if (res.status === 503) return simulated(imageDataUrl, threads);
+    if (!res.ok) return failed();
+
+    {
       const { result } = (await res.json()) as {
         result: {
           title: string;
@@ -126,6 +175,7 @@ export async function classify(
         confidence: result.confidence,
         projectSuggestion: match?.id ?? null,
         simulated: false,
+        status: "done",
         tags: normaliseTags(result.tags),
         // Honest provenance: the text came out of the vision model, not an OCR
         // engine. When tesseract runs at ingest this becomes "tesseract" and the
@@ -135,10 +185,11 @@ export async function classify(
       };
     }
   } catch {
-    // network/parse failure — fall through to simulated
+    // Network error, abort timeout, or an unparseable body. All genuine
+    // failures — the capture is kept, the metadata is not invented.
   }
 
-  return simulated(imageDataUrl, threads);
+  return failed();
 }
 
 /**
@@ -218,6 +269,12 @@ function normaliseTags(tags: string[] | undefined): string[] {
   return [...seen].slice(0, 8);
 }
 
+/**
+ * Demo mode, reached only when the server reports no key configured. The canned
+ * text is deliberate here — it lets the whole flow be demonstrated — but the row
+ * is flagged `simulated` so the card, the Inbox and anything downstream can say
+ * so. Nothing about it is allowed to look like a real classification.
+ */
 async function simulated(imageDataUrl: string, threads: Thread[]): Promise<Classification> {
   await new Promise((r) => setTimeout(r, 1400));
   const pick = CANNED[imageDataUrl.length % CANNED.length]!;
@@ -229,6 +286,7 @@ async function simulated(imageDataUrl: string, threads: Thread[]): Promise<Class
     ...pick,
     projectSuggestion: suggestion,
     simulated: true,
+    status: "done",
     ocrSource: null,
     ocrLangs: [],
   };

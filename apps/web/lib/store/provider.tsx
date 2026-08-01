@@ -38,6 +38,11 @@ type Api = State & {
   remove: (s: Screenshot) => Promise<void>;
   visit: (id: string, kind: Revisit["kind"]) => Promise<void>;
   ingest: (s: Screenshot) => Promise<void>;
+  /** Merge fields onto a capture as it currently exists — see `patchScreenshot`. */
+  patch: (
+    id: string,
+    fields: Partial<Screenshot> | ((current: Screenshot) => Partial<Screenshot>),
+  ) => Promise<void>;
   archive: (s: Screenshot, archived: boolean) => Promise<void>;
   forget: (correctionId: string) => Promise<void>;
   say: (m: Omit<Message, "id" | "createdAt">) => Promise<Message>;
@@ -148,6 +153,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       async ingest(shot) {
         await store.putScreenshot(shot);
         upsert(shot);
+      },
+      async patch(id, fields) {
+        const next = await store.patchScreenshot(id, fields);
+        // Null means the row is gone — deleted while the model was running.
+        // Re-inserting it here would resurrect a capture the user threw away.
+        if (next) upsert(next);
       },
       async archive(shot, archived) {
         const next = await store.setArchived(shot, archived);

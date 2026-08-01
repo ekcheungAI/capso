@@ -1,0 +1,176 @@
+<title>Capso — the rack</title>
+<style>
+:root{--paper:#fbf9f5;--surface:#fff;--ink:#141312;--muted:#6b6a64;--line:rgb(20 19 18/.11)}
+@media (prefers-color-scheme:dark){:root{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13)}}
+:root[data-theme=dark]{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13)}
+:root[data-theme=light]{--paper:#fbf9f5;--surface:#fff;--ink:#141312;--muted:#6b6a64;--line:rgb(20 19 18/.11)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1000px;margin:0 auto;padding:56px 24px 100px}
+h1{font-size:34px;letter-spacing:-.03em;margin:0 0 10px;font-weight:600;line-height:1.12}
+h2{font-size:22px;letter-spacing:-.02em;margin:0 0 8px;font-weight:600}
+h3{font-size:18px;margin:0 0 4px;font-weight:600;letter-spacing:-.01em}
+h4{font-size:10.5px;margin:0 0 11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+p{margin:0 0 13px;max-width:68ch}
+.lede{color:var(--muted);font-size:16.5px}
+code{font:.84em ui-monospace,Menlo,monospace;background:color-mix(in srgb,var(--ink) 7%,transparent);padding:2px 5px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:46px 0}
+section{margin-bottom:44px}
+img{max-width:100%;display:block;border-radius:12px}
+.rule{border-left:3px solid var(--ink);padding:4px 0 4px 18px;margin:20px 0}
+.rule p{margin:0}
+.box{border:1px solid var(--line);border-radius:16px;padding:24px 26px;background:var(--surface)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:center}
+.mk{display:grid;place-items:center;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px;min-height:210px}
+.mkd{background:#141312;border-color:transparent}
+.tests{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.icons{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.ic{display:grid;justify-items:center;gap:5px}
+.icb{display:grid;place-items:center}
+.ic span{font-size:10px;color:var(--muted)}
+.dk{background:#141312;border-radius:10px;padding:14px}
+.dk .ic span{color:#9a9890}
+.rack{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:9px;padding:18px;border-radius:14px;background:var(--surface);border:1px solid var(--line)}
+.rack.dk{background:#191817;border-color:transparent}
+.slot{aspect-ratio:1;border-radius:99px;display:block}
+.rack.dk .slot.empty{border:2px solid rgb(237 237 234/.38);background:transparent}
+.rack .slot.empty{border:2px solid rgb(20 19 18/.28);background:transparent}
+.sws{display:flex;flex-wrap:wrap;gap:10px;padding:16px;border-radius:14px;border:1px solid var(--line)}
+.sw{display:grid;justify-items:center;gap:3px;min-width:96px}
+.dot{width:30px;height:30px;border-radius:99px;display:block}
+.sw b{font-size:12px;font-weight:600}
+.sw code{font-size:10px;background:none;padding:0;opacity:.75}
+.sw em{font-size:10px;font-style:normal;opacity:.6}
+.sws[style*="141312"]{color:#ededea;border-color:rgb(237 237 234/.13)}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+td,th{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.next{counter-reset:s;list-style:none;padding:0;margin:14px 0 0}
+.next li{counter-increment:s;position:relative;padding-left:30px;margin-bottom:9px;font-size:13.5px}
+.next li::before{content:counter(s);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:999px;background:var(--ink);color:var(--paper);font-size:11px;display:grid;place-items:center;font-weight:600}
+@media(max-width:800px){.two,.tests{grid-template-columns:1fr}.w{padding:32px 16px 70px}}
+</style>
+
+<div class="w">
+<h1>It isn't a character. It's the rack.</h1>
+<p class="lede">All four of your references are the same satisfaction — capsules in an ordered
+array, each a different jewel colour, held in a neutral shell. That is a much better brief than a
+mascot, and it maps onto Capso almost exactly.</p>
+
+<hr/>
+
+<section>
+<div class="rule"><p><strong>The grid is your masonry wall. The jewel lids are intent colours. The
+neutral box is the UI.</strong> And the feeling you named — <em>everything is where it belongs</em>
+— is what a full rack does that a pile of screenshots never will.</p></div>
+<p>The OPRESSO mark in your first reference is also instructive: it is a capsule seen <em>from
+above</em>, which is a ring. Top-down is the view that makes a capsule into a logo.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>The mark</h2>
+<div class="two">
+  <div class="mk"><svg viewBox="612 612 829 829" width="190" height="190" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#141312" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#141312" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div>
+  <div>
+    <h3>A capsule lid, which is also a C</h3>
+    <p>Seen from overhead: the flange ring, the sealed centre, and one notch cut through the rim.
+    The gap and the notch together make the ring read as a <strong>C</strong> — the initial and
+    the object in one form, without drawing a letter.</p>
+    <p style="margin:0">It solves what the notched disc from the last round could not: it says
+    <em>capsule</em> and <em>Capso</em> at the same time, and it still reduces to a single
+    silhouette.</p>
+  </div>
+</div>
+<div class="tests">
+  <div><h4>Reduction</h4><div class="icons"><div class="ic"><div class="icb" style="width:128px;height:128px"><svg viewBox="612 612 829 829" width="128" height="128" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#141312" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#141312" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>128</span></div><div class="ic"><div class="icb" style="width:48px;height:48px"><svg viewBox="612 612 829 829" width="48" height="48" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#141312" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#141312" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>48</span></div><div class="ic"><div class="icb" style="width:34px;height:34px"><svg viewBox="612 612 829 829" width="32" height="32" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#141312" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#141312" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>32</span></div><div class="ic"><div class="icb" style="width:34px;height:34px"><svg viewBox="612 612 829 829" width="16" height="16" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#141312" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#141312" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>16</span></div></div></div>
+  <div><h4>On the dark shell</h4><div class="dk"><div class="icons"><div class="ic"><div class="icb" style="width:128px;height:128px"><svg viewBox="612 612 829 829" width="128" height="128" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>128</span></div><div class="ic"><div class="icb" style="width:48px;height:48px"><svg viewBox="612 612 829 829" width="48" height="48" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>48</span></div><div class="ic"><div class="icb" style="width:34px;height:34px"><svg viewBox="612 612 829 829" width="32" height="32" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>32</span></div><div class="ic"><div class="icb" style="width:34px;height:34px"><svg viewBox="612 612 829 829" width="16" height="16" aria-hidden="true" style="display:block"><path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.35 657.421 C 1015.37 656.584 1033.59 656.763 1041.92 657 C 1109.19 658.67 1174.59 679.472 1230.47 716.968 C 1313.11 772.547 1370.18 858.78 1389.04 956.568 C 1376.94 959.631 1353.25 962.484 1340.16 964.312 C 1318.44 967.347 1294.16 971.438 1272.52 973.561 C 1261.57 930.242 1250.11 901.339 1221.43 865.956 C 1133.07 756.972 976.778 741.384 869.119 830.177 C 817.946 872.258 785.544 932.911 779.014 998.842 C 772.41 1066.33 792.91 1133.67 835.998 1186.03 C 878.417 1236.88 939.226 1268.9 1005.16 1275.09 C 1071.08 1281.19 1136.68 1260.55 1187.23 1217.8 C 1193.76 1212.92 1207.76 1198.79 1212.95 1192.89 C 1247.39 1153.75 1260.92 1122.96 1272.75 1073.85 C 1311.54 1076.15 1350.96 1082.11 1389.79 1085.92 C 1378.46 1153.21 1348.79 1216.07 1304.05 1267.6 C 1239.58 1341.62 1148 1386.54 1050.01 1392.19 C 953.247 1398.03 858.085 1365.49 785.161 1301.63 C 720.857 1244.96 677.571 1165.66 664.526 1080.98 C 631.388 865.854 790.237 670.365 1007.35 657.421 z"/>
+<path transform="translate(0,0)" fill="#f4f1ea" d="M 1007.06 808.66 C 1126.42 797.284 1232.36 884.942 1243.52 1004.32 C 1254.68 1123.7 1166.83 1229.48 1047.43 1240.43 C 928.335 1251.35 822.885 1163.77 811.752 1044.69 C 800.618 925.613 888.006 820.007 1007.06 808.66 z"/></svg></div><span>16</span></div></div></div></div>
+</div>
+</section>
+
+<hr/>
+
+<section>
+<h2>The system — a rack that fills as you use it</h2>
+<p>Every capture is a lid. Its colour is its intent. <strong>An empty ring is a slot not yet
+filed</strong> — so the rack shows you, at a glance, both what you have and what still needs you.
+That is the "insight" feeling you asked for, and it needs no chart.</p>
+<div class="rack dk" style="--cols:10"><span class="slot" style="background:#d4a94a"></span><span class="slot" style="background:#5a8ee0"></span><span class="slot" style="background:#a487e6"></span><span class="slot empty"></span><span class="slot" style="background:#dd9060"></span><span class="slot" style="background:#e0697c"></span><span class="slot" style="background:#9fb0c4"></span><span class="slot" style="background:#d4a94a"></span><span class="slot" style="background:#5a8ee0"></span><span class="slot" style="background:#a487e6"></span><span class="slot" style="background:#4fb39a"></span><span class="slot empty"></span><span class="slot" style="background:#e0697c"></span><span class="slot" style="background:#9fb0c4"></span><span class="slot" style="background:#d4a94a"></span><span class="slot" style="background:#5a8ee0"></span><span class="slot" style="background:#a487e6"></span><span class="slot" style="background:#4fb39a"></span><span class="slot" style="background:#dd9060"></span><span class="slot empty"></span><span class="slot" style="background:#9fb0c4"></span><span class="slot" style="background:#d4a94a"></span><span class="slot empty"></span><span class="slot" style="background:#a487e6"></span><span class="slot" style="background:#4fb39a"></span><span class="slot" style="background:#dd9060"></span><span class="slot" style="background:#e0697c"></span><span class="slot" style="background:#9fb0c4"></span><span class="slot" style="background:#d4a94a"></span><span class="slot" style="background:#5a8ee0"></span><span class="slot empty"></span><span class="slot" style="background:#4fb39a"></span><span class="slot" style="background:#dd9060"></span><span class="slot empty"></span><span class="slot" style="background:#9fb0c4"></span><span class="slot" style="background:#d4a94a"></span><span class="slot" style="background:#5a8ee0"></span><span class="slot empty"></span><span class="slot" style="background:#4fb39a"></span><span class="slot" style="background:#dd9060"></span></div>
+<p style="margin-top:14px;font-size:13px;color:var(--muted)">Drawn live in this page from the
+palette below — not an image. The same grid is the app background, the OG card, the empty state and
+the loading state.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>Colour — and a real constraint</h2>
+<p>I sampled the jewel tones straight out of the product photograph rather than inventing them.
+Then I checked them, and found something that decides the direction.</p>
+<div class="rule"><p><strong>True jewel tones only work on a dark shell.</strong> Of seven colours
+sampled from the photo, exactly one cleared 3:1 on both cream and ink. They are saturated and
+mid-dark by nature — which is precisely why every reference you sent uses a black or charcoal
+box.</p></div>
+
+<h4 style="margin-top:26px">Option A — commit to the dark shell, get the full jewel range</h4>
+<div class="sws" style="background:#141312"><div class="sw"><span class="dot" style="background:#d4a94a"></span><b>Gold</b><code>#d4a94a</code><em>8.46:1</em></div><div class="sw"><span class="dot" style="background:#5a8ee0"></span><b>Cobalt</b><code>#5a8ee0</code><em>5.64:1</em></div><div class="sw"><span class="dot" style="background:#a487e6"></span><b>Violet</b><code>#a487e6</code><em>6.35:1</em></div><div class="sw"><span class="dot" style="background:#4fb39a"></span><b>Emerald</b><code>#4fb39a</code><em>7.29:1</em></div><div class="sw"><span class="dot" style="background:#dd9060"></span><b>Copper</b><code>#dd9060</code><em>7.28:1</em></div><div class="sw"><span class="dot" style="background:#e0697c"></span><b>Crimson</b><code>#e0697c</code><em>5.73:1</em></div><div class="sw"><span class="dot" style="background:#9fb0c4"></span><b>Slate</b><code>#9fb0c4</code><em>8.38:1</em></div></div>
+<p style="margin-top:12px;font-size:13px;color:var(--muted)">All seven clear AA on ink. Rich,
+premium, exactly the reference feeling. The cost: the app becomes dark-first, and light mode
+becomes the secondary theme rather than the default.</p>
+
+<h4 style="margin-top:28px">Option B — keep both themes, accept quieter jewels</h4>
+<div class="sws" style="background:var(--surface)"><div class="sw"><span class="dot" style="background:#4a6fa5"></span><b>Reference</b><code>#4a6fa5</code></div><div class="sw"><span class="dot" style="background:#5b7a4b"></span><b>Inspiration</b><code>#5b7a4b</code></div><div class="sw"><span class="dot" style="background:#8f5c80"></span><b>Competitor</b><code>#8f5c80</code></div><div class="sw"><span class="dot" style="background:#6a5ba8"></span><b>Marketing hook</b><code>#6a5ba8</code></div><div class="sw"><span class="dot" style="background:#3e7a75"></span><b>Content idea</b><code>#3e7a75</code></div><div class="sw"><span class="dot" style="background:#a8465c"></span><b>UX bug</b><code>#a8465c</code></div></div>
+<p style="margin-top:12px;font-size:13px;color:var(--muted)">The six already shipping in
+<code>INTENT_COLOR</code>. Same hue families, pulled to mid-tone so one value clears 3:1 on cream
+<em>and</em> ink. Less jewel-like, but no theme compromise and already in the product.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>The feeling, photographed</h2>
+<img src="renders-rack/R5-hero-b.png" alt="Charcoal drawer of jewel-toned capsules on a warm desk" style="margin-bottom:14px">
+<p style="font-size:13px;color:var(--muted)">Generated to the same brief as your references, with
+the left third left empty for a headline. This is the OG card, the landing hero and the App Store
+shot — the register the brand photographs in, rather than illustrates in.</p>
+<img src="renders-rack/R4-box-a.png" alt="Top-down box of jewel capsules" style="margin-top:16px;max-width:420px">
+</section>
+
+<hr/>
+
+<section>
+<div class="box" style="border-color:var(--ink)">
+<h4>Recommendation</h4>
+<p style="font-size:21px;font-weight:600;letter-spacing:-.015em;margin-bottom:12px">
+The lid mark, the rack as the system, and Option B on colour.</p>
+<p>The mark and the rack I would take without hesitation — they came out of your references and
+they are better than anything I proposed unprompted. The lid says capsule and C at once; the rack
+turns your intent taxonomy into the thing people will remember.</p>
+<p><strong>On colour I would take B, narrowly.</strong> A is more beautiful and it is what your
+references actually look like — but it commits the product to dark-first, and your users are
+capturing bright screenshots all day that will sit on that dark ground. B keeps both themes, is
+already shipping, and the jewel richness lives in the photography instead, where nothing has to
+pass a contrast check.</p>
+<p style="margin:0"><strong>If you want A, say so.</strong> It is the more striking product and the
+argument for it is real — it is just a bigger decision than a palette. It changes the default theme.</p>
+<h4 style="margin-top:22px">Next</h4>
+<ol class="next">
+  <li>Hand-redraw the lid mark on a grid — ring weight, notch width and the gap need to be exact</li>
+  <li>Run it through <code>build_icons.py</code> for favicon, extension, <code>.icns</code> and tray</li>
+  <li>Build the rack as a real component — it is a CSS grid of dots, nothing more</li>
+  <li>Serif logotype lockups beside the lid, set in a real webfont</li>
+  <li>Shoot the hero properly once the mark exists, so the box can carry it</li>
+</ol>
+</div>
+</section>
+</div>

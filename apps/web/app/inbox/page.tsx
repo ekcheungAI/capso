@@ -13,7 +13,7 @@ import { classify, fewShotLines } from "@/lib/classify";
  * number keys pick a project. Three verbs only (Notion Mail): Confirm / Try again / Ignore.
  */
 export default function InboxPage() {
-  const { ready, inbox, threads, threadName, assign, ingest, screenshots, corrections } = useStore();
+  const { ready, inbox, threads, threadName, assign, patch, screenshots, corrections } = useStore();
   const [rerunning, setRerunning] = useState<string | null>(null);
   const toast = useToast();
 
@@ -93,21 +93,39 @@ export default function InboxPage() {
                   {s.title}
                 </Link>
                 <IntentChip intent={s.intent} />
-                <ConfidenceBar value={s.confidence} />
+                {/* A confidence bar over a classification that never happened
+                    reads as a model judgement. It is not one. */}
+                {s.status === "unprocessed" ? (
+                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                    Couldn’t be read — try again
+                  </span>
+                ) : s.simulated ? (
+                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                    Sample data
+                  </span>
+                ) : (
+                  <ConfidenceBar value={s.confidence} />
+                )}
               </div>
 
               <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{s.summary}</p>
               <p className="mt-1 text-xs text-muted italic">{s.whySaved}</p>
 
-              <p className="mt-2 text-xs">
-                <span className="text-muted">Suggested — </span>
-                <span className="font-medium">{threadName(s.suggestedThreadId)}</span>
-              </p>
+              {s.suggestedThreadId && (
+                <p className="mt-2 text-xs">
+                  <span className="text-muted">Suggested — </span>
+                  <span className="font-medium">{threadName(s.suggestedThreadId)}</span>
+                </p>
+              )}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => void file(s, s.suggestedThreadId)}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
+                  // With no suggestion, `threadName(null)` renders "Inbox" and
+                  // Confirm assigns null → null: a visible no-op that still
+                  // wrote a correction teaching the model to file into Inbox.
+                  disabled={!s.suggestedThreadId}
+                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
                 >
                   Confirm
                 </button>
@@ -147,8 +165,11 @@ export default function InboxPage() {
                       // with, or the second guess is worse-informed than the first.
                       { pageUrl: s.pageUrl, pageTitle: s.pageTitle },
                     );
-                    await ingest({
-                      ...s,
+                    // A patch, so a re-read cannot clobber edits made while it
+                    // ran — and so `status` actually moves. Without it, a
+                    // capture stuck at "processing" stayed stuck: rendered as
+                    // "Analysing…" forever, undraggable, invisible to /review.
+                    await patch(s.id, {
                       title: r.title,
                       summary: r.summary,
                       whySaved: r.whySaved,
@@ -157,9 +178,10 @@ export default function InboxPage() {
                       type: r.type,
                       confidence: r.confidence,
                       suggestedThreadId: r.projectSuggestion,
-                      // Model-owned fields refresh; `userTags` rides through on
-                      // the spread, because a re-read must never discard tags
-                      // the owner added by hand.
+                      status: r.status,
+                      simulated: r.simulated,
+                      // `userTags` is untouched — a re-read must never discard
+                      // tags the owner added by hand.
                       tags: r.tags,
                       ocrSource: r.ocrSource,
                       ocrLangs: r.ocrLangs,
