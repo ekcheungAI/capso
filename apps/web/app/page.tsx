@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { useMoveCaptures } from "@/lib/move";
+import { resurface } from "@/lib/resurface";
 import type { Intent, Screenshot, Thread } from "@/lib/store";
 import {
   DropZone,
@@ -13,6 +14,7 @@ import {
   LedgerStrip,
   Masonry,
   SkeletonGrid,
+  Thumb,
   useDragCount,
 } from "@/components/ui";
 
@@ -39,9 +41,12 @@ const GROUPINGS: [Grouping, string][] = [
  * not a date you did not choose and cannot remember.
  */
 export default function LibraryPage() {
-  const { ready, screenshots, filed, inbox, threads, threadName, assign } = useStore();
+  const { ready, screenshots, filed, inbox, threads, threadName, assign, revisits } = useStore();
   const move = useMoveCaptures();
   const dragCount = useDragCount();
+  // Stamped once per mount rather than read during render, for the same reason
+  // `range.since` is: Date.now() in a render body is not a pure function.
+  const [mountedAt] = useState(() => Date.now());
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [grouping, setGrouping] = useState<Grouping>("project");
@@ -93,6 +98,23 @@ export default function LibraryPage() {
 
   const filtering = intent !== "all" || project !== "all" || range.kind !== "all";
 
+  /**
+   * The second clause of the brand promise: the rack holds everything, Capso
+   * knows which one to pull. Deliberately not filtered with the library below —
+   * this is Capso's choice, not a view of the user's, so a filter the user set
+   * on the grid must not silently change what gets resurfaced.
+   */
+  const worthALook = useMemo(
+    () => resurface(screenshots, revisits, threadName, 3, mountedAt),
+    [screenshots, revisits, threadName, mountedAt],
+  );
+
+  /** How many Inbox captures /review can actually act on — it only sweeps guesses. */
+  const sweepable = useMemo(
+    () => inbox.filter((s) => s.status === "done" && s.suggestedThreadId !== null).length,
+    [inbox],
+  );
+
   if (!ready) return <SkeletonGrid />;
   if (screenshots.length === 0 && threads.length === 0)
     return (
@@ -114,6 +136,12 @@ export default function LibraryPage() {
   const moveSelected = async (threadId: string) => {
     await move(threadId, [...selected]);
     setSelected(new Set());
+  };
+
+  const resetFilters = () => {
+    setIntent("all");
+    setProject("all");
+    setRange({ kind: "all", since: 0 });
   };
 
   /**
@@ -139,18 +167,17 @@ export default function LibraryPage() {
       {/* What needs you, before what you already dealt with. */}
       {inbox.length > 0 && (
         <Link
-          // Three or more is a batch, and a batch is faster to clear in one
-          // sweep than card by card — that is the whole reason /review exists.
-          href={inbox.length >= 3 ? "/review" : "/inbox"}
+          // Send to the sweep whenever there is anything to sweep. The old
+          // threshold was three, which meant two pending suggestions could not
+          // reach /review at all — and a two-item sweep is still a sweep.
+          href={sweepable > 0 ? "/review" : "/inbox"}
           className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-xs hover:border-accent"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent" />
           <span>
             <span className="font-medium">{inbox.length} captures</span> need a project
           </span>
-          <span className="ml-auto text-muted">
-            {inbox.length >= 3 ? "Review all →" : "Triage →"}
-          </span>
+          <span className="ml-auto text-muted">{sweepable > 0 ? "Review all →" : "Triage →"}</span>
         </Link>
       )}
 
@@ -161,6 +188,10 @@ export default function LibraryPage() {
         waiting={inbox.length}
         archived={screenshots.filter((s) => s.archived).length}
       />
+
+      {/* Hidden while filtering: the grid below is then answering a question the
+          user asked, and an unrelated suggestion on top of it is interruption. */}
+      {!filtering && <ResurfaceShelf items={worthALook} />}
 
       <div className="flex flex-wrap items-center gap-2">
         <Segmented value={grouping} options={GROUPINGS} onChange={setGrouping} />
@@ -202,14 +233,7 @@ export default function LibraryPage() {
         </Select>
 
         {filtering && (
-          <button
-            onClick={() => {
-              setIntent("all");
-              setProject("all");
-              setRange({ kind: "all", since: 0 });
-            }}
-            className="text-xs text-muted underline underline-offset-2"
-          >
+          <button onClick={resetFilters} className="text-xs text-muted underline underline-offset-2">
             Reset
           </button>
         )}
@@ -244,7 +268,11 @@ export default function LibraryPage() {
           <EmptyState
             title="No projects yet"
             body="Make one in the sidebar, or let a capture suggest its own from the Inbox."
-            action="Group by month to browse everything chronologically"
+            action={
+              <button onClick={() => withTransition(() => setGrouping("month"))}>
+                Browse by month instead
+              </button>
+            }
           />
         ) : (
           <>
@@ -290,7 +318,13 @@ export default function LibraryPage() {
               ? "These filters exclude everything you've saved so far."
               : "Drop an image anywhere on this page, paste from the clipboard, or press Capture."
           }
-          action={filtering ? "Reset the filters to see all captures" : "Your first capture files itself"}
+          action={
+            filtering ? (
+              <button onClick={resetFilters}>Reset the filters to see all captures</button>
+            ) : (
+              "Your first capture files itself"
+            )
+          }
         />
       ) : (
         (grouping === "month" ? groupByMonth(results) : groupByIntent(results)).map(
@@ -335,7 +369,7 @@ function Shelf({
     <DropZone armed={armed} onDropIds={onDropIds} lift={false} className="-mx-2 px-2 py-2">
       <div className="mb-3 flex flex-wrap items-baseline gap-2">
         <h2 className="text-base font-semibold tracking-tight">
-          <Link href={`/threads/${thread.id}`} className="hover:text-accent">
+          <Link href={`/threads/${thread.id}`} className="hover:underline">
             {thread.name}
           </Link>
         </h2>
@@ -377,6 +411,52 @@ function Shelf({
         />
       )}
     </DropZone>
+  );
+}
+
+/**
+ * Captures Capso thinks are worth another look, above the projects.
+ *
+ * Three rules from `drafts/brand/GUIDELINES.html`, all load-bearing:
+ * every card states its reason, there is no badge and no count, and nothing
+ * renders at all when there is nothing to say. An empty shelf is information;
+ * an empty shelf with a heading over it is furniture.
+ *
+ * Opening a capture records a revisit, which is exactly what removes it from
+ * the next call to `resurface()` — so the only two ways off this shelf are the
+ * two things the user might genuinely want to do, and neither needs a dismiss
+ * button that would need somewhere to store its state.
+ */
+function ResurfaceShelf({ items }: { items: { s: Screenshot; reason: string }[] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <section aria-labelledby="resurface-heading" className="space-y-2">
+      <h2 id="resurface-heading" className="text-[11px] uppercase tracking-wide text-muted">
+        Worth another look
+      </h2>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map(({ s, reason }) => (
+          <Link
+            key={s.id}
+            href={`/s/${s.id}`}
+            className="flex gap-3 rounded-xl bg-surface p-2 ring-1 ring-line hover:ring-accent/60"
+          >
+            <span className="w-16 shrink-0">
+              <Thumb s={s} />
+            </span>
+            <span className="min-w-0 flex-1 py-0.5">
+              <span className="block truncate text-sm font-medium">{s.title}</span>
+              {/* Mandatory. A recommendation the user cannot interrogate is one
+                  they can neither trust nor dismiss. */}
+              <span className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted">
+                {reason}
+              </span>
+            </span>
+          </Link>
+        ))}
+      </div>
+    </section>
   );
 }
 

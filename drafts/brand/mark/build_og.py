@@ -1,131 +1,143 @@
 #!/usr/bin/env python3
 """Compose the Capso OG / share card (1200x630).
 
-The card is generated procedurally rather than by an image model, following the
-same deterministic-SVG approach already used in apps/web/lib/store/placeholder.ts:
-a hue-seeded arrangement of fake screenshot cards. That keeps the brand mark
-pixel-exact and the output reproducible.
-
-The scattered-card background was originally going to come from gpt-image-2 via
-the imagegen skill; that call is currently blocked by the sandbox classifier.
-Swap `backdrop()` for the generated plate if that gets approved.
-
     python3 drafts/brand/mark/build_og.py
-"""
-import subprocess
-from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+Rendered as HTML through headless Chrome rather than drawn with Pillow. That is
+what lets the card use the real wordmark: Fraunces is fetched from Google Fonts
+at render time, so the brand typeface appears in the output without a font file
+being vendored into the repo. Pillow could only ever have given us a system
+serif standing in for it.
+
+Fraunces is SIL OFL 1.1 — commercial use, embedding and redistribution are all
+permitted. Reserved Font Name, so a modified cut may not be called Fraunces; we
+do not modify it.
+
+The card sits in the marketing register (clay ground, espresso type), not the
+product one — see GUIDELINES.html. Ratios are asserted below rather than
+eyeballed.
+"""
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 W, H = 1200, 630
-BG, INK, MUTED, ACCENT, SURFACE = "#fafaf8", "#141412", "#6b6a64", "#e8683a", "#ffffff"
-SF = "/System/Library/Fonts/SFNS.ttf"
+# Same source of truth as every app surface — see packages/shared/src/tokens.json.
+TOKENS = json.loads((HERE / "../tokens.generated.json").resolve().read_text())
+CLAY = TOKENS["marketing"]["clay"]
+ESPRESSO = TOKENS["marketing"]["espresso"]
+SAND = TOKENS["marketing"]["sand"]
+MUTED = TOKENS["marketing"]["muted"]
+INTENTS = list(TOKENS["intent"].values())
 
 
-def font(size: int, weight: int = 400) -> ImageFont.FreeTypeFont:
-    f = ImageFont.truetype(SF, size)
-    try:  # SFNS is variable; set the weight axis where Pillow supports it
-        f.set_variation_by_axes([weight])
-    except Exception:
-        pass
-    return f
+def lum(h: str) -> float:
+    h = h.lstrip("#")
+    c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    c = [v / 12.92 if v <= .03928 else ((v + .055) / 1.055) ** 2.4 for v in c]
+    return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
 
 
-def rounded(d: ImageDraw.ImageDraw, box, r, fill, outline=None, width=1) -> None:
-    d.rounded_rectangle(box, radius=r, fill=fill, outline=outline, width=width)
+def ratio(a: str, b: str) -> float:
+    l1, l2 = lum(a), lum(b)
+    return (max(l1, l2) + .05) / (min(l1, l2) + .05)
 
 
-def backdrop(img: Image.Image) -> None:
-    """Scattered capture cards on the right, negative space on the left."""
-    layer = Image.new("RGBA", (W * 2, H * 2), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    # (x, y, w, h, rotation, tinted)
-    cards = [
-        (1180, 120, 470, 330, -7, False),
-        (1520, 330, 430, 300, 5, True),
-        (1290, 560, 500, 350, -3, False),
-        (1720, 90, 380, 270, 9, False),
-    ]
-    for x, y, w, h, rot, tint in cards:
-        c = Image.new("RGBA", (w + 60, h + 60), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(c)
-        cd.rounded_rectangle([30, 30, 30 + w, 30 + h], radius=28,
-                             fill=(20, 20, 18, 26))  # soft shadow
-        c = c.filter(__import__("PIL.ImageFilter", fromlist=["ImageFilter"]).GaussianBlur(18))
-        cd = ImageDraw.Draw(c)
-        body = ACCENT if tint else SURFACE
-        cd.rounded_rectangle([30, 30, 30 + w, 30 + h], radius=24, fill=body,
-                             outline=(20, 20, 18, 26), width=2)
-        # a few content bars so it reads as a screenshot, not a blank rectangle
-        bar = (250, 250, 248, 200) if tint else (20, 20, 18, 30)
-        cd.rounded_rectangle([64, 70, 64 + int(w * 0.34), 92], radius=11, fill=bar)
-        for i, frac in enumerate((0.62, 0.44, 0.54)):
-            yy = 126 + i * 34
-            cd.rounded_rectangle([64, yy, 64 + int(w * frac), yy + 16], radius=8, fill=bar)
-        cd.rounded_rectangle([64, h - 40, 64 + 130, h - 4], radius=18,
-                             fill=(250, 250, 248, 220) if tint else (232, 104, 58, 190))
-        c = c.rotate(rot, resample=Image.BICUBIC, expand=True)
-        layer.alpha_composite(c, (x, y))
-    img.alpha_composite(layer.resize((W, H), Image.LANCZOS))
+def lid_inner(uid: str) -> str:
+    src = re.sub(r"<!--.*?-->", "", (HERE / "capso-lid.svg").read_text(), flags=re.S)
+    body = src[src.index(">", src.index("<svg")) + 1: src.rindex("</svg>")]
+    return (body.replace('id="capso-notch"', f'id="cn{uid}"')
+                .replace("url(#capso-notch)", f"url(#cn{uid})").strip())
 
 
-def mark(size: int) -> Image.Image:
-    """Render the real icon at size, straight from the SVG source."""
-    png = OUT / f"_og_mark_{size}.png"
-    html = OUT / "_og.html"
-    svg = HERE / "capso-icon-web.svg"
-    html.write_text(
-        f'<style>html,body{{margin:0;background:transparent}}'
-        f'img{{display:block;width:{size}px;height:{size}px}}</style>'
-        f'<img src="{svg.name}">'
-    )
-    import shutil
-    shutil.copy(svg, OUT / svg.name)
-    subprocess.run(
-        [str(CHROME), "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-         f"--screenshot={png}", f"--window-size={size},{size}",
-         "--default-background-color=00000000", f"file://{html}"],
-        check=True, capture_output=True,
-    )
-    im = Image.open(png).convert("RGBA")
-    png.unlink(missing_ok=True)
-    html.unlink(missing_ok=True)
-    (OUT / svg.name).unlink(missing_ok=True)
-    return im
+def lid(size: int, color: str, uid: str) -> str:
+    return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" aria-hidden="true" '
+            f'style="display:block;flex:none;color:{color}">{lid_inner(uid)}</svg>')
+
+
+def rack() -> str:
+    """A filled rack on the right — the product's own metaphor, held still.
+
+    Each slot carries one intent hue, which is the honest picture of what the
+    app looks like: neutral furniture, colour only where a capture is.
+    """
+    slots = "".join(
+        f'<div class="slot">{lid(58, ESPRESSO, f"r{i}")}'
+        f'<span class="dot" style="background:{c}"></span></div>'
+        for i, c in enumerate(INTENTS))
+    return f'<div class="rack">{slots}</div>'
+
+
+def html() -> str:
+    return f"""<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,600&display=block" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0}}
+html,body{{width:{W}px;height:{H}px;overflow:hidden}}
+body{{background:{CLAY};color:{ESPRESSO};display:flex;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}}
+.left{{flex:1;padding:64px 0 64px 72px;display:flex;flex-direction:column}}
+.lock{{display:flex;align-items:center;gap:16px;font-family:'Fraunces',serif;
+  font-weight:600;font-size:38px;letter-spacing:-.035em;line-height:1}}
+h1{{font-family:'Fraunces',serif;font-weight:600;font-size:74px;line-height:1.02;
+  letter-spacing:-.042em;margin-top:auto}}
+h1 em{{font-style:italic}}
+.sub{{font-size:23px;color:{MUTED};margin-top:26px;max-width:24ch;line-height:1.45}}
+.foot{{display:flex;align-items:center;gap:12px;margin-top:auto;font-size:17px;color:{MUTED}}}
+kbd{{font:15px ui-monospace,Menlo,monospace;background:{SAND};border-radius:7px;padding:5px 9px}}
+.right{{width:392px;display:grid;place-items:center}}
+.rack{{background:{SAND};border-radius:26px;padding:26px 0;width:150px;
+  display:flex;flex-direction:column;align-items:center;gap:22px;
+  box-shadow:0 24px 60px rgb(49 27 15/.16)}}
+.slot{{position:relative;display:grid;place-items:center}}
+.dot{{position:absolute;right:-19px;top:50%;margin-top:-4px;
+  width:8px;height:8px;border-radius:99px;display:block}}
+</style>
+<div class="left">
+  <div class="lock">{lid(40, ESPRESSO, "hd")}Capso</div>
+  <h1>You’re not organised.<br/><em>Capso is.</em></h1>
+  <p class="sub">Every screenshot read, filed, and findable by a sentence.</p>
+  <div class="foot"><kbd>⌃</kbd><kbd>⇧</kbd><kbd>C</kbd><span>and it’s handled.</span></div>
+</div>
+<div class="right">{rack()}</div>
+"""
 
 
 def main() -> int:
+    if not CHROME.exists():
+        print(f"error: Chrome not found at {CHROME}", file=sys.stderr)
+        return 1
     OUT.mkdir(exist_ok=True)
-    img = Image.new("RGBA", (W, H), BG)
-    backdrop(img)
 
-    # Left column gets a soft wash so type stays legible over any stray card.
-    wash = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(wash).rectangle([0, 0, 700, H], fill=(250, 250, 248, 216))
-    img.alpha_composite(wash)
+    for name, fg, bg, floor in [("espresso on clay", ESPRESSO, CLAY, 4.5),
+                                ("muted on clay", MUTED, CLAY, 4.5),
+                                ("espresso on sand", ESPRESSO, SAND, 4.5)]:
+        r = ratio(fg, bg)
+        assert r >= floor, f"{name} is {r:.2f}:1, below {floor}"
+        print(f"  {name:20s} {r:5.2f}:1")
 
-    d = ImageDraw.Draw(img)
-    m = mark(84)
-    img.alpha_composite(m, (80, 92))
-    d.text((184, 116), "Capso", font=font(58, 640), fill=INK)
-
-    d.text((80, 248), "Everything you capture", font=font(60, 600), fill=INK)
-    d.text((80, 318), "becomes a capsule.", font=font(60, 600), fill=ACCENT)
-
-    d.text((80, 416), "Screenshot memory — capture, organise, retrieve.",
-           font=font(27, 400), fill=MUTED)
-
-    d.line([80, 496, 132, 496], fill=ACCENT, width=3)
-    d.text((80, 520), "⌃⇧C  ·  every screenshot, searchable by a sentence",
-           font=font(22, 400), fill=MUTED)
-
+    page = OUT / "_og.html"
+    page.write_text(html())
     out = OUT / "og-image.png"
-    img.convert("RGB").save(out, quality=95)
-    print(f"wrote {out} ({out.stat().st_size:,} bytes, {W}x{H})")
+    subprocess.run(
+        [str(CHROME), "--headless", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+         # the font has to arrive before the shot; display:block above stops
+         # Chrome painting a fallback serif in the meantime
+         "--virtual-time-budget=6000", "--force-device-scale-factor=1",
+         f"--screenshot={out}", f"--window-size={W},{H}", f"file://{page}"],
+        check=True, capture_output=True,
+    )
+    page.unlink(missing_ok=True)
+    print(f"\nwrote {out} ({out.stat().st_size:,} bytes, {W}x{H})")
     return 0
 
 

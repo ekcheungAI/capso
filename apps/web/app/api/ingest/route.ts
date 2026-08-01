@@ -39,6 +39,9 @@ function reclaim() {
   }
 }
 
+/** Raster only — `data:image/svg+xml` is markup, not a screenshot, and can carry a script. */
+const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp);base64,/i;
+
 export async function POST(req: Request) {
   let body: (Partial<Pending> & { ack?: string[] }) | null;
   try {
@@ -47,14 +50,30 @@ export async function POST(req: Request) {
     return json({ error: "invalid JSON body" }, 400, req);
   }
 
-  // An acknowledgement, not a capture: the client has stored these for real.
+  const origin = req.headers.get("origin");
+
+  // An acknowledgement, not a capture: the open Capso tab sends this after it has
+  // genuinely stored an item, so it must come from this app's own origin — not from
+  // the extension (which never acks) and not from any other site.
   if (Array.isArray(body?.ack)) {
+    if (origin !== new URL(req.url).origin) return json({ error: "forbidden" }, 403, req);
     for (const id of body.ack) inFlight.delete(id);
     return json({ acked: body.ack.length }, 200, req);
   }
 
-  if (!body?.imageDataUrl?.startsWith("data:image/")) {
-    return json({ error: "imageDataUrl must be an image data URL" }, 400, req);
+  // CORS blocks a browser from *reading* a cross-origin response, but a `Content-Type:
+  // text/plain` body is a CORS "simple request" — no preflight, and the POST still lands.
+  // That let any site the user had open write forged captures into their library. The
+  // extension is the only legitimate caller, so require the same origin the CORS policy
+  // already trusts, independent of whether this request happened to trigger a preflight.
+  if (!origin?.startsWith("chrome-extension://")) {
+    return json({ error: "forbidden" }, 403, req);
+  }
+
+  // `.startsWith` on a non-string (e.g. a bare number in the JSON body) threw and
+  // fell through to a bodyless 500 instead of the 400 every other bad input gets.
+  if (typeof body?.imageDataUrl !== "string" || !IMAGE_DATA_URL.test(body.imageDataUrl)) {
+    return json({ error: "imageDataUrl must be a png/jpeg/webp data URL" }, 400, req);
   }
 
   queue.push({
@@ -79,12 +98,29 @@ export async function POST(req: Request) {
 }
 
 /**
+ * Set only by the open Capso tab's own poll. A plain `<img src>` or a
+ * cross-site GET carries no Origin header at all, so Origin alone cannot gate
+ * this — but only same-origin JS can attach a custom header, and a
+ * cross-origin `fetch` that tries to would trigger a preflight that `cors()`
+ * below refuses for anything but the extension.
+ */
+const POLL_HEADER = "x-capso-poll";
+
+/**
  * Hands out pending captures. They are held in flight rather than deleted:
  * `splice` used to remove them at read time, so if the client threw while
  * storing item 2 of 5 — or the tab closed mid-loop — items 3 to 5 were gone
  * from both sides with nothing reporting it.
+ *
+ * This used to have no origin check at all and was destructive (it moves
+ * every pending item into in-flight state), so any page — even a bare `<img>`
+ * tag — could repeatedly steal the extension's queued captures before the
+ * real Capso tab ever polled.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  if (req.headers.get(POLL_HEADER) !== "1") {
+    return json({ error: "forbidden" }, 403, req);
+  }
   reclaim();
   const items = queue.splice(0, queue.length);
   const now = Date.now();

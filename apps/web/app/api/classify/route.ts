@@ -61,6 +61,13 @@ Tag rules:
 - Fewer good tags beat more vague ones. Return [] rather than padding.`;
 
 export async function POST(req: Request) {
+  // Same-origin only. This route has no CORS headers, so a cross-origin call
+  // could never read the response — but the call still reached MiniMax and
+  // spent the owner's paid API budget before this check existed.
+  if (req.headers.get("origin") !== new URL(req.url).origin) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   if (!isConfigured()) {
     return NextResponse.json(
       { configured: false, error: "MINIMAX_TEXT_API_KEY not set" },

@@ -2,35 +2,34 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { intent as BRAND_INTENT } from "@capso/shared/tokens";
 import { placeholder, type Intent, type Screenshot } from "@/lib/store";
 
-export const INTENT_LABEL: Record<Intent, string> = {
-  design_inspiration: "Design inspiration",
-  ux_bug: "UX bug",
-  competitor: "Competitor",
-  marketing_hook: "Marketing hook",
-  content_idea: "Content idea",
-  reference: "Reference",
-  other: "Other",
-};
+// Defined in lib/intent.ts so the retriever can use them without pulling in a
+// React module; re-exported here because every UI call site imports them from ui.
+export { INTENT_LABEL, INTENTS } from "@/lib/intent";
+import { INTENT_LABEL } from "@/lib/intent";
 
-export const INTENTS = Object.keys(INTENT_LABEL) as Intent[];
+/**
+ * Shown wherever an answer could not be written because the model is not
+ * configured. One string for one condition: /search and the thread chat used to
+ * phrase this two different ways and both named the environment variable, which
+ * is error-code language at the surface (15 §UI tone — codes go to tooltips and
+ * logs). The variable name still lives on the sidebar status dot's `title`.
+ */
+export const ANSWERS_OFF = "Answers are off right now — everything below is still real.";
 
 /**
  * Intent is the only taxonomy the product already computes, and it rendered as
- * seven identical grey chips. These are mid-tone and low-chroma on purpose: one
- * value clears 3:1 on both the light and dark ground, so no light/dark pair is
- * needed. Shown as a dot, never as text colour — 3:1 is the right bar for that.
- * Cool-leaning throughout so they stay distinct from the warm accent, which is
- * reserved for the product's own voice. `ux_bug` earns its warmth as an alert.
+ * seven identical grey chips. The values live in packages/shared/src/tokens.json
+ * so the extension, the Mac app and the asset builders all get the same six —
+ * see tokens.ts for why they are mid-tone and low-chroma.
+ *
+ * `other` has no colour by design: it is the absence of a classification, not a
+ * seventh category, so it inherits the muted text token.
  */
 export const INTENT_COLOR: Record<Intent, string> = {
-  reference: "#4a6fa5",
-  design_inspiration: "#5b7a4b",
-  competitor: "#8f5c80",
-  marketing_hook: "#6a5ba8",
-  content_idea: "#3e7a75",
-  ux_bug: "#a8465c",
+  ...(BRAND_INTENT as Record<Exclude<Intent, "other">, string>),
   other: "var(--muted)",
 };
 
@@ -58,15 +57,6 @@ export function ConfidenceBar({ value }: { value: number }) {
         />
       </span>
       <span className="text-[11px] tabular-nums text-muted">{Math.round(value * 100)}%</span>
-    </span>
-  );
-}
-
-export function FilterPill({ label, removable = false }: { label: string; removable?: boolean }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-xs">
-      {label}
-      {removable && <span className="text-muted">×</span>}
     </span>
   );
 }
@@ -138,9 +128,20 @@ export function ScreenshotCard({
   suggestion?: { label: string; onConfirm: () => void };
 }) {
   const processing = s.status === "processing";
+  /**
+   * Plays the seat once on confirm. The commit still happens immediately —
+   * optimistic UI is a requirement (15 §interaction principles), so the motion
+   * runs alongside the state change rather than gating it. If the card leaves
+   * the list as a result (Inbox), the animation is simply moot; where it stays
+   * (the library shelves) it is the moment the capture becomes yours.
+   */
+  const [seating, setSeating] = useState(false);
 
   return (
     <div
+      onAnimationEnd={(e) => {
+        if (e.animationName.startsWith("capso-seat")) setSeating(false);
+      }}
       draggable={!processing}
       onDragStart={(e) => {
         // Carry the whole selection when the dragged card is part of one.
@@ -165,14 +166,16 @@ export function ScreenshotCard({
               // has to be visible at grid scale, not only on the card you hover.
               "ring-1 ring-accent/35 ring-dashed hover:ring-accent/70"
             : "ring-1 ring-line hover:ring-accent/60"
-      }`}
+      } ${seating ? "capso-seat capso-crimp" : ""}`}
     >
       {onSelect && !processing && (
         <button
           onClick={() => onSelect(s.id)}
           aria-label={selected ? "Deselect" : "Select"}
-          className={`absolute top-3 left-3 z-10 h-5 w-5 rounded-md border text-[11px] leading-none ${
-            selected ? "border-accent bg-accent text-accent-ink" : "border-line bg-surface opacity-0 group-hover:opacity-100"
+          className={`absolute top-3 left-3 z-10 h-6 w-6 rounded-md border text-[11px] leading-none ${
+            selected
+              ? "border-accent bg-accent text-accent-ink"
+              : "border-line bg-surface opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           }`}
         >
           {selected ? "✓" : ""}
@@ -219,8 +222,11 @@ export function ScreenshotCard({
           {note ? (
             <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{note}</p>
           ) : (
+            // Revealed on focus as well as hover: keyboard users reach this card,
+            // and a summary that only exists under a pointer is invisible to
+            // exactly the people the triage flow is built for.
             !processing && (
-              <p className="mt-1 line-clamp-2 hidden text-xs leading-relaxed text-muted group-hover:block">
+              <p className="mt-1 line-clamp-2 hidden text-xs leading-relaxed text-muted group-focus-within:block group-hover:block">
                 {s.summary}
               </p>
             )
@@ -233,16 +239,19 @@ export function ScreenshotCard({
       {suggestion && !processing && (
         <div className="flex items-center gap-1.5 px-1 pt-1 pb-0.5">
           <button
-            onClick={suggestion.onConfirm}
+            onClick={() => {
+              setSeating(true);
+              suggestion.onConfirm();
+            }}
             className="rounded-full bg-accent px-2.5 py-0.5 text-[11px] font-medium text-accent-ink"
           >
-            ✓ Keep here
+            ✓ Confirm
           </button>
           <Link
             href={`/s/${s.id}`}
             className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:border-accent hover:text-accent"
           >
-            Change
+            Move to…
           </Link>
           <span className="ml-auto text-[11px] text-muted tabular-nums">
             {Math.round(s.confidence * 100)}%
@@ -376,23 +385,44 @@ export function LedgerStrip({
       {waiting > 0 && (
         <>
           {" · "}
-          <Link href="/inbox" className="text-accent hover:underline">
+          <Link href="/inbox" className="underline underline-offset-2">
             {waiting} waiting
           </Link>
         </>
       )}
       {archived > 0 && <> · {archived} archived</>}
-      <span className="ml-2 text-muted/70">Everything you&apos;ve captured is in here.</span>
+      <span className="ml-2 text-muted">Everything you&apos;ve captured is in here.</span>
     </p>
   );
 }
 
-export function EmptyState({ title, body, action }: { title: string; body: string; action: string }) {
+/**
+ * Warm, instructive, exactly one action (15 §empty states).
+ *
+ * `action` is a node rather than a string because it used to render as bare
+ * accent-coloured text: copy like "Back to the library" looked exactly like a
+ * link and did nothing, and /review had to add a second real link underneath to
+ * compensate. Pass a `<Link>` or a `<button>` when there is somewhere to go, a
+ * string when the line is only a statement.
+ */
+export function EmptyState({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-dashed border-line px-6 py-16 text-center">
       <p className="text-sm font-medium">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted">{body}</p>
-      <p className="mt-4 text-xs text-accent">{action}</p>
+      {action !== undefined && (
+        <p className="mt-4 text-xs text-muted [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_button]:text-accent [&_button]:underline [&_button]:underline-offset-2">
+          {action}
+        </p>
+      )}
     </div>
   );
 }

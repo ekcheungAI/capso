@@ -1,0 +1,27 @@
+<!--
+  Capso — the capsule, side profile. 24-unit grid.
+
+  This is the shape that settles the coffee-vs-medicine question, so the geometry
+  is doing real work:
+
+    flange   x3.4 y4 w17.2 h2.3 rx1.15   a wide thin lip at the very top
+    body     tapers 18.4 wide at the flange down to 8.6 at the base
+    base     rx2.6, softly rounded
+
+  A medicine capsule is a SYMMETRIC oblong — same width top and bottom, seam
+  across the middle. A coffee capsule is a TRUNCATED CONE with a flanged rim:
+  widest at the lid, tapering to a narrow base. The taper is the whole tell.
+  Nothing else about the drawing has to say "coffee" once the silhouette does.
+
+  The flange also gives the rack its ledge — this is what rests in a slot.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Capso capsule">
+  <g fill="currentColor">
+    <!-- flange / lid rim -->
+    <rect x="3.4" y="4" width="17.2" height="2.3" rx="1.15"/>
+    <!-- tapering body, rounded base -->
+    <path d="M4.8 6.3 H19.2 L16.9 17.6 a2.6 2.6 0 0 1 -2.55 2.1 h-4.7
+             a2.6 2.6 0 0 1 -2.55 -2.1 Z"/>
+  </g>
+</svg>

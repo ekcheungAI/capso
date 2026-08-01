@@ -23,6 +23,11 @@ Rules:
 type Ctx = { id: string; title: string; summary: string; ocrExcerpt: string; intent: string };
 
 export async function POST(req: Request) {
+  // Same-origin only — see apps/web/app/api/classify/route.ts for why.
+  if (req.headers.get("origin") !== new URL(req.url).origin) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
   if (!isConfigured()) {
     return NextResponse.json({ configured: false, error: "MINIMAX_TEXT_API_KEY not set" }, { status: 503 });
   }

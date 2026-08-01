@@ -8,9 +8,11 @@
     "dev:mac": "pnpm --filter mac tauri dev",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "lint": "pnpm -r --if-present lint",
+    "lint": "pnpm brand:check && pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test",
-    "build:extension": "bash scripts/build-extension.sh"
+    "build:extension": "bash scripts/build-extension.sh",
+    "brand:tokens": "node scripts/gen-tokens.mjs",
+    "brand:check": "node scripts/gen-tokens.mjs --check"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

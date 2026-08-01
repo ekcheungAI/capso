@@ -61,9 +61,20 @@ async function captureActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return fail("No active tab.");
 
-  // chrome:// and the Web Store are off-limits to captureVisibleTab by policy.
-  if (!tab.url || /^(chrome|edge|about|devtools|view-source):/i.test(tab.url)) {
-    return fail("Chrome blocks capture on this page.");
+  // chrome:// and friends are off-limits to captureVisibleTab by policy, so
+  // there is nothing to attempt there.
+  //
+  // A tab whose URL we simply cannot read is a different thing — it means
+  // activeTab has not been granted yet, not that capture is blocked — and it
+  // used to produce this same refusal. Attempt it instead: Chrome's own error
+  // is more accurate than our guess, and it is what surfaces the real reason
+  // on the Web Store, which is https and blocked by policy rather than scheme.
+  const scheme = tab.url?.match(/^([a-z-]+):/i)?.[1]?.toLowerCase();
+  if (scheme && ["chrome", "edge", "about", "devtools", "view-source", "chrome-extension"].includes(scheme)) {
+    // Name the page. "Chrome blocks capture on this page" is true and useless:
+    // the one thing the user needs to know is that *this particular tab* is the
+    // problem and an ordinary one is not.
+    return fail(`Chrome won't allow capture on ${scheme}: pages. Switch to an ordinary tab and try again.`);
   }
 
   let dataUrl;
@@ -103,13 +114,39 @@ async function captureActiveTab() {
 
   const stamp = new Date().toISOString();
   await chrome.storage.local.set({ lastCapture: { title: tab.title ?? tab.url, at: stamp } });
+  await record(true, `Sent “${tab.title ?? tab.url}” to Capso.`);
   notify("Sent to Capso", tab.title ?? tab.url);
   return { ok: true };
 }
 
 function fail(message) {
+  void record(false, message);
   notify("Capture failed", message);
   return { ok: false, message };
+}
+
+/**
+ * Feedback that survives the OS.
+ *
+ * The hotkey path had exactly one way to report anything — `chrome.notifications`
+ * — and macOS suppresses those entirely unless Chrome is allowed to notify in
+ * System Settings. With them off, a capture that worked and a capture that
+ * failed both looked like the extension doing nothing at all. The badge needs no
+ * permission, cannot be silenced, and the popup shows the full sentence.
+ */
+async function record(ok, message) {
+  await chrome.storage.local.set({
+    lastResult: { ok, message, at: new Date().toISOString() },
+  });
+  try {
+    // Text only, no background colour: a service worker cannot read the CSS
+    // custom properties the rest of the extension is styled from, and hardcoding
+    // a hex here is exactly what `pnpm brand:check` exists to stop. The glyph
+    // already carries the distinction.
+    await chrome.action.setBadgeText({ text: ok ? "✓" : "!" });
+  } catch {
+    // Badge is a nicety; never let it fail a capture that otherwise worked.
+  }
 }
 
 function notify(title, message) {

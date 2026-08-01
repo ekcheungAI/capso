@@ -4,11 +4,13 @@ import { use, useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
-import { EmptyState, IntentChip, Thumb } from "@/components/ui";
+import { ANSWERS_OFF, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
+import { retrieve } from "@/lib/retrieve";
 
 export default function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { ready, byThread, screenshots, threadName, threadMessages, say, visit } = useStore();
+  const { ready, byThread, screenshots, threadName, threadMessages, say, threads, visit, revisits } =
+    useStore();
 
   const shots = byThread(id);
   const messages = threadMessages(id);
@@ -26,7 +28,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
 
   const rail = lastCited.length > 0 ? lastCited : shots.slice(0, 2);
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
   if (shots.length === 0)
     return (
       <EmptyState
@@ -44,15 +46,26 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
     setNote(null);
     await say({ threadId: id, role: "user", text: question, citedIds: [] });
 
-    // Retrieval: this project first, then anything else matching the question.
-    const words = question.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-    const others = screenshots.filter(
-      (s) =>
-        s.threadId !== id &&
-        !s.archived &&
-        words.some((w) => `${s.title} ${s.summary} ${s.ocrText}`.toLowerCase().includes(w)),
-    );
-    const scope = [...shots, ...others.slice(0, 4)];
+    // Retrieval: this project's captures ranked by relevance to the question —
+    // not every capture in chronological (effectively oldest-first) order —
+    // then anything else matching, capped at 12 total like /search instead of
+    // sending the whole project unranked and unbounded on every question.
+    const CHAT_SCOPE_LIMIT = 12;
+    const ranked = retrieve(question, shots, threads, shots.length, revisits).map((r) => r.s);
+    // A generic question ("what do these have in common?") scores below
+    // retrieve()'s threshold on every capture — fall back to recency rather
+    // than sending nothing.
+    const inProject = (
+      ranked.length > 0 ? ranked : [...shots].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+    ).slice(0, CHAT_SCOPE_LIMIT);
+    const remaining = CHAT_SCOPE_LIMIT - inProject.length;
+    const others =
+      remaining > 0
+        ? retrieve(question, screenshots.filter((s) => s.threadId !== id), threads, remaining, revisits).map(
+            (r) => r.s,
+          )
+        : [];
+    const scope = [...inProject, ...others];
 
     try {
       const res = await fetch("/api/chat", {
@@ -74,7 +87,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
 
       if (res.status === 503) {
         setNote(
-          "Chat needs MINIMAX_TEXT_API_KEY in apps/web/.env.local. Everything else in the demo works without it.",
+          ANSWERS_OFF,
         );
       } else if (!res.ok) {
         const { error } = (await res.json()) as { error?: string };
@@ -92,7 +105,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
   };
 
   return (
-    <div className="flex gap-6">
+    <div className="flex flex-col gap-6 lg:flex-row">
       <div className="min-w-0 flex-1 space-y-5">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{threadName(id)}</h1>
@@ -158,13 +171,17 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
         </div>
       </div>
 
-      <aside className="hidden w-64 shrink-0 lg:block">
+      {/* Content, not navigation — this used to be `hidden ... lg:block`,
+          which hid the citation thumbnails entirely below 1024px with no
+          fallback. Below lg it's a horizontal strip, matching the captures
+          row above; at lg+ it's the original right-hand column. */}
+      <aside className="w-full shrink-0 lg:w-64">
         <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
           {lastCited.length > 0 ? `Sources · ${rail.length}` : `In this project · ${rail.length}`}
         </p>
-        <ul className="space-y-2">
+        <ul className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
           {rail.map((s) => (
-            <li key={s.id} className="rounded-lg bg-surface p-2 ring-1 ring-line">
+            <li key={s.id} className="w-32 shrink-0 rounded-lg bg-surface p-2 ring-1 ring-line lg:w-auto">
               <Link href={`/s/${s.id}`}>
                 <Thumb s={s} />
               </Link>

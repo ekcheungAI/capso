@@ -18,7 +18,7 @@ export function useMoveCaptures() {
       const moved = ids.map(get).filter((s): s is NonNullable<typeof s> => Boolean(s));
       if (moved.length === 0) return;
 
-      const previous = moved.map((s) => [s, s.threadId] as const);
+      const previous = moved.map((s) => [s.id, s.threadId] as const);
       const run = () => Promise.all(moved.map((s) => assign(s, threadId, "manual")));
 
       // View Transitions make the cards travel to their new positions instead of
@@ -38,7 +38,13 @@ export function useMoveCaptures() {
       toast(
         `Moved ${moved.length > 1 ? `${moved.length} captures` : "1 capture"} to ${name}`,
         () => {
-          for (const [s, prev] of previous) void assign(s, prev, "manual");
+          // Read each capture fresh rather than replaying the pre-move
+          // snapshot — otherwise any edit made during the undo window (a tag,
+          // a note, a landing classify() patch) is silently overwritten.
+          for (const [id, prev] of previous) {
+            const current = get(id);
+            if (current) void assign(current, prev, "manual");
+          }
         },
       );
     },

@@ -1,0 +1,64 @@
+{
+  "$generated": "pnpm brand:tokens — do not edit",
+  "$schema": "./tokens.schema.md",
+  "$note": "CANONICAL BRAND VALUES. Nothing else in this repo may declare a colour. Edit here, then run `pnpm brand:tokens`. Rationale for every value lives in tokens.ts and drafts/brand/GUIDELINES.html.",
+  "ground": "bone",
+  "color": {
+    "light": {
+      "background": "#f4f0eb",
+      "surface": "#faf8f4",
+      "foreground": "#1f1f1e",
+      "muted": "#6f6a62",
+      "line": "rgb(31 31 30 / 0.10)",
+      "accent": "#1f1f1e",
+      "accent-ink": "#f4f0eb",
+      "danger": "#933a4e"
+    },
+    "dark": {
+      "background": "#141412",
+      "surface": "#1c1c19",
+      "foreground": "#ededea",
+      "muted": "#9a9890",
+      "line": "rgb(237 237 234 / 0.12)",
+      "accent": "#ededea",
+      "accent-ink": "#141412",
+      "danger": "#d4808f"
+    }
+  },
+  "intent": {
+    "reference": "#4a6fa5",
+    "design_inspiration": "#5b7a4b",
+    "competitor": "#8f5c80",
+    "marketing_hook": "#6a5ba8",
+    "content_idea": "#3e7a75",
+    "ux_bug": "#a8465c"
+  },
+  "marketing": {
+    "clay": "#ebdbcc",
+    "espresso": "#311b0f",
+    "sand": "#f6ede2",
+    "muted": "#6a5241"
+  },
+  "motion": {
+    "ease-out-strong": "cubic-bezier(0.23, 1, 0.32, 1)",
+    "ease-in-out-strong": "cubic-bezier(0.77, 0, 0.175, 1)",
+    "dur-press": "120ms",
+    "dur-pop": "160ms",
+    "dur-panel": "220ms"
+  },
+  "radius": {
+    "card": "12px",
+    "input": "8px",
+    "panel": "16px",
+    "pill": "999px"
+  },
+  "font": {
+    "ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, system-ui, sans-serif",
+    "display": "Fraunces, Georgia, serif",
+    "mono": "ui-monospace, Menlo, monospace"
+  },
+  "contrastFloors": {
+    "text": 4.5,
+    "nonText": 3
+  }
+}

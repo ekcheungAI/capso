@@ -1,0 +1,520 @@
+<title>Capso — colour and type options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,600&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;600&family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,500&family=Playfair+Display:ital,wght@0,600;1,600&display=block" rel="stylesheet">
+<style>
+:root{--pg:#f4f0eb;--pi:#1f1f1e;--pm:#6f6a62;--pl:rgb(31 31 30/.13);--ps:#faf8f4}
+@media (prefers-color-scheme:dark){:root{--pg:#151513;--pi:#efece5;--pm:#928d84;--pl:rgb(239 236 229/.15);--ps:#1d1d1a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--pg);color:var(--pi);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.w{max-width:1180px;margin:0 auto;padding:58px 30px 110px}
+h1{font-family:'Fraunces',serif;font-weight:600;font-size:48px;letter-spacing:-.04em;
+  line-height:1.04;margin:0 0 14px}
+h2{font-family:'Fraunces',serif;font-weight:600;font-size:29px;letter-spacing:-.03em;margin:0 0 8px}
+h3{font-size:16px;font-weight:600;margin:0 0 7px;display:flex;align-items:center;gap:9px}
+.lede{color:var(--pm);font-size:16.5px;max-width:70ch;margin:0}
+hr{border:0;border-top:1px solid var(--pl);margin:46px 0}
+.tag{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;
+  border:1px solid var(--pl);border-radius:999px;padding:2px 8px;color:var(--pm)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:38px 30px;margin-top:30px}
+figure{margin:0}
+figcaption p{font-size:13.5px;color:var(--pm);margin:0 0 10px;line-height:1.55}
+.hex{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px}
+.hex code{font:10.5px ui-monospace,Menlo,monospace;color:var(--pm);
+  border:1px solid var(--pl);border-radius:5px;padding:1px 5px}
+.frame{border:1px solid var(--pl);border-radius:14px;overflow:hidden;margin-bottom:15px}
+.audit{display:flex;flex-wrap:wrap;gap:6px}
+.m{display:flex;flex-direction:column;border:1px solid var(--pl);border-radius:8px;
+  padding:5px 9px;font-size:9.5px;color:var(--pm);letter-spacing:.02em}
+.m b{font-size:12.5px;color:var(--pi);font-weight:600;margin-top:1px}
+.m i{font-style:normal;font-size:9px}
+.m.bad{border-color:#a8465c;color:#a8465c}.m.bad b{color:#a8465c}
+
+/* ---- the mock ---- */
+.app{background:var(--bg);color:var(--ink);display:grid;grid-template-columns:132px 1fr;
+  height:252px;font-size:9px}
+.app aside{border-right:1px solid var(--line);padding:12px 11px;display:flex;
+  flex-direction:column;gap:11px}
+.wm{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12.5px;letter-spacing:-.02em}
+.app nav,.pl{display:flex;flex-direction:column;gap:6px}
+.app nav span{font-size:9.5px}
+.ph{font-size:7.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.pl span{display:flex;justify-content:space-between;font-size:9.5px}
+.pl i{font-style:normal;color:var(--mu)}
+.app main{padding:12px 13px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.sb{border:1px solid var(--line);background:var(--su);border-radius:7px;padding:7px 9px;
+  color:var(--mu);display:flex;justify-content:space-between;align-items:center;font-size:9.5px}
+.sb kbd{font:7.5px ui-monospace,Menlo,monospace;border:1px solid var(--line);
+  border-radius:3px;padding:1px 4px}
+.rs{display:flex;align-items:center;gap:6px;color:var(--mu);font-size:8.5px;line-height:1.35}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-height:0}
+.c{background:var(--su);border:1px solid var(--line);border-radius:7px;overflow:hidden;
+  display:flex;flex-direction:column;min-width:0}
+.shot{background:color-mix(in srgb,var(--h) 13%,var(--su));padding:6px;flex:1;
+  display:flex;flex-direction:column;gap:4px;position:relative}
+.chrome{display:flex;gap:2px;margin-bottom:2px}
+.chrome i{width:3px;height:3px;border-radius:9px;background:color-mix(in srgb,var(--h) 45%,transparent)}
+.bars{display:flex;flex-direction:column;gap:3px}
+.bars span{height:3px;border-radius:2px;background:color-mix(in srgb,var(--h) 32%,transparent);display:block}
+.pill{position:absolute;right:6px;bottom:6px;width:20px;height:6px;border-radius:9px;
+  background:color-mix(in srgb,var(--h) 62%,transparent)}
+.ct{display:flex;align-items:center;gap:4px;padding:5px 6px;font-size:8px;min-width:0}
+.ct b{font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dot{width:4px;height:4px;border-radius:9px;flex:none;display:block}
+.acts{display:flex;gap:6px;justify-content:flex-end;margin-top:auto}
+.gh{border:1px solid var(--line);background:var(--su);border-radius:999px;padding:5px 11px;font-size:9px}
+.cta{border-radius:999px;padding:5px 13px;font-size:9px;font-weight:500;color:var(--btnink)}
+
+/* ---- type specimens ---- */
+.ptype{background:var(--ps);padding:24px 26px 26px;height:252px;display:flex;
+  flex-direction:column;gap:16px}
+.plock{display:flex;align-items:center;gap:10px;font-size:27px;letter-spacing:-.035em;line-height:1}
+.phead{font-size:34px;line-height:1.06;letter-spacing:-.035em;margin:auto 0 0}
+.phead em{font-style:italic}
+.pui{font-size:12.5px;color:var(--pm);margin:0}
+.pui span{color:var(--pi)}
+.close{border-top:1px solid var(--pl);padding-top:32px;max-width:72ch}
+.close p{margin:0 0 13px}
+code{font:.85em ui-monospace,Menlo,monospace}
+@media(max-width:900px){.grid{grid-template-columns:1fr}h1{font-size:34px}}
+</style>
+
+<div class="w">
+<h1>Colour and type, side by side</h1>
+<p class="lede">Every colour world below renders the same reduced Capso home screen — rail, search,
+a resurfaced line, three captures, both buttons. Only the palette changes, so what you are judging
+is feel rather than swatches. Same for type: identical copy in all six.</p>
+
+<hr/>
+
+<h2>Six colour worlds</h2>
+<p class="lede">Ratios are computed, not eyeballed. All six clear AA; where one is close, the number
+says so. The intent dots stay identical throughout — they are semantic and already shipping.</p>
+<div class="grid">
+<figure class="world">
+  <div class="frame" style="--bg:#f4f0eb;--su:#faf8f4;--ink:#1f1f1e;--mu:#6f6a62;--line:rgb(31 31 30 / .12);--btnink:#f4f0eb">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnbonew">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnbonew)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnboner">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnboner)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#1f1f1e">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Bone &amp; Ink<span class="tag">ships today</span></h3>
+    <div class="hex"><code>#f4f0eb</code><code>#faf8f4</code><code>#1f1f1e</code><code>#6f6a62</code>
+      </div>
+    <p>What ships today. Warm neutral, near-black type, zero hue. Screenshots sit on it as objects on a surface rather than dissolving into a white page.</p>
+    <div class="audit"><span class="m ">ink / ground<b>14.54:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>4.73:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>15.55:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>4.27:1</b><i>pass · AA 3.0</i></span></div>
+  </figcaption>
+</figure>
+<figure class="world">
+  <div class="frame" style="--bg:#f4f4f2;--su:#fafafa;--ink:#26262b;--mu:#6c6c72;--line:rgb(38 38 43 / .12);--btnink:#f4f4f2">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnpaperw">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnpaperw)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnpaperr">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnpaperr)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#26262b">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Paper &amp; Graphite</h3>
+    <div class="hex"><code>#f4f4f2</code><code>#fafafa</code><code>#26262b</code><code>#6c6c72</code>
+      </div>
+    <p>The same idea with the warmth taken out. Cooler, flatter, more Swiss — reads engineered and precise, but also more anonymous. Closest to default-SaaS grey.</p>
+    <div class="audit"><span class="m ">ink / ground<b>13.67:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>4.74:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>14.43:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>4.40:1</b><i>pass · AA 3.0</i></span></div>
+  </figcaption>
+</figure>
+<figure class="world">
+  <div class="frame" style="--bg:#f2ece1;--su:#f9f5ee;--ink:#2b211a;--mu:#736759;--line:rgb(43 33 26 / .12);--btnink:#f2ece1">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnoatw">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnoatw)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnoatr">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnoatr)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#2b211a">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Oat &amp; Cocoa</h3>
+    <div class="hex"><code>#f2ece1</code><code>#f9f5ee</code><code>#2b211a</code><code>#736759</code>
+      </div>
+    <p>Pushes the coffee reference furthest: the ink is brown-black rather than neutral. Softest and most physical of the six. Risk is that it starts to read as a lifestyle brand rather than a tool.</p>
+    <div class="audit"><span class="m ">ink / ground<b>13.38:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>4.68:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>14.47:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>4.12:1</b><i>pass · AA 3.0</i></span></div>
+  </figcaption>
+</figure>
+<figure class="world">
+  <div class="frame" style="--bg:#f6f7f8;--su:#fdfdfe;--ink:#1b222b;--mu:#666e79;--line:rgb(27 34 43 / .12);--btnink:#f6f7f8">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnporcelainw">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnporcelainw)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnporcelainr">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnporcelainr)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#1b222b">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Porcelain &amp; Slate</h3>
+    <div class="hex"><code>#f6f7f8</code><code>#fdfdfe</code><code>#1b222b</code><code>#666e79</code>
+      </div>
+    <p>Cool white, blue-black ink. The most obviously 'software' of the neutrals and the highest contrast. Clean, but the ground is close enough to white that captures stop having edges.</p>
+    <div class="audit"><span class="m ">ink / ground<b>14.94:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>4.81:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>15.77:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>4.52:1</b><i>pass · AA 3.0</i></span></div>
+  </figcaption>
+</figure>
+<figure class="world">
+  <div class="frame" style="--bg:#f4f0eb;--su:#faf8f4;--ink:#1f1f1e;--mu:#6f6a62;--line:rgb(31 31 30 / .12);--btnink:#f4f0eb">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnindigow">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnindigow)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnindigor">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnindigor)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#3d4a8f">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Bone &amp; Ink + one accent</h3>
+    <div class="hex"><code>#f4f0eb</code><code>#faf8f4</code><code>#1f1f1e</code><code>#6f6a62</code>
+      <code>#3d4a8f</code></div>
+    <p>The option the outside review argued for: keep the neutral base, add one indigo reserved for AI surfaces and the primary CTA. Shown so the trade is visible rather than argued about.</p>
+    <div class="audit"><span class="m ">ink / ground<b>14.54:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>4.73:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>15.55:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>4.27:1</b><i>pass · AA 3.0</i></span><span class="m ">ground / accent (button)<b>7.19:1</b><i>pass · AA 4.5</i></span></div>
+  </figcaption>
+</figure>
+<figure class="world">
+  <div class="frame" style="--bg:#17120f;--su:#211a16;--ink:#efe7dc;--mu:#95897b;--line:rgb(239 231 220 / .12);--btnink:#17120f">
+    <div class="app">
+  <aside>
+    <div class="wm"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnespressow">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnespressow)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <nav><span>Inbox</span><span>All captures</span><span>Search</span><span>Memory</span></nav>
+    <div class="ph">Projects</div>
+    <div class="pl"><span>Pricing page redesign<i>3</i></span><span>Onboarding teardown<i>5</i></span><span>Q3 launch<i>3</i></span></div>
+  </aside>
+  <main>
+    <div class="sb">Search your memory…<kbd>⌘K</kbd></div>
+    <div class="rs"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnespressor">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnespressor)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg><span>Resurfaced · you saved this for the same
+      question in March</span></div>
+    <div class="cards"><div class="c">  <div class="shot" style="--h:#4a6fa5">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:72%"></span><span style="width:50%"></span><span style="width:62%"></span><span style="width:40%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#4a6fa5"></span><b>Linear — annual billing toggle</b></div></div><div class="c">  <div class="shot" style="--h:#3e7a75">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:60%"></span><span style="width:78%"></span><span style="width:45%"></span><span style="width:55%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#3e7a75"></span><b>Notion — AI accept / discard</b></div></div><div class="c">  <div class="shot" style="--h:#8f5c80">    <div class="chrome"><i></i><i></i><i></i></div>    <div class="bars"><span style="width:55%"></span><span style="width:42%"></span><span style="width:70%"></span><span style="width:48%"></span></div>    <div class="pill"></div>  </div>  <div class="ct"><span class="dot" style="background:#8f5c80"></span><b>Arc — sidebar project grouping</b></div></div></div>
+    <div class="acts"><span class="gh">Import…</span>
+      <span class="cta" style="background:#efe7dc">Capture</span></div>
+  </main>
+</div>
+  </div>
+  <figcaption>
+    <h3>Espresso</h3>
+    <div class="hex"><code>#17120f</code><code>#211a16</code><code>#efe7dc</code><code>#95897b</code>
+      </div>
+    <p>Dark-first. Photographs beautifully and feels expensive — but the product is bright screenshots all day, and here every capture becomes a light box punched in a dark field.</p>
+    <div class="audit"><span class="m ">ink / ground<b>15.16:1</b><i>pass · AA 4.5</i></span><span class="m ">muted / ground<b>5.44:1</b><i>pass · AA 4.5</i></span><span class="m ">ink / surface<b>14.00:1</b><i>pass · AA 4.5</i></span><span class="m ">worst dot / ground<b>3.25:1</b><i>pass · AA 3.0</i></span></div>
+  </figcaption>
+</figure></div>
+
+<hr/>
+
+<h2>Six type pairings</h2>
+<p class="lede">Display font sets the wordmark and marketing headlines only. The interface line
+underneath shows the UI font that ships with it. All six families are Google Fonts under SIL OFL
+1.1 — the licence question is not a differentiator here.</p>
+<div class="grid">
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Fraunces',serif;font-weight:600"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp0">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp0)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Fraunces',serif;font-weight:600">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Fraunces 600 + system sans<span class="tag">current</span></h3><p>What the guideline currently specifies. A soft, slightly wonky serif with an optical axis — warm without being cute, and the italic is characterful enough to carry emphasis on its own. No webfont in the product.</p></figcaption>
+</figure>
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Instrument Serif',serif;font-weight:400"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp1">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp1)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Instrument Serif',serif;font-weight:400">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:'Inter',system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Instrument Serif + Inter</h3><p>Higher contrast, tighter, more fashion-editorial. Sharper and more current than Fraunces, but colder — it borrows authority rather than warmth, and it only has one weight.</p></figcaption>
+</figure>
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Newsreader',serif;font-weight:500"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp2">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp2)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Newsreader',serif;font-weight:500">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Newsreader 500 + system sans</h3><p>The most neutral serif of the three. Bookish, quiet, reads like a well-set article. Least likely to date; also least likely to be remembered.</p></figcaption>
+</figure>
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Bricolage Grotesque',sans-serif;font-weight:600"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp3">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp3)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Bricolage Grotesque',sans-serif;font-weight:600">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:'Inter',system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Bricolage Grotesque + Inter</h3><p>No serif at all. The 2026 expressive-grotesk register: quirky, tightly spaced, a bit irregular on purpose. Feels newer than any serif here, and noticeably younger — but it <b>has no italic</b> (Google Fonts rejects the ital axis with a 400), so the slant above is synthesised by the browser and the emphasis rule would have to change.</p></figcaption>
+</figure>
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Playfair Display',serif;font-weight:600"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp4">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp4)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Playfair Display',serif;font-weight:600">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:'Inter',system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Playfair Display + Inter</h3><p>Classical, high-contrast, luxury-adjacent. Elegant at large sizes but it is everywhere, and it pulls the brand towards wedding-invitation rather than tool.</p></figcaption>
+</figure>
+<figure class="pair">
+  <div class="frame ptype">
+    <div class="plock" style="font-family:'Inter Tight',sans-serif;font-weight:600"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" style="display:block;flex:none;color:currentColor"><mask id="cnp5">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#cnp5)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g></svg>Capso</div>
+    <p class="phead" style="font-family:'Inter Tight',sans-serif;font-weight:600">You’re not organised.<br/>
+      <em>Capso is.</em></p>
+    <p class="pui" style="font-family:'Inter',system-ui,sans-serif">Onboarding teardown · 5 captures · 1 Aug ·
+      <span>filed automatically</span></p>
+  </div>
+  <figcaption><h3>Inter Tight + Inter</h3><p>One family throughout, display cut tightened. Maximum coherence and zero personality — this is what almost every AI product already looks like.</p></figcaption>
+</figure></div>
+
+<hr/>
+
+<div class="close">
+<h2>Where I land</h2>
+<p><strong>Bone &amp; Ink, and Fraunces.</strong> Not because they are what we already built —
+here is what changed my mind while making this page.</p>
+<p><strong>Paper and Porcelain lose the captures.</strong> Put the three cards side by side across
+the six mocks: on the cooler grounds the surface and the ground converge and the cards stop having
+edges. Bone and Oat keep them as objects. That is a functional difference in a product that is
+almost entirely other people's screenshots, not a taste one.</p>
+<p><strong>Oat is the real alternative</strong>, and it is a genuine choice rather than a
+concession — warmer, more physical, closest to the reference photographs. It is the one I would
+switch to if you want the coffee reference louder. The cost is that brown-black ink reads
+lifestyle sooner than it reads tool.</p>
+<p><strong>The indigo variant is the useful one to look at.</strong> Seen rather than argued, the
+accent does not read as intelligence — it reads as a seventh colour, competing with six intent
+dots that already mean something. And <code>#6a5ba8</code> is already marketing-hook in
+<code>INTENT_COLOR</code>, so an indigo brand accent collides with a live semantic value.</p>
+<p><strong>On type, one option ruled itself out on a fact rather than taste.</strong> The
+guideline says italic carries emphasis — never bold, never colour. <strong>Bricolage Grotesque
+has no italic</strong>; Google Fonts returns a 400 for the axis, so what you see in that
+specimen is a browser-synthesised slant. Picking it would mean rewriting the emphasis rule.</p>
+<p>Of the rest: Instrument Serif is sharper but colder and ships one weight. Newsreader is the
+safe choice and the forgettable one. Playfair is everywhere. Inter Tight is what every other AI
+product already looks like. <strong>Fraunces</strong> holds the two-things-at-once requirement
+better than any of them — the optical axis is what keeps it from reading either stiff or twee,
+and its italic is characterful enough to do the emphasis job alone.</p>
+<p style="color:var(--pm);font-size:13.5px;margin-top:20px">Nothing here is applied. Say the word
+on a world and a pairing and I will swap the tokens, rebuild the icon set and the OG card, and
+update the guideline — it is four token values and one font declaration.</p>
+</div>
+</div>

@@ -1,24 +1,49 @@
 <!doctype html>
 <meta charset="utf-8" />
+<!-- Palette, motion and radius come from packages/shared/src/tokens.json.
+     This popup previously used the OS `Canvas`/`CanvasText` system colours and
+     a hard-coded terracotta that had been retired from the app twice over — so
+     the Capso surface a user touches most often was the least branded one.
+     Regenerate with `pnpm brand:tokens`. -->
+<link rel="stylesheet" href="tokens.generated.css" />
 <style>
-  :root { color-scheme: light dark; }
   body {
     width: 260px; margin: 0; padding: 14px;
-    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: Canvas; color: CanvasText;
+    font: 13px/1.4 var(--font-ui);
+    background: var(--background); color: var(--foreground);
   }
   h1 { font-size: 13px; margin: 0 0 2px; }
-  p { margin: 0; font-size: 11px; opacity: .65; }
+  p { margin: 0; font-size: 11px; color: var(--muted); }
   button {
-    width: 100%; margin-top: 12px; padding: 8px; border: 0; border-radius: 8px;
-    background: #e8683a; color: #fff; font-size: 12px; font-weight: 500; cursor: pointer;
+    width: 100%; margin-top: 12px; padding: 8px; border: 0;
+    border-radius: var(--radius-input);
+    background: var(--accent); color: var(--accent-ink);
+    font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: opacity var(--dur-press) var(--ease-out-strong);
   }
+  button:hover:not(:disabled) { opacity: 0.88; }
   button:disabled { opacity: .5; cursor: default; }
-  .last { margin-top: 10px; font-size: 11px; opacity: .65; }
-  .err { color: #c0392b; }
+  button:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+  .last { margin-top: 10px; font-size: 11px; color: var(--muted); }
+  /* Where it is sending and what it can see. Without these the popup could
+     report a failure without ever revealing that it was pointed at a dev server
+     that is not running, or aimed at a tab Chrome will never allow. */
+  .facts { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .facts div { display: flex; gap: 6px; font-size: 11px; color: var(--muted); }
+  .facts dt { flex: 0 0 auto; }
+  .facts dd { margin: 0; min-width: 0; flex: 1; overflow-wrap: anywhere; color: var(--foreground); }
+  .facts dd.weak { color: var(--muted); }
+  /* Not the ux_bug intent dot: that one is tuned to 3:1 because it is a dot,
+     and this is text. --danger is a light/dark pair because no single red
+     clears 4.5:1 on both grounds — the trap the old terracotta fell into. */
+  .err { color: var(--danger); }
 </style>
 <h1>Capso</h1>
 <p>Captures the visible tab into your memory.</p>
 <button id="go">Capture tab</button>
 <div class="last" id="last"></div>
+<dl class="facts">
+  <div><dt>Sends to</dt><dd id="dest" class="weak">…</dd></div>
+  <div><dt>This tab</dt><dd id="tab" class="weak">…</dd></div>
+</dl>
 <script src="popup.js"></script>

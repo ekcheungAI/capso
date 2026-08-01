@@ -1,0 +1,35 @@
+<!--
+  Capso — the mark. A capsule lid seen from directly above. 24-unit grid.
+
+  Three concentric parts, which is exactly what you see looking down into a rack:
+
+    rim     r10.4   the outer flange
+    crimp   r8.2    the crimped seam ring — the single most coffee-specific
+                    detail available, and what stops this reading as a plain
+                    disc, a record or a pill
+    lid     r6.0    the sealed foil face
+
+  The notch is cut through rim and crimp on the right, y10.4 to y13.6. It is the
+  finger relief on a real capsule holder, and it opens the ring into a C.
+
+  The cut is a MASK, not an evenodd subpath. Evenodd was tried first and is
+  wrong: the notch has to overshoot the rim to sever it, and everything past the
+  outer circle then sits outside all three rings, so it fills back in as a small
+  tab. A mask has no such edge case.
+
+  Everything is currentColor with a transparent ground, so one file serves the
+  favicon, the macOS tray template and an inline glyph.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Capso">
+  <mask id="capso-notch">
+    <rect x="0" y="0" width="24" height="24" fill="#fff"/>
+    <rect x="12" y="10.4" width="11" height="3.2" fill="#000"/>
+  </mask>
+
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#capso-notch)">
+    <path d="M12 1.6 a10.4 10.4 0 1 1 0 20.8 a10.4 10.4 0 0 1 0 -20.8 z
+             M12 3.8 a8.2 8.2 0 1 0 0 16.4 a8.2 8.2 0 0 0 0 -16.4 z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g>
+</svg>

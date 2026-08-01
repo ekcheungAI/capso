@@ -1,38 +1,8 @@
 @import "tailwindcss";
-
-:root {
-  /* Warmed from #fafaf8. Captures are mostly cool white, so a warmer ground
-     makes them read as objects on a surface instead of blending into the page. */
-  --background: #fbf9f5;
-  --surface: #ffffff;
-  --foreground: #141412;
-  --muted: #6b6a64;
-  --line: rgb(20 20 18 / 0.1);
-  /* Deepened from #e8683a. The lighter tone measured 3.10:1 as text on this
-     background and 3.24:1 under white — both below AA, and it is used for the
-     Confirm button and every inline action in the capture overlay. #c2461f is
-     4.80:1 as text and 5.01:1 under white. */
-  --accent: #c2461f;
-  /* Readable text on top of --accent. Must be a token, not a hardcoded white:
-     the two accents invert. White is 5.01:1 on #c2461f but only 3.24:1 on the
-     dark-mode #e8683a, where dark ink reaches 5.68:1 instead. */
-  --accent-ink: #ffffff;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #141412;
-    --surface: #1c1c19;
-    --foreground: #ededea;
-    --muted: #9a9890;
-    --line: rgb(237 237 234 / 0.12);
-    /* The deepened accent drops to 3.37:1 on this background, so dark mode keeps
-       the original tone, which measures 5.68:1 here. The accent is therefore
-       mode-dependent — no single terracotta clears AA in both. */
-    --accent: #e8683a;
-    --accent-ink: #141412;
-  }
-}
+/* Colour, motion and radius all come from packages/shared/src/tokens.json.
+   Nothing in this file may declare a hex — `pnpm brand:check` enforces it.
+   Rationale for each value is in packages/shared/src/tokens.ts. */
+@import "./tokens.generated.css";
 
 @theme inline {
   --color-background: var(--background);
@@ -42,24 +12,30 @@
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  font-family: var(--font-ui);
 }
 
-/* ---- Motion tokens ----------------------------------------------------
-   Entrances use ease-out-strong; state morphs use ease-in-out. Durations stay
-   under 250ms because every surface here is repeated daily. */
-:root {
-  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
-  --dur-press: 120ms;
-  --dur-pop: 160ms;
-  --dur-panel: 220ms;
+/* Triage is keyboard-first by design (15 §interaction principles) and the
+   keyboard was invisible: one explicit ring existed in the whole product and
+   everything else fell back to the UA default, which on a bone ground is close
+   to unreadable. Ink, because there is no accent hue to spend on it.
+
+   `:focus-visible` rather than `:focus` so a mouse click never draws it, and no
+   explicit radius because an outline already follows the element's own. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
+
+/* Motion tokens are generated too: entrances use --ease-out-strong, state
+   morphs use --ease-in-out-strong, and every duration stays under 250ms
+   because each of these surfaces is hit daily. */
 
 /* Overlay is anchored to the Capture button (bottom-right), so it arrives from
    there rather than fading in place. */
@@ -130,6 +106,58 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ---- The seat -----------------------------------------------------------
+   Confirming a suggestion is the product's signature moment: the capture stops
+   being Capso's guess and becomes yours. It should read as a capsule seating
+   into a rack.
+
+   The material decides the curve. A coffee capsule is aluminium going into a
+   socket — rigid, so it decelerates hard and stops dead. There is deliberately
+   NO overshoot: a bounce reads as rubber, and it would break the rule that
+   motion here must never draw attention to itself. The satisfaction has to
+   come from the deceleration, which is why this dips and returns rather than
+   springing past its resting size. */
+@keyframes capso-seat {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.976);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.capso-seat {
+  animation: capso-seat var(--dur-panel) var(--ease-out-strong);
+}
+
+/* The crimp — the seal. The card's edge acknowledges once and settles. One
+   tighten, no rebound, and it fades out rather than snapping off so the eye
+   is not pulled back to a card it has finished with. */
+@keyframes capso-crimp {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+    opacity: 0.5;
+  }
+  40% {
+    box-shadow: 0 0 0 3px var(--accent);
+    opacity: 1;
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+    opacity: 0;
+  }
+}
+.capso-crimp::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: capso-crimp var(--dur-panel) var(--ease-out-strong);
 }
 
 /* ---- Drag ----------------------------------------------------------- */

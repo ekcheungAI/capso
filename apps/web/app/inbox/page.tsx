@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { getImage } from "@/lib/store";
-import { ConfidenceBar, EmptyState, IntentChip, Thumb } from "@/components/ui";
+import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
 
@@ -13,7 +13,7 @@ import { classify, fewShotLines } from "@/lib/classify";
  * number keys pick a project. Three verbs only (Notion Mail): Confirm / Try again / Ignore.
  */
 export default function InboxPage() {
-  const { ready, inbox, threads, threadName, assign, patch, screenshots, corrections } = useStore();
+  const { ready, inbox, threads, threadName, assign, patch, screenshots, corrections, get } = useStore();
   const [rerunning, setRerunning] = useState<string | null>(null);
   const toast = useToast();
 
@@ -22,9 +22,14 @@ export default function InboxPage() {
     async (s: (typeof inbox)[number], threadId: string | null) => {
       const previous = s.threadId;
       await assign(s, threadId, "inbox_triage");
-      toast(`Filed to ${threadName(threadId)}`, () => void assign(s, previous, "manual"));
+      toast(`Seated in ${threadName(threadId)}`, () => {
+        // Read fresh — `s` is the pre-file snapshot, and replaying assign()
+        // with it would overwrite any edit made during the undo window.
+        const current = get(s.id);
+        if (current) void assign(current, previous, "manual");
+      });
     },
-    [assign, toast, threadName],
+    [assign, toast, threadName, get],
   );
   const [cursor, setCursor] = useState(0);
 
@@ -54,7 +59,7 @@ export default function InboxPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [onKey]);
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
   if (inbox.length === 0)
     return (
       <EmptyState
@@ -89,7 +94,7 @@ export default function InboxPage() {
 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <Link href={`/s/${s.id}`} className="truncate text-sm font-medium hover:text-accent">
+                <Link href={`/s/${s.id}`} className="truncate text-sm font-medium hover:underline">
                   {s.title}
                 </Link>
                 <IntentChip intent={s.intent} />
@@ -136,7 +141,7 @@ export default function InboxPage() {
                   className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
                 >
                   <option value="" disabled>
-                    Change project…
+                    Move to…
                   </option>
                   {threads.map((t) => (
                     <option key={t.id} value={t.id}>

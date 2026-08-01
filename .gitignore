@@ -22,6 +22,7 @@ apps/web/public/extension-version.json
 drafts/brand/renders*/
 
 # tooling
+__pycache__/
 .DS_Store
 *.log
 .vercel/

@@ -1,11 +1,45 @@
 const go = document.getElementById("go");
 const last = document.getElementById("last");
+const dest = document.getElementById("dest");
+const tabEl = document.getElementById("tab");
 
-chrome.storage.local.get("lastCapture").then(({ lastCapture }) => {
-  if (lastCapture) {
+/**
+ * Report the last capture, including one made by the hotkey while this popup was
+ * closed. That path used to report only through `chrome.notifications`, so with
+ * macOS notifications off for Chrome it had no way to tell the user anything at
+ * all — success and failure were both silence.
+ */
+chrome.storage.local.get(["lastResult", "lastCapture"]).then(({ lastResult, lastCapture }) => {
+  if (lastResult) {
+    last.textContent = lastResult.message;
+    last.className = lastResult.ok ? "last" : "last err";
+  } else if (lastCapture) {
     last.textContent = `Last: ${lastCapture.title}`;
   }
+  // Opening the popup is the acknowledgement — the badge has done its job.
+  void chrome.action.setBadgeText({ text: "" });
 });
+
+/** Where captures are being sent, and what this tab actually is. */
+(async () => {
+  try {
+    const { origin } = await chrome.runtime.sendMessage({ type: "getOrigin" });
+    dest.textContent = origin ?? "not set";
+    dest.className = "";
+  } catch {
+    dest.textContent = "unknown";
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url) {
+    // Not a failure in itself — Chrome withholds the address until activeTab is
+    // granted — but it is worth saying rather than showing a blank line.
+    tabEl.textContent = "address not shared by Chrome";
+    return;
+  }
+  tabEl.textContent = tab.url.replace(/^https?:\/\//, "").slice(0, 60);
+  tabEl.className = "";
+})();
 
 go.addEventListener("click", async () => {
   go.disabled = true;
@@ -13,6 +47,7 @@ go.addEventListener("click", async () => {
   const res = await chrome.runtime.sendMessage({ type: "capture" });
   if (res?.ok) {
     go.textContent = "Sent to Capso";
+    void chrome.action.setBadgeText({ text: "" });
     setTimeout(() => window.close(), 700);
   } else {
     go.disabled = false;

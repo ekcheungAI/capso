@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
-import { EmptyState, INTENT_LABEL, Thumb } from "@/components/ui";
+import { EmptyState, INTENT_LABEL, SkeletonGrid, Thumb } from "@/components/ui";
 
 type Tab = "learned" | "tidy" | "review";
 
@@ -18,7 +18,7 @@ export default function MemoryPage() {
   const [tab, setTab] = useState<Tab>("learned");
   const { ready } = useStore();
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
 
   return (
     <div className="space-y-5">
@@ -89,7 +89,10 @@ function Learned() {
         <Stat label="Corrections on file" value={String(total)} />
         <Stat
           label="Feeding the next guess"
-          value={`${Math.min(corrections.length, 20)} of ${corrections.length}`}
+          // Matches classify.ts's fewShotLines(), which only ever injects
+          // field==="project" corrections — the raw ledger mixes in tag/intent/
+          // why_saved corrections too and overstated what actually feeds the model.
+          value={`${Math.min(projectCorrections.length, 20)} of ${projectCorrections.length}`}
         />
       </div>
 
@@ -126,7 +129,13 @@ function Learned() {
           <p className="text-xs text-muted">No corrections recorded yet.</p>
         ) : (
           <ul className="space-y-1.5">
-            {corrections.slice(0, 12).map((c) => {
+            {/* IndexedDB returns `corrections` oldest-first; without this sort
+                the panel is permanently stuck on the first 12 corrections ever
+                made, once the ledger passes 12 entries. */}
+            {[...corrections]
+              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+              .slice(0, 12)
+              .map((c) => {
               const shot = screenshots.find((s) => s.id === c.screenshotId);
               return (
                 <li
@@ -135,7 +144,7 @@ function Learned() {
                 >
                   <span className="min-w-0 flex-1">
                     {shot ? (
-                      <Link href={`/s/${shot.id}`} className="font-medium hover:text-accent">
+                      <Link href={`/s/${shot.id}`} className="font-medium hover:underline">
                         {shot.title}
                       </Link>
                     ) : (

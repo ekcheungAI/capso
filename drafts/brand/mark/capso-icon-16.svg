@@ -1,33 +1,49 @@
 <!--
   Capso — pixel-hinted 16px master (favicon / extension toolbar)
 
-  A downscale of the full mark cannot work at this size: a 1.65-unit circular eye
-  lands on ~1.5 device pixels and antialiases into a smudge. So this size is drawn
-  on its own 16-unit grid, where every edge falls on a whole pixel.
+  A downscale of capso-lid.svg cannot work here. On the 24-unit master the crimp
+  ring is 2.2 units thick, which at 16px lands on ~1.5 device pixels and
+  antialiases into a grey smear — the one detail that makes the mark read as a
+  coffee capsule is the first thing lost.
 
-    plate    0,0 16x16 rx3.5    — full bleed, no wasted pixels
-    capsule  x3.5 y2.5 9x11 rx4 — half-pixel x keeps the 9-wide body centred on 16
-    seam     y8, 1 unit tall    — exactly 1 device pixel
-    eyes     2x2 SQUARES        — squares, not circles. At 2px a circle is mush;
-                                  a square lands crisp. Nobody can tell at 16px.
+  So this size is redrawn on its own 16-unit grid where every axis-aligned edge
+  falls on a whole pixel:
 
-  This is the only file in the set whose geometry deliberately differs from
-  capso-silhouette.svg. Everything 32px and above derives from that one.
+    plate   0,0 16x16 rx3.5   — full bleed, a favicon has no pixels to waste
+    rim     r7 outer, r5 inner — exactly 2px of ring measured on the axes
+    gap     r5 → r3            — exactly 2px
+    face    r3                 — 6px disc
+    notch   x8 y7 w8 h2        — 2px tall, severs rim and face alike
+
+  Two deliberate differences from the master, both for legibility:
+
+  1. The notch stops at x11 instead of running to the centre. On the master it
+     cuts the face as well, producing a slot; at 16px that slot closes up and the
+     mark reads as a smudged ring. Stopping short keeps the broken rim — which is
+     the part that makes it a C — and leaves the face clean.
+  2. The face sits at r3 (0.43 of the rim) rather than the master's 0.577. A
+     proportionally correct face leaves only a 1px gap, and a 1px gap closes on
+     the diagonals where the curve has to antialias.
+
+  Curves are left to antialias on purpose. shape-rendering="crispEdges" was tried
+  on the master and quantises the arcs into visible facets.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
      role="img" aria-label="Capso">
-  <rect x="0" y="0" width="16" height="16" rx="3.5" fill="#e8683a"/>
+  <rect x="0" y="0" width="16" height="16" rx="3.5" fill="#f4f0eb"/>
 
-  <!-- Body halves let their curves antialias; only the seam and eyes are hinted.
-       shape-rendering="crispEdges" was tried here and is wrong — it quantises the
-       arcs and visibly deforms the lower half. -->
-  <g fill="#fafaf8">
-    <path d="M3.5 7.5 v-1 a4 4 0 0 1 4-4 h1 a4 4 0 0 1 4 4 v1 z"/>
-    <path d="M3.5 8.5 h9 v1.5 a3.5 3.5 0 0 1 -3.5 3.5 h-2 a3.5 3.5 0 0 1 -3.5 -3.5 z"/>
-  </g>
+  <mask id="capso-notch-16">
+    <rect x="0" y="0" width="16" height="16" fill="#fff"/>
+    <rect x="8" y="7" width="8" height="2" fill="#000"/>
+  </mask>
 
-  <g fill="#e8683a" shape-rendering="crispEdges">
-    <rect x="5" y="5" width="2" height="2"/>
-    <rect x="9" y="5" width="2" height="2"/>
+  <!-- The mask goes on the group, not the path: it has to cut the face as well
+       as the rim, or the slot that makes this the same glyph as the master
+       never appears. -->
+  <g fill="#1f1f1e" mask="url(#capso-notch-16)">
+    <path fill-rule="evenodd"
+          d="M8 1 a7 7 0 1 1 0 14 a7 7 0 0 1 0 -14 z
+             M8 3 a5 5 0 1 0 0 10 a5 5 0 0 0 0 -10 z"/>
+    <circle cx="8" cy="8" r="3"/>
   </g>
 </svg>

@@ -1,0 +1,159 @@
+<title>Capso — landing prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#fbf9f5; --surface:#ffffff; --ink:#141312; --muted:#6b6a64;
+  --line:rgb(20 19 18/.11); --green:#2f6b4f;
+  --ease:cubic-bezier(0.23,1,0.32,1);      /* --ease-out-strong, from globals.css */
+  --slow:cubic-bezier(0.33,0,0.15,1);
+  /* intent colours, exactly as shipping in components/ui.tsx */
+  --i1:#4a6fa5; --i2:#5b7a4b; --i3:#8f5c80; --i4:#6a5ba8; --i5:#3e7a75; --i6:#a8465c;
+}
+@media (prefers-color-scheme:dark){:root{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13);--green:#4f9e79}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+
+/* ---- nav ------------------------------------------------------------ */
+nav{display:flex;align-items:center;gap:14px;padding:26px 0}
+.word{font-family:'Fraunces',serif;font-weight:600;font-size:25px;letter-spacing:-.035em}
+nav .sp{flex:1}
+nav a{color:var(--muted);text-decoration:none;font-size:14px;margin-left:26px}
+.cta{background:var(--green);color:#fff;padding:9px 18px;border-radius:999px;font-size:14px;
+  text-decoration:none;font-weight:500;margin-left:26px}
+
+/* ---- hero ----------------------------------------------------------- */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center;
+  padding:56px 0 88px}
+h1{font-family:'Fraunces',serif;font-weight:600;font-size:60px;line-height:1.03;
+  letter-spacing:-.04em;margin:0 0 22px}
+h1 em{font-style:normal;color:var(--green)}
+.sub{font-size:19px;color:var(--muted);margin:0 0 30px;max-width:44ch}
+.keys{display:flex;gap:10px;align-items:center;font-size:13.5px;color:var(--muted)}
+kbd{font:12px ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:6px;
+  padding:3px 7px;background:var(--surface)}
+
+/* ---- the animation: chaos resolving into a rack --------------------- */
+.stage{position:relative;height:460px}
+.rack{position:absolute;right:52px;top:0;bottom:0;width:104px;
+  border:1px solid var(--line);border-radius:16px;background:var(--surface);
+  padding:14px 0;display:flex;flex-direction:column;justify-content:space-between;align-items:center}
+.rack::before{content:"";position:absolute;inset:14px 26px;border-left:1px dashed var(--line);
+  border-right:1px dashed var(--line)}
+.slot{width:52px;height:52px;border-radius:99px;position:relative;
+  border:1.5px solid color-mix(in srgb,var(--ink) 14%,transparent)}
+/* the capture: starts scattered as a screenshot, lands as a lid */
+.cap{position:absolute;left:50%;top:50%;width:52px;height:52px;margin:-26px 0 0 -26px;
+  border-radius:6px;background:var(--c);
+  transform:translate(var(--tx),var(--ty)) rotate(var(--r)) scale(.86);
+  opacity:0;
+  animation:file 9s var(--slow) infinite;
+  animation-delay:var(--d)}
+.cap::after{content:"";position:absolute;inset:9px;border-radius:inherit;
+  background:color-mix(in srgb,#fff 30%,transparent);opacity:0;transition:opacity .3s}
+@keyframes file{
+   0%   {transform:translate(var(--tx),var(--ty)) rotate(var(--r)) scale(.86);opacity:0;border-radius:6px}
+   7%   {opacity:1}
+  34%   {transform:translate(var(--tx),var(--ty)) rotate(var(--r)) scale(.86);opacity:1;border-radius:6px}
+  56%   {transform:translate(0,0) rotate(0) scale(1);border-radius:99px}
+  92%   {transform:translate(0,0) rotate(0) scale(1);border-radius:99px;opacity:1}
+ 100%   {transform:translate(0,0) rotate(0) scale(1);border-radius:99px;opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  /* The whole point of the animation is the settle; without motion, show the
+     settled state rather than a loop that never resolves. */
+  .cap{animation:none;opacity:1;transform:none;border-radius:99px}
+}
+.caption{position:absolute;left:0;bottom:6px;font-size:12.5px;color:var(--muted);max-width:23ch}
+
+/* ---- photograph ----------------------------------------------------- */
+.shot{margin:0 0 90px}
+.shot img{width:100%;display:block;border-radius:18px}
+.shot figcaption{font-size:13.5px;color:var(--muted);margin-top:14px;max-width:56ch}
+
+/* ---- three up ------------------------------------------------------- */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:34px;padding-bottom:96px}
+.three h3{font-family:'Fraunces',serif;font-weight:600;font-size:21px;letter-spacing:-.02em;margin:16px 0 8px}
+.three p{font-size:14.5px;color:var(--muted);margin:0}
+.glyph{height:34px;display:flex;align-items:center;gap:7px}
+.g-dot{width:11px;height:11px;border-radius:99px;background:var(--ink)}
+.g-ring{width:11px;height:11px;border-radius:99px;border:2px solid var(--ink)}
+.g-rule{height:2px;width:40px;background:var(--ink);border-radius:2px}
+
+footer{border-top:1px solid var(--line);padding:34px 0 60px;font-size:13px;color:var(--muted)}
+@media(max-width:900px){.hero,.three{grid-template-columns:1fr}h1{font-size:42px}.stage{height:380px}}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="lid" viewBox="0 0 24 24">
+  <mask id="nm"><rect width="24" height="24" fill="#fff"/><rect x="12" y="10.4" width="11" height="3.2" fill="#000"/></mask>
+  <g fill="currentColor" fill-rule="evenodd" mask="url(#nm)">
+    <path d="M12 1.6a10.4 10.4 0 1 1 0 20.8a10.4 10.4 0 0 1 0-20.8z M12 3.8a8.2 8.2 0 1 0 0 16.4a8.2 8.2 0 0 0 0-16.4z"/>
+    <circle cx="12" cy="12" r="6"/>
+  </g>
+</symbol></defs></svg>
+
+<div class="wrap">
+<nav>
+  <svg width="30" height="30" aria-hidden="true"><use href="#lid"/></svg>
+  <span class="word">Capso</span>
+  <span class="sp"></span>
+  <a href="#">How it works</a><a href="#">Pricing</a>
+  <a href="#" class="cta">Get Capso</a>
+</nav>
+
+<section class="hero">
+  <div>
+    <h1>You're not organised.<br/><em>Capso is.</em></h1>
+    <p class="sub">Every screenshot you take gets read, understood and filed into the right
+    project — automatically. Weeks later, describe it in a sentence and it comes back.</p>
+    <div class="keys"><kbd>⌃</kbd><kbd>⇧</kbd><kbd>C</kbd><span>and it's handled. Nothing to sort, nothing to name.</span></div>
+  </div>
+
+  <div class="stage">
+    <div class="rack">
+      <div class="slot"><span class="cap" style="--c:var(--i1);--tx:-190px;--ty:-96px;--r:-19deg;--d:0s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i2);--tx:-244px;--ty:26px;--r:14deg;--d:.18s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i6);--tx:-160px;--ty:118px;--r:-8deg;--d:.36s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i4);--tx:-262px;--ty:-38px;--r:23deg;--d:.54s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i5);--tx:-140px;--ty:-140px;--r:-27deg;--d:.72s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i3);--tx:-218px;--ty:96px;--r:11deg;--d:.9s"></span></div>
+      <div class="slot"><span class="cap" style="--c:var(--i1);--tx:-176px;--ty:-58px;--r:-14deg;--d:1.08s"></span></div>
+    </div>
+    <p class="caption">Captures arrive in any order. The rack is what they become.</p>
+  </div>
+</section>
+
+<figure class="shot">
+  <img src="renders-coffee/hero-rack.png" alt="A wall-mounted capsule rack in warm morning light">
+  <figcaption>One place. Everything in it. You never think about where something went, because
+  it went where it belongs.</figcaption>
+</figure>
+
+<section class="three">
+  <div>
+    <div class="glyph"><span class="g-dot"></span><span class="g-dot" style="background:var(--i1)"></span><span class="g-dot" style="background:var(--i2)"></span><span class="g-ring"></span></div>
+    <h3>Colour-coded, not tagged</h3>
+    <p>Capso reads each capture and gives it an intent — reference, inspiration, competitor. You
+    see what a project is made of before you read a single title.</p>
+  </div>
+  <div>
+    <div class="glyph"><span class="g-ring"></span><span class="g-rule"></span></div>
+    <h3>Empty slots are information</h3>
+    <p>An open ring means something arrived that still needs you. Not a badge, not a red dot —
+    just a gap in an otherwise full rack.</p>
+  </div>
+  <div>
+    <div class="glyph"><svg width="26" height="26" style="color:var(--green)" aria-hidden="true"><use href="#lid"/></svg></div>
+    <h3>Ask for it in a sentence</h3>
+    <p>"That pricing page with the annual toggle." Capso kept the text, the context and the reason
+    you saved it, so plain language is enough.</p>
+  </div>
+</section>
+
+<footer>Prototype — motion, type and colour are the real proposed values. Fraunces for the wordmark,
+system sans for everything else, sorted green as the only signal colour.</footer>
+</div>

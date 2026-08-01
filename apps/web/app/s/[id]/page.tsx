@@ -1,11 +1,11 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
 import { getImage, type Intent } from "@/lib/store";
-import { imageFor, INTENT_LABEL, INTENTS } from "@/components/ui";
+import { imageFor, INTENT_LABEL, INTENTS, SkeletonGrid } from "@/components/ui";
 
 /**
  * Screenshot detail — the "what does this actually tell me" surface.
@@ -19,9 +19,13 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const s = get(id);
 
   // Ordered the same way the library shows them, so ←/→ match what you just scrolled.
-  const ordered = [...screenshots]
-    .filter((x) => !x.archived)
-    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+  // Memoized — this used to re-sort the entire (not just this thread's)
+  // collection synchronously on every render, including every keystroke typed
+  // into the "why saved" or tag inputs below.
+  const ordered = useMemo(
+    () => [...screenshots].filter((x) => !x.archived).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)),
+    [screenshots],
+  );
   const idx = ordered.findIndex((x) => x.id === id);
   const prev = idx > 0 ? ordered[idx - 1] : undefined;
   const next = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : undefined;
@@ -75,12 +79,12 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
     }
   }, [s, visit]);
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
   if (!s)
     return (
       <div className="text-sm">
         <p>That capture is gone.</p>
-        <Link href="/" className="mt-2 inline-block text-xs text-accent">
+        <Link href="/" className="mt-2 inline-block text-xs underline underline-offset-2">
           Back to library
         </Link>
       </div>
@@ -121,7 +125,10 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
         <button
           onClick={() => setZoom((z) => !z)}
-          className="block w-full cursor-zoom-in"
+          // Zoomed, the image renders at native decoded width (up to 1600px)
+          // with no ancestor containing the overflow — this used to blow out
+          // the whole page horizontally on phone-width viewports.
+          className="block w-full cursor-zoom-in overflow-x-auto"
           aria-label={zoom ? "Zoom out" : "Zoom in"}
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
@@ -215,7 +222,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           {draft === null ? (
             <button
               onClick={() => setDraft(s.whySaved)}
-              className="w-full text-left text-xs leading-relaxed hover:text-accent"
+              className="w-full text-left text-xs leading-relaxed hover:underline"
             >
               {s.whySaved || <span className="text-muted">Add a reason…</span>}
             </button>
@@ -319,7 +326,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         </Field>
 
         <Field label={`OCR text (${s.ocrText.length} chars)`}>
-          <button onClick={() => setOcrOpen((o) => !o)} className="text-[11px] text-accent">
+          <button onClick={() => setOcrOpen((o) => !o)} className="text-[11px] underline underline-offset-2">
             {ocrOpen ? "Collapse" : "Expand"}
           </button>
           {ocrOpen && (
@@ -332,7 +339,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                   void navigator.clipboard.writeText(s.ocrText);
                   flash("text");
                 }}
-                className="mt-1.5 text-[11px] text-accent"
+                className="mt-1.5 text-[11px] underline underline-offset-2"
               >
                 Copy text
               </button>

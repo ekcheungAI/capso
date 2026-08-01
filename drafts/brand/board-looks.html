@@ -1,0 +1,108 @@
+<title>Capso — four looks</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#faf8f4;--ink:#16150f;--muted:#75726a;--line:rgb(22 21 15/.13)}
+@media (prefers-color-scheme:dark){:root{--paper:#111110;--ink:#eeece6;--muted:#8f8d85;--line:rgb(238 236 230/.14)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1240px;margin:0 auto;padding:64px 32px 120px}
+.head{max-width:60ch;margin-bottom:14px}
+h1{font-family:'Fraunces',serif;font-weight:600;font-size:46px;letter-spacing:-.035em;line-height:1.05;margin:0 0 16px}
+.lede{color:var(--muted);font-size:17px;margin:0}
+hr{border:0;border-top:1px solid var(--line);margin:52px 0}
+figure{margin:0 0 72px}
+figure img{width:100%;display:block;border-radius:14px;box-shadow:0 1px 0 var(--line)}
+figcaption{display:flex;gap:28px;align-items:flex-start;margin-top:20px;flex-wrap:wrap}
+.tag{font-family:'Fraunces',serif;font-weight:600;font-size:26px;letter-spacing:-.02em;
+  min-width:190px;line-height:1.15}
+.tag small{display:block;font-family:-apple-system,system-ui,sans-serif;font-weight:400;
+  font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.body{flex:1;min-width:280px;max-width:52ch;font-size:14.5px;color:var(--muted)}
+.body b{color:var(--ink);font-weight:600}
+.pick{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  border:1px solid var(--ink);border-radius:999px;padding:3px 11px;margin-top:9px;font-weight:600}
+.warn{border-left:3px solid #a8465c;padding:8px 0 8px 20px;margin:26px 0;max-width:70ch}
+.warn p{margin:0 0 8px;font-size:14px}.warn p:last-child{margin:0}
+.close{border-top:1px solid var(--line);padding-top:34px;max-width:64ch}
+.close h2{font-family:'Fraunces',serif;font-weight:600;font-size:27px;letter-spacing:-.025em;margin:0 0 14px}
+.close p{font-size:15px}
+code{font:.85em ui-monospace,Menlo,monospace;background:color-mix(in srgb,var(--ink) 7%,transparent);padding:2px 5px;border-radius:4px}
+@media(max-width:760px){.w{padding:36px 18px 80px}h1{font-size:32px}.tag{min-width:0}}
+</style>
+
+<div class="w">
+<div class="head">
+  <h1>Four looks</h1>
+  <p class="lede">Same product, same content, four colour worlds. No green on cream —
+  you were right that it was reading institutional rather than calm.</p>
+</div>
+
+<div class="warn">
+  <p><b>First, a correction.</b> My initial five came back as invented coffee brands rather than
+  Capso — one was a Nespresso-compatible capsule shop, another a coffee subscription. Two also
+  rendered real third-party logos: Vercel, Loom, Retool, Ramp, Discord in one; Kinfolk, Monocle and
+  Wallpaper* in another.</p>
+  <p>Those are unusable at any fidelity and I have not included them. The four below are re-run with
+  the brand name pinned and third-party marks explicitly excluded.</p>
+</div>
+
+<hr/>
+
+<figure>
+  <img src="renders-look/C1-bone-ink.png" alt="Bone and ink landing page">
+  <figcaption>
+    <div class="tag"><small>One</small>Bone &amp; ink<span class="pick">recommended</span></div>
+    <div class="body">Warm bone ground, near-black serif, an italic word carrying the emphasis, and
+    <b>no accent colour at all</b> — the only colour on the page is the intent dot on each capture.
+    That is the "collection is the colour" idea working exactly as intended. Calm, editorial,
+    expensive without trying. It is also the most practical ground for a tool used all day, because
+    screenshots sit on it cleanly.</div>
+  </figcaption>
+</figure>
+
+<figure>
+  <img src="renders-look/C4-warm-clay.png" alt="Warm clay landing page">
+  <figcaption>
+    <div class="tag"><small>Two</small>Warm clay<span class="pick">best for photography</span></div>
+    <div class="body">Clay and sand with deep espresso type and real material in frame. This is the
+    closest of the four to the reference photographs you sent — <b>the warmth is the point</b>. It
+    reads as a considered physical object rather than software. Slightly heavier to live inside all
+    day, but the strongest marketing register by some distance.</div>
+  </figcaption>
+</figure>
+
+<figure>
+  <img src="renders-look/C2-ink-brass.png" alt="Ink and brass landing page">
+  <figcaption>
+    <div class="tag"><small>Three</small>Ink &amp; brass</div>
+    <div class="body">Dark ground, ivory serif, brass on a single button. The most dramatic and the
+    most luxury. It photographs beautifully, but it commits the product to dark-first — and your
+    users are capturing bright screenshots all day, which sit awkwardly on it.</div>
+  </figcaption>
+</figure>
+
+<figure>
+  <img src="renders-look/C3-white-electric.png" alt="White and electric indigo landing page">
+  <figcaption>
+    <div class="tag"><small>Four</small>White &amp; electric</div>
+    <div class="body">Pure white, enormous tight sans, one indigo pill. The most engineered of the
+    four and the most obviously "software" — but the least warm, and warmth is what you keep asking
+    for. Worth seeing because it shows how much the serif is doing in the other three.</div>
+  </figcaption>
+</figure>
+
+<div class="close">
+  <h2>Where I land</h2>
+  <p><b>Bone &amp; ink for the product. Warm clay for everything you photograph.</b> They are the
+  same family — one is simply lit differently — so a landing page can open in clay and hand off to
+  bone as you scroll into the app.</p>
+  <p>The through-line across all four worth noticing: <b>every one of them independently used a
+  small coloured dot per capture</b>. That is the intent system already shipping in
+  <code>INTENT_COLOR</code>, and it survives every colour world here. It is the part of this that is
+  genuinely settled.</p>
+  <p style="color:var(--muted);font-size:13.5px;margin-top:22px">These are generated compositions,
+  not final designs — the type is placeholder and the interface is indicative. What is real is the
+  colour, the register and the layout logic.</p>
+</div>
+</div>

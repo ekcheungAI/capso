@@ -1,0 +1,44 @@
+/* GENERATED — DO NOT EDIT.
+   Source: packages/shared/src/tokens.json
+   Regenerate: pnpm brand:tokens   ·   Verify: pnpm brand:check */
+:root {
+  color-scheme: light dark;
+  --background: #f4f0eb;
+  --surface: #faf8f4;
+  --foreground: #1f1f1e;
+  --muted: #6f6a62;
+  --line: rgb(31 31 30 / 0.10);
+  --accent: #1f1f1e;
+  --accent-ink: #f4f0eb;
+  --danger: #933a4e;
+  --intent-reference: #4a6fa5;
+  --intent-design-inspiration: #5b7a4b;
+  --intent-competitor: #8f5c80;
+  --intent-marketing-hook: #6a5ba8;
+  --intent-content-idea: #3e7a75;
+  --intent-ux-bug: #a8465c;
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --dur-press: 120ms;
+  --dur-pop: 160ms;
+  --dur-panel: 220ms;
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --radius-panel: 16px;
+  --radius-pill: 999px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #141412;
+    --surface: #1c1c19;
+    --foreground: #ededea;
+    --muted: #9a9890;
+    --line: rgb(237 237 234 / 0.12);
+    --accent: #ededea;
+    --accent-ink: #141412;
+    --danger: #d4808f;
+  }
+}

@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store/provider";
 import { CaptureLayer } from "@/components/capture";
 import { CommandPalette } from "@/components/palette";
+import { ShortcutSheet } from "@/components/shortcuts";
 import { FirstRun } from "@/components/first-run";
 import { DropZone, useDragCount } from "@/components/ui";
 import { useMoveCaptures } from "@/lib/move";
@@ -18,9 +20,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
     useStore();
   const [adding, setAdding] = useState(false);
   const [palette, setPalette] = useState(false);
+  const [nav, setNav] = useState(false);
+  const [keys, setKeys] = useState(false);
   const move = useMoveCaptures();
   const dragCount = useDragCount();
+  const pathname = usePathname();
   const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
+
+  /**
+   * The drawer closes when it has been used. Bound to the link groups rather
+   * than to the whole panel, because "+ New project" and the two destructive
+   * links also live in there and must survive being clicked.
+   */
+  const dismissNav = () => setNav(false);
 
   useEffect(() => {
     fetch("/api/classify")
@@ -35,7 +47,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((p) => !p);
+        return;
       }
+      // `?` opens the keyboard reference — but not while the user is typing one
+      // into a project name or a note.
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setKeys((k) => !k);
+      }
+      if (e.key === "Escape") setKeys(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -64,7 +86,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   // One idea per screen (15 §onboarding): during setup there is no sidebar, no
   // search bar and no capture button to compete with the single decision.
-  if (ready && needsSetup)
+  //
+  // `/extension` is exempt. It is a static download page that depends on no
+  // library state, and the takeover is route-independent — so on a fresh
+  // browser the page telling you how to install the extension was replaced by a
+  // question about which projects to create, with no way through to it.
+  if (ready && needsSetup && pathname !== "/extension")
     return (
       <div className="min-h-screen px-6">
         <p className="py-4 text-sm font-semibold tracking-tight">Capso</p>
@@ -74,13 +101,36 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden w-56 shrink-0 border-r border-line px-3 py-4 md:block">
-        <Link href="/" className="mb-6 block px-2 text-sm font-semibold tracking-tight">
+      {/* Below md the sidebar was `hidden` with nothing replacing it, so Inbox,
+          Search, Memory, every project and "+ New project" were unreachable on a
+          phone. Shown as a drawer rather than duplicated into a bottom bar: one
+          source of navigation, and no collision with the capture buttons pinned
+          to the bottom-right corner. */}
+      {nav && (
+        <div
+          onClick={() => setNav(false)}
+          className="capso-fade fixed inset-0 z-30 bg-black/30 backdrop-blur-sm md:hidden"
+        />
+      )}
+      <aside
+        className={`${
+          nav ? "fixed inset-y-0 left-0 z-40 overflow-y-auto bg-background" : "hidden"
+        } w-56 shrink-0 border-r border-line px-3 py-4 md:static md:block md:overflow-visible`}
+      >
+        <Link
+          href="/"
+          onClick={dismissNav}
+          className="mb-6 block px-2 text-sm font-semibold tracking-tight"
+        >
           Capso
         </Link>
 
-        <nav className="space-y-0.5">
+        <nav onClick={dismissNav} className="space-y-0.5">
           <Row href="/inbox" label="Inbox" badge={ready ? inbox.length : undefined} />
+          {/* The sweep used to be reachable only from a banner gated at three
+              pending captures, so with two you could not get to it at all, and
+              once its toast was dismissed there was no way back. */}
+          <Row href="/review" label="Review" />
           <Row href="/" label="All captures" />
           <Row href="/search" label="Search" />
           <Row href="/memory" label="Memory" />
@@ -95,7 +145,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </span>
           )}
         </p>
-        <nav className="space-y-0.5">
+        <nav onClick={dismissNav} className="space-y-0.5">
           {threads.map((t) => (
             <DropZone
               key={t.id}
@@ -154,6 +204,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         )}
 
         <div className="mt-2 flex flex-col items-start gap-1 px-2 text-[11px] text-muted">
+          {/* `?` cannot teach itself. */}
+          <button onClick={() => setKeys(true)} className="hover:text-accent">
+            Keyboard shortcuts
+          </button>
           <button
             onClick={() =>
               confirm("Delete the sample captures and keep only your own screenshots?") &&
@@ -173,19 +227,30 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-20 border-b border-line bg-background px-6 py-3">
+        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-background px-6 py-3">
+          <button
+            onClick={() => setNav(true)}
+            aria-label="Open navigation"
+            aria-expanded={nav}
+            className="shrink-0 rounded-md border border-line px-2 py-1.5 text-sm leading-none md:hidden"
+          >
+            ☰
+          </button>
           <button
             onClick={() => setPalette(true)}
             className="flex w-full max-w-2xl items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"
           >
             Search your memory…
-            <kbd className="ml-auto rounded border border-line px-1.5 py-0.5 text-[11px]">⌘K</kbd>
+            <kbd className="ml-auto hidden rounded border border-line px-1.5 py-0.5 text-[11px] sm:block">
+              ⌘K
+            </kbd>
           </button>
         </header>
         <main className="px-6 py-6">{children}</main>
       </div>
       <CaptureLayer />
       <CommandPalette open={palette} onClose={() => setPalette(false)} />
+      <ShortcutSheet open={keys} onClose={() => setKeys(false)} />
     </div>
   );
 }

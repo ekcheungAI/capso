@@ -174,9 +174,10 @@ export function CaptureLayer() {
             ? `Imported ${landed} of ${images.length} — ${failed} could not be read`
             : `Imported ${images.length} screenshots`,
           // A bulk import is exactly when the classifier has the least to go on,
-          // so it is exactly when the sweep is worth offering. Below three it is
-          // faster to confirm on the cards than to open another screen.
-          landed >= 3 ? () => router.push("/review") : undefined,
+          // so it is exactly when the sweep is worth offering. Offered for any
+          // landed capture: /review is in the sidebar now, so this is a shortcut
+          // rather than the only door to it.
+          landed > 0 ? () => router.push("/review") : undefined,
           "Review",
         );
       } else if (failed) {
@@ -193,7 +194,8 @@ export function CaptureLayer() {
 
     const poll = async () => {
       try {
-        const res = await fetch("/api/ingest");
+        // Custom header the GET route now requires — see api/ingest/route.ts.
+        const res = await fetch("/api/ingest", { headers: { "x-capso-poll": "1" } });
         if (!res.ok) return;
         const { items } = (await res.json()) as {
           items: { id: string; imageDataUrl: string; pageUrl?: string; pageTitle?: string }[];
@@ -412,7 +414,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
                 onClick={() => setAdjusting((a) => !a)}
                 className="rounded-md border border-line px-2.5 py-1 text-[11px]"
               >
-                Change
+                Move to…
               </button>
               <button onClick={onClose} className="px-2 py-1 text-[11px] text-muted">
                 Ignore
@@ -424,7 +426,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
         {state === "confirmed" && (
           <p className="text-[11px]">
             Saved to <span className="font-medium">{threadName(s.threadId)}</span>{" "}
-            <button onClick={() => setAdjusting(true)} className="text-accent">
+            <button onClick={() => setAdjusting(true)} className="underline underline-offset-2">
               edit
             </button>
           </p>
@@ -454,27 +456,35 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
         )}
 
         {state !== "loading" && (
-          <div className="flex items-center gap-2 border-t border-line pt-2 text-[11px] text-muted">
+          <div className="flex items-center gap-3 border-t border-line pt-2 text-[11px] text-muted">
             <button
               onClick={() => router.push(`/threads/${s.threadId ?? s.suggestedThreadId ?? "inbox"}`)}
               title="Open this project's chat"
-              className="hover:text-accent"
+              className="rounded px-1 py-1 hover:text-accent"
             >
               Ask AI
             </button>
-            <button onClick={() => router.push(`/s/${s.id}`)} className="hover:text-accent">
+            <button onClick={() => router.push(`/s/${s.id}`)} className="rounded px-1 py-1 hover:text-accent">
               Open
             </button>
             <button
               onClick={async () => {
+                // Unlike the detail page's delete, this used to fire on a
+                // single click with no confirmation — right next to two
+                // non-destructive links sharing an 8px gap.
+                if (!confirm(`Delete "${s.title}"? Cannot be undone.`)) return;
                 await remove(s);
                 onClose();
               }}
-              className="hover:text-accent"
+              className="rounded px-1 py-1 hover:text-accent"
             >
               Delete
             </button>
-            <button onClick={onClose} className="ml-auto hover:text-accent">
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="ml-auto rounded px-1 py-1 hover:text-accent"
+            >
               ✕
             </button>
           </div>
@@ -564,27 +574,34 @@ function sampleCapture() {
   if (!x) return "";
 
   const hue = Math.floor(Math.random() * 360);
-  x.fillStyle = "#ffffff";
+  x.fillStyle = SAMPLE_PAGE.paper;
   x.fillRect(0, 0, 900, 560);
   x.fillStyle = `hsl(${hue} 40% 92%)`;
   x.fillRect(0, 0, 900, 76);
 
-  x.fillStyle = "#141412";
+  x.fillStyle = SAMPLE_PAGE.ink;
   x.font = "bold 30px -apple-system, sans-serif";
   x.fillText(SAMPLES[0]!.heading, 56, 150);
 
   x.font = "20px -apple-system, sans-serif";
-  x.fillStyle = "#44443f";
+  x.fillStyle = SAMPLE_PAGE.body;
   SAMPLES[0]!.lines.forEach((line, i) => x.fillText(line, 56, 210 + i * 42));
 
   x.fillStyle = `hsl(${hue} 55% 55%)`;
   x.fillRect(56, 430, 210, 52);
-  x.fillStyle = "#ffffff";
+  x.fillStyle = SAMPLE_PAGE.paper;
   x.font = "18px -apple-system, sans-serif";
   x.fillText(SAMPLES[0]!.cta, 84, 463);
 
   return c.toDataURL("image/png");
 }
+
+/* This canvas fakes a *third-party* web page for the sample captures, so its
+   colours depict somebody else's site. They must not be Capso tokens: brand
+   colours here would make every sample screenshot look like Capso itself, which
+   is the one thing a screenshot of another product should never look like. */
+// brand-allow: sample content depicting a third-party page, not Capso chrome
+const SAMPLE_PAGE = { paper: "#ffffff", ink: "#141412", body: "#44443f" };
 
 const SAMPLES = [
   {

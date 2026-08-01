@@ -12,7 +12,7 @@
 ## Out of scope
 
 - Marketing site design.
-- Mascot/character design (explicitly post-MVP — see AI presence below).
+- ~~Mascot/character design (explicitly post-MVP — see AI presence below).~~ *(Amended 2026-08-01: this is no longer deferred, it is decided against — see AI presence below. Leaving it as "post-MVP" implied a character was still coming.)*
 - Full a11y audit (baseline only in MVP: contrast, focus rings, keyboard nav for triage/search).
 
 ## Design principles (Requirement)
@@ -33,7 +33,7 @@
 
 - Generous whitespace; content max-width generous but never edge-to-edge dense.
 - **Masonry / moodboard grid** for capture browsing (dashboard, search) — variable-height cards, uniform gutters, no visible card chrome until hover.
-- **Single accent color** used only for: primary actions, active states, AI suggestion chips. Everything else neutral.
+- ~~**Single accent color** used only for: primary actions, active states, AI suggestion chips.~~ *(Reversed 2026-08-01, recorded rather than deleted. This line contradicted the token table below it, which resolved to `Accent | **None.**` — see the terracotta rationale under Tokens. Buttons are ink; links are underlined, not coloured; the only hue in the product is the intent dot and the captures themselves. Provenance is carried by the mark and the dashed card edge, not by colour.)* Everything else neutral.
 - **Light + dark** from day one, token-driven. Dark is expected default for the owner-user (assumption); both must be first-class.
 
 ## Navigation structure (Requirement)
@@ -49,11 +49,11 @@ Screenshot card = **image + intent chip + one-line summary on hover**:
 - Resting: just the image, rounded corners, hairline border.
 - Hover: bottom gradient scrim → one-line AI summary + intent chip + quick actions (pin, open thread).
 - Unconfirmed (Inbox) card additionally shows the suggestion chip inline with Confirm/adjust affordances — the chip IS the call to action.
-- Intent chips: 7-value taxonomy (design_inspiration, ux_bug, competitor, marketing_hook, content_idea, reference, other); chip color = tinted neutral, not 7 rainbow colors (idea: subtle per-intent icon instead — adjustable).
+- Intent chips: 7-value taxonomy (design_inspiration, ux_bug, competitor, marketing_hook, content_idea, reference, other). ~~chip color = tinted neutral, not 7 rainbow colors~~ *(Amended 2026-08-01. The instinct was right, the implementation was not: seven identical grey chips meant the taxonomy the product computes was invisible. What shipped is the narrow version of the same idea — **the chip stays neutral and carries an 8px coloured dot**. Six mid-tone, low-chroma hues in `INTENT_COLOR`, tuned to clear 3:1 on both grounds; `other` has no colour because it is the absence of a classification, not a seventh category. This is the only hue in the product besides the captures.)*
 
 ## Thread patterns (Requirement)
 
-- Chat bubbles: user right-aligned accent-tinted; AI left-aligned neutral, no avatar image in MVP (see AI presence).
+- Chat bubbles: user right-aligned, ~~accent-tinted~~ *tinted with the ink token at low alpha (there is no accent hue to tint with)*; AI left-aligned neutral, no avatar image in MVP (see AI presence). The AI side is identified by the mark, per the provenance rule — not by a bubble colour.
 - **Inline screenshot cards** interleave with bubbles in one chronological stream; a capture card in a thread looks identical to a grid card, just full-width-capped.
 - Pinned strip: small horizontal thumbnails above transcript; click scrolls to/opens capture.
 - AI answers that cite a capture render a mini-thumbnail reference chip in the bubble.
@@ -80,8 +80,12 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 ## AI companion presence (Requirement)
 
 - MVP: AI exists as (a) a **distinct text tone** in chat — direct, observant, slightly wry, consistent — and (b) **suggestion chips**. Nothing else.
-- **NO visual mascot/character in MVP.** Post-MVP experiment only. Keep a persona/name slot open in copy architecture (i.e., write AI strings so a name could be prefixed later without rewrites).
+- **NO visual mascot/character. Settled 2026-08-01, no longer "post-MVP experiment".** The identity work closed this rather than deferring it, on evidence: every reference image supplied for the brand contains objects in order and zero characters, and a Mobbin sweep found almost no product shipping a mascot inside a *working* interface — they live on login, loading and thank-you screens. A character would also fight the one thing the product must be, which is trustworthy with your filing. Keep the persona/name slot open in copy architecture as before.
+- **The mark carries AI presence instead.** Four states — at rest / reading / suggesting / filed — mapping one-to-one onto `apps/web/components/capture.tsx:268-275`, plus the provenance rule: **the mark means Capso decided, its absence means you did**, and confirming a suggestion takes it off. Full spec in `drafts/brand/GUIDELINES.html`.
+- **A minimal face was drawn and declined (2026-08-01).** Two square apertures in the foil, tested down to 16px — see `drafts/brand/board-coffee.html`. They survive the size but read as *damage to the lid* rather than as expression. The mark stays an object. This would only reopen if Capso needed to be liked before it is trusted (an acquisition problem), and the answer then would be a properly illustrated character, not this.
+- **The coffee metaphor is carried by motion and vocabulary, not ornament.** The seat and the crimp (see Motion) are the feeling; the lexicon — *rack, slot, seat, pull, lid, crimp* — is the language. Rule: **never explain the metaphor in the UI.** "Seated in Pricing page redesign" has to work for a reader who never thinks about coffee.
 - AI never fakes certainty: 0.5–0.8 confidence suggestions phrase as "Looks like {thread}?" with confirm affordance; ≥0.8 auto-assigns with a visible, undoable "Filed to {thread}" note.
+- **Resurfaced captures state their reason.** A capture Capso brings back carries one muted line saying why. A recommendation the user cannot interrogate is one they can neither trust nor dismiss.
 
 ## Interaction principles (Requirement)
 
@@ -90,6 +94,7 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 3. **Optimistic UI on confirm/assign/pin** — apply instantly, reconcile in background, undo toast on failure.
 4. Keyboard-first triage: Inbox navigable with arrows, Enter = confirm suggestion, backspace = dismiss (idea — adjustable bindings).
 5. Motion: 120–200 ms ease-out, opacity/transform only; overlay animations never delay clipboard availability.
+6. **The seat (added 2026-08-01).** Confirming a suggestion plays `capso-seat` + `capso-crimp` (`globals.css`) — a 220 ms dip-and-return with **zero overshoot**, plus one ring tighten. The material decides the curve: a capsule is aluminium into a socket, so it decelerates hard and stops dead. A bounce would read as rubber and would break rule 5's spirit. The commit stays optimistic — the motion runs alongside the state change, never gating it.
 
 ## What to avoid (Requirement)
 
@@ -98,18 +103,44 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 - Social features (sharing feeds, likes), gamification (streaks, badges).
 - Notification spam — the only pushes ever considered: upload failure (opt-in), weekly digest (email, opt-in).
 - Onboarding checklists that outlive onboarding.
-- Seven-color category rainbows; decorative AI sparkles on every surface.
+- Seven-color category rainbows *(the six intent **dots** are the permitted exception and the boundary is exact: 8px, semantic, never applied to text or a card surface)*; decorative AI sparkles on every surface — the mark is the AI signal, and it is never decoration.
 
-## Starter tokens (idea-level — all values adjustable during build)
+## Tokens (decided 2026-08-01)
+
+**Canonical source: `packages/shared/src/tokens.json`. Nothing else in the repo may declare a colour.** The values below are documentation of that file, not a second copy of it — when the two disagree, the JSON wins and this table is the bug.
 
 | Token group | Values |
 |---|---|
-| Type scale | 12 / 14 (body) / 16 / 20 / 28 / 36 px; Inter or Geist; one family, two weights (400/600) |
+| Type scale | 12 / 14 (body) / 16 / 20 / 28 px; system sans, no webfont in the app; two weights (400/600) |
 | Spacing | 4-px base: 4, 8, 12, 16, 24, 32, 48, 64 |
 | Radius | cards 12, chips 999 (pill), inputs 8, overlay panel 16 |
-| Accent | one warm accent, e.g. `#E8683A` (terracotta) — placeholder, pick against real screenshots since images dominate the canvas |
-| Neutrals | near-white `#FAFAF8` / near-black `#141412` surfaces; hairline borders at 8–12% alpha |
+| Accent | **None.** Buttons are ink `#1F1F1E` on bone, inverted in dark mode |
+| Neutrals | bone `#F4F0EB` ground / surface `#FAF8F4` / ink `#1F1F1E` / muted `#6F6A62`; hairlines at 10% alpha |
+| Danger | light `#933A4E` / dark `#D4808F` — a **pair**, because no single red clears 4.5:1 on both grounds |
+| Intent | six mid-tone hues in `INTENT_COLOR`, shown as 8px dots only, never as text |
+| Marketing | clay `#EBDBCC` ground, espresso `#311B0F` type, Fraunces 600 (SIL OFL 1.1) — marketing surfaces only |
 | Shadow | one level only, low-spread, for overlay + hover cards |
+
+**The terracotta placeholder was retired, not tuned.** It failed AA twice over — `#E8683A` measured 3.10:1 as text on the old ground and 3.24:1 under white, and no single terracotta cleared AA on both light and dark, so it needed a hand-tuned pair per mode. More fundamentally, the note above it was right: images dominate the canvas, and any brand hue competes with arbitrary captured pixels and loses. Measured on a full grid of real captures, **100% of the chromatic pixels on screen belong to the screenshots**. Removing the accent also removes the mode-dependence, because ink simply inverts with the theme.
+
+The ground is warm for a functional reason, not a stylistic one: most captures are white-ish, so bone has to separate from pure white or cards stop having edges. Bone measures 1.135:1 against white; a cool near-white manages 1.073:1 and the grid reads as one sheet.
+
+Consequence for links: with the accent equal to the foreground, colour can no longer mark a link. **Links are underlined, not coloured.** Controls sitting on `text-muted` may still rise to ink on hover.
+
+### How the tokens reach each surface (Requirement)
+
+`pnpm brand:tokens` compiles the JSON into every consumer; `pnpm brand:check` fails the build if any of them is stale **or if any source file declares a colour of its own**, and it runs as part of `pnpm lint`.
+
+| Surface | Consumes |
+|---|---|
+| `apps/web` | `app/tokens.generated.css`, imported by `app/globals.css` |
+| `apps/extension` | `tokens.generated.css`, linked from `popup.html` and `options.html` |
+| `apps/mac` | `src/tokens.generated.css`, imported by `src/App.css` |
+| `drafts/brand/mark` | `tokens.generated.json`, read by `build_icons.py` and `build_og.py` |
+
+This exists because the alternative was already failing. Before it, the palette was hand-copied into six places and three had drifted: the extension options page still carried a retired accent pair, the extension popup carried the accent before *that* plus the OS system colours, and the Mac popover declared no brand values at all. Nobody made a mistake — there was no mechanism, so drift was the default.
+
+One escape hatch, `brand-allow: <reason>`, with a mandatory written reason. It exists for exactly one legitimate case: content that depicts **somebody else's** product. The sample-screenshot canvas in `capture.tsx` must not use Capso's palette, because a fake screenshot of another site that looks like Capso is worse than no sample at all.
 
 Rule of use: tokens are the vocabulary; principles above are the grammar. When a build decision conflicts with a token, keep the principle, change the token.
 

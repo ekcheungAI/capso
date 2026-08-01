@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
-import { EmptyState, Masonry, Thumb } from "@/components/ui";
+import { ANSWERS_OFF, EmptyState, Masonry, SkeletonGrid, Thumb } from "@/components/ui";
 import { retrieve } from "@/lib/retrieve";
 
 const EXAMPLES = [
@@ -20,14 +20,25 @@ const EXAMPLES = [
  * answers in prose with citations — the Perplexity/ChatGPT overview split.
  */
 export default function SearchPage() {
-  const { ready, screenshots, threads, threadName, visit } = useStore();
+  const { ready, screenshots, threads, threadName, visit, revisits } = useStore();
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
   const [answer, setAnswer] = useState<{ text: string; cited: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
-  const hits = useMemo(() => retrieve(q, screenshots, threads), [q, screenshots, threads]);
+  // The input stays responsive on every keystroke; only retrieve()'s
+  // full-library scan is debounced — it used to re-run on every letter typed.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 150);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const hits = useMemo(
+    () => retrieve(debouncedQ, screenshots, threads, 12, revisits),
+    [debouncedQ, screenshots, threads, revisits],
+  );
 
   const ask = async (question: string) => {
     if (!question.trim() || busy) return;
@@ -36,7 +47,7 @@ export default function SearchPage() {
     setNote(null);
     setAsked(question);
 
-    const scope = retrieve(question, screenshots, threads, 12);
+    const scope = retrieve(question, screenshots, threads, 12, revisits);
     if (scope.length === 0) {
       setNote("Nothing in your memory matches that yet.");
       setBusy(false);
@@ -61,7 +72,7 @@ export default function SearchPage() {
       });
 
       if (res.status === 503) {
-        setNote("Answering needs MINIMAX_TEXT_API_KEY. The results below are still real.");
+        setNote(ANSWERS_OFF);
       } else if (!res.ok) {
         setNote("The model call failed. Results below are still real.");
       } else {
@@ -76,9 +87,9 @@ export default function SearchPage() {
     }
   };
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
 
-  const shown = asked && answer ? retrieve(asked, screenshots, threads, 12) : hits;
+  const shown = asked && answer ? retrieve(asked, screenshots, threads, 12, revisits) : hits;
   const citedSet = new Set(answer?.cited ?? []);
 
   return (

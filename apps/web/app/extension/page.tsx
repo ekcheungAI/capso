@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+
+/** The origin never changes for the life of the page, so there is nothing to subscribe to. */
+const noSubscribe = () => () => {};
 
 /**
  * Self-hosted extension download.
@@ -12,6 +15,22 @@ import { useEffect, useState } from "react";
  */
 export default function ExtensionPage() {
   const [info, setInfo] = useState<{ version: string; builtAt: string } | null>(null);
+  /**
+   * The origin this page is served from — which is the one the extension has to
+   * be pointed at. It ships defaulting to `http://localhost:3000`, so a copy
+   * downloaded from a deployment sends captures to a dev server that is not
+   * running, and says "Sent to Capso" either way. Read at runtime rather than
+   * hardcoded so the instruction is correct on localhost and on a deployment.
+   *
+   * This page is prerendered, so the origin cannot be read during render without
+   * a hydration mismatch — and it is a static value, not state, so it should not
+   * come from an effect either.
+   */
+  const origin = useSyncExternalStore(
+    noSubscribe,
+    () => window.location.origin,
+    () => "",
+  );
 
   useEffect(() => {
     fetch("/extension-version.json")
@@ -67,9 +86,21 @@ export default function ExtensionPage() {
             means the extension ID and your hotkey survive the update.
           </li>
           <li>
+            <strong>Point it at this Capso.</strong> Open the extension&apos;s{" "}
+            <strong>Details → Extension options</strong> and set the address to{" "}
+            <code className="rounded bg-surface px-1 break-all">{origin || "this site"}</code>, then
+            Save and approve the access prompt. It ships pointing at{" "}
+            <code className="rounded bg-surface px-1">http://localhost:3000</code>, so without this
+            step captures are sent somewhere that is not this library.
+          </li>
+          <li>
             Set the shortcut at{" "}
             <code className="rounded bg-surface px-1">chrome://extensions/shortcuts</code> — default
             is ⌘⇧U.
+          </li>
+          <li>
+            Open Capso in a tab and leave it open. Captures queue on the server and are collected by
+            the open tab; nothing is stored while every Capso tab is closed.
           </li>
         </ol>
       </section>

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { useToast } from "@/components/toast";
-import { ConfidenceBar, EmptyState, IntentChip, Thumb } from "@/components/ui";
+import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
 
 /**
  * The review sweep.
@@ -22,7 +22,7 @@ import { ConfidenceBar, EmptyState, IntentChip, Thumb } from "@/components/ui";
  * which is the only kind of training a personal tool can ask for.
  */
 export default function ReviewPage() {
-  const { ready, screenshots, threads, threadName, assign } = useStore();
+  const { ready, screenshots, threads, threadName, assign, get } = useStore();
   const toast = useToast();
   const [cursor, setCursor] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -61,9 +61,14 @@ export default function ReviewPage() {
     async (s: (typeof pending)[number], threadId: string | null) => {
       const previous = s.threadId;
       await assign(s, threadId, "inbox_triage");
-      toast(`Filed to ${threadName(threadId)}`, () => void assign(s, previous, "manual"));
+      toast(`Seated in ${threadName(threadId)}`, () => {
+        // Read fresh — see lib/move.ts for why replaying assign() with the
+        // pre-file snapshot would clobber an edit made during the undo window.
+        const current = get(s.id);
+        if (current) void assign(current, previous, "manual");
+      });
     },
-    [assign, toast, threadName],
+    [assign, toast, threadName, get],
   );
 
   const confirmAll = useCallback(async () => {
@@ -74,14 +79,19 @@ export default function ReviewPage() {
     // and firing them together would race on the same thread rows.
     for (const s of batch) await assign(s, s.suggestedThreadId, "inbox_triage");
     setBusy(false);
-    toast(`Filed ${batch.length} captures`, () => {
+    toast(`Seated ${batch.length} captures`, () => {
       // One undo for the whole sweep — restoring them one toast at a time would
-      // be worse than not offering undo at all.
+      // be worse than not offering undo at all. Reads each capture fresh so an
+      // edit made during the undo window is not overwritten by the pre-sweep
+      // snapshot in `batch`.
       void (async () => {
-        for (const s of batch) await assign(s, null, "manual");
+        for (const s of batch) {
+          const current = get(s.id);
+          if (current) await assign(current, null, "manual");
+        }
       })();
     });
-  }, [pending, assign, toast]);
+  }, [pending, assign, toast, get]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -99,26 +109,19 @@ export default function ReviewPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [current, pending.length, threads, file]);
 
-  if (!ready) return <p className="text-xs text-muted">Loading…</p>;
+  if (!ready) return <SkeletonGrid />;
 
   if (pending.length === 0)
     return (
-      <div className="space-y-5">
-        <EmptyState
-          title="Nothing left to review"
-          body={
-            unsorted.length > 0
-              ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all — they are in Unsorted on the library.`
-              : "Every capture has been confirmed into a project. Capso learns from each one you kept or moved."
-          }
-          action="Back to the library"
-        />
-        <p className="text-center">
-          <Link href="/" className="text-xs text-accent hover:underline">
-            ← Library
-          </Link>
-        </p>
-      </div>
+      <EmptyState
+        title="Nothing left to review"
+        body={
+          unsorted.length > 0
+            ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all — they are in Unsorted on the library.`
+            : "Every capture has been confirmed into a project. Capso learns from each one you kept or moved."
+        }
+        action={<Link href="/">Back to the library</Link>}
+      />
     );
 
   return (
@@ -138,7 +141,7 @@ export default function ReviewPage() {
           disabled={busy}
           className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
         >
-          {busy ? "Filing…" : `Keep all ${pending.length}`}
+          {busy ? "Seating…" : `Confirm all ${pending.length}`}
         </button>
       </div>
 
@@ -157,7 +160,7 @@ export default function ReviewPage() {
 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <Link href={`/s/${s.id}`} className="truncate text-sm font-medium hover:text-accent">
+                <Link href={`/s/${s.id}`} className="truncate text-sm font-medium hover:underline">
                   {s.title}
                 </Link>
                 <IntentChip intent={s.intent} />
@@ -171,7 +174,7 @@ export default function ReviewPage() {
                   onClick={() => void file(s, s.suggestedThreadId)}
                   className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
                 >
-                  ✓ Keep in {threadName(s.suggestedThreadId)}
+                  ✓ Confirm — {threadName(s.suggestedThreadId)}
                 </button>
 
                 <select
@@ -180,7 +183,7 @@ export default function ReviewPage() {
                   className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
                 >
                   <option value="" disabled>
-                    Somewhere else…
+                    Move to…
                   </option>
                   {threads
                     .filter((t) => t.id !== s.suggestedThreadId)
