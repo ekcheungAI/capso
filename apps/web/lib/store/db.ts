@@ -5,10 +5,29 @@
  */
 
 const DB_NAME = "capso";
-const DB_VERSION = 2;
+/** v3 split full-size originals out of `screenshots` into `images`. */
+const DB_VERSION = 3;
 
-export const STORES = ["screenshots", "threads", "corrections", "revisits", "messages"] as const;
+export const STORES = [
+  "screenshots",
+  "threads",
+  "corrections",
+  "revisits",
+  "messages",
+  /**
+   * Full-size originals, one row per capture, keyed by screenshot id.
+   *
+   * They used to live on the screenshot row itself, which meant `loadAll` —
+   * which reads every row on mount — pulled every base64 original into React
+   * state. At a few hundred KB a capture that is hundreds of megabytes resident
+   * before the DOM decodes anything. The row now carries only the 800px thumb;
+   * the original is fetched on demand by the two surfaces that need it.
+   */
+  "images",
+] as const;
 export type StoreName = (typeof STORES)[number];
+
+export type StoredImage = { id: string; dataUrl: string };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -16,10 +35,39 @@ function open(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
       for (const name of STORES) {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
+      }
+
+      /**
+       * v2 → v3: move originals off the rows that already exist. Done inside the
+       * versionchange transaction so a library captured before this release is
+       * migrated exactly once, rather than half-migrating on first write and
+       * leaving the rest of the collection heavy forever.
+       */
+      if (event.oldVersion > 0 && event.oldVersion < 3 && req.transaction) {
+        const shots = req.transaction.objectStore("screenshots");
+        const images = req.transaction.objectStore("images");
+        shots.openCursor().onsuccess = (e) => {
+          const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+          if (!cursor) return;
+          const row = cursor.value as {
+            id: string;
+            imageDataUrl?: string | null;
+            thumbDataUrl?: string | null;
+          };
+          // Only rows that already have a thumb can give up their original — a
+          // capture taken before thumbs existed has nothing else to render in
+          // the grid, so moving its image out would blank it. Those keep the
+          // original inline and age out naturally.
+          if (row.imageDataUrl && row.thumbDataUrl) {
+            images.put({ id: row.id, dataUrl: row.imageDataUrl });
+            cursor.update({ ...row, imageDataUrl: null });
+          }
+          cursor.continue();
+        };
       }
     };
     req.onsuccess = () => {

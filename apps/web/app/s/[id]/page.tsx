@@ -4,7 +4,7 @@ import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
-import type { Intent } from "@/lib/store";
+import { getImage, type Intent } from "@/lib/store";
 import { imageFor, INTENT_LABEL, INTENTS } from "@/components/ui";
 
 /**
@@ -32,6 +32,29 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const [copied, setCopied] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const visited = useRef(false);
+
+  /**
+   * The full-size original, fetched on demand. It no longer rides on the row —
+   * keeping every original in memory is what made loading the library expensive
+   * — so this is the one screen that pays to read it back. Until it arrives,
+   * `imageFor` renders the 800px thumb, so the page is never empty.
+   */
+  const [original, setOriginal] = useState<{ id: string; data: string | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getImage(id).then((data) => {
+      if (live) setOriginal({ id, data });
+    });
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  // Keyed by id rather than cleared on navigation: resetting state synchronously
+  // in the effect is a cascading render, and comparing ids also closes the
+  // window where the previous capture's original showed under the new title.
+  const loaded = original?.id === id ? original.data : null;
+  const fullImage = loaded ?? (s ? imageFor(s) : "");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -103,7 +126,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
           <img
-            src={imageFor(s)}
+            src={fullImage}
             alt={s.title}
             className={`rounded-xl border border-line bg-surface ${
               zoom ? "w-auto max-w-none" : "w-full"
@@ -137,7 +160,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={() => {
-              void navigator.clipboard.writeText(imageFor(s));
+              void navigator.clipboard.writeText(fullImage);
               void visit(s.id, "copied");
               flash("image");
             }}
@@ -146,7 +169,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             Copy image
           </button>
           <a
-            href={imageFor(s)}
+            href={fullImage}
             download={`${s.title}.png`}
             className="rounded-md border border-line px-3 py-1.5"
           >
@@ -172,10 +195,14 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           <p className="mt-1 text-xs text-muted">
             {new Date(s.capturedAt).toLocaleString("en-GB")} · {s.source.replace(/_/g, " ")}
           </p>
-          {/* File meta line, Air/Squarespace style */}
+          {/* File meta line, Air/Squarespace style. Reads the loaded original
+              rather than the row — the row no longer carries it — and reports
+              the real format instead of calling every capture "PNG", which was
+              wrong for the whole import path since it encodes JPEG. */}
           <p className="mt-1 text-[11px] tracking-wide text-muted uppercase">
-            {s.imageDataUrl ? "PNG" : "SVG"} · {s.type.replace(/_/g, " ")} ·{" "}
-            {Math.max(1, Math.round((s.imageDataUrl?.length ?? 2000) / 1024))} KB
+            {formatOf(fullImage)} · {s.type.replace(/_/g, " ")}
+            {s.width && s.height ? ` · ${s.width}×${s.height}` : ""} ·{" "}
+            {Math.max(1, Math.round(fullImage.length / 1024))} KB
           </p>
         </div>
 
@@ -339,6 +366,11 @@ function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemov
       </button>
     </span>
   );
+}
+
+/** "data:image/webp;base64,…" → "WEBP". Falls back for the placeholder SVG. */
+function formatOf(dataUrl: string) {
+  return dataUrl.match(/^data:image\/([a-z+]+)/i)?.[1]?.toUpperCase() ?? "—";
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

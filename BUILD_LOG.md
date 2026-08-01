@@ -355,3 +355,21 @@ The grid ratio is content-dependent: a flatter, more typical UI screenshot measu
 Safari before 16 has no canvas WebP encoder and `toDataURL` silently returns PNG when the type is unsupported, which would make the "thumb" larger than the original; the code detects the returned MIME type and falls back to a small JPEG.
 
 **Not done:** plan item D4 — `loadAll()` still reads every row with its full base64 original into React state. Thumbs cut what the grid *renders*, not what the store *holds*, so the ~200 MB-at-500-captures figure stands. Fixing it means moving `imageDataUrl` to its own object store with an on-demand read, which is a `DB_VERSION` bump and a data migration. Deliberately left for its own loop rather than bolted onto this one.
+
+## Loop 16 — Originals leave the row (plan item D4)
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done
+
+Loop 15 shipped thumbs and said plainly that they cut what the grid *renders*, not what the store *holds* — `loadAll` still read every row with its full base64 original into React state. This closes that.
+
+`DB_VERSION` 2 → 3 adds an `images` object store keyed by screenshot id. `putScreenshot` writes the original there and nulls it on the row; `getImage(id)` reads it back for the two surfaces that need it — the detail view (hero, zoom, copy, download) and the Inbox's re-classify. `deleteScreenshot` and `resetAll` cascade, or the heaviest part of a capture would be orphaned and unreachable.
+
+**The split is conditional on a thumb existing.** A capture taken before thumbs would have nothing left to render in the grid, so those keep their original inline — the old behaviour, which is correct for them — and age out. The v2→v3 migration applies the same rule inside the versionchange transaction, so an existing library migrates exactly once rather than half-migrating on first write.
+
+`imageFor` falls back original → thumb → placeholder, so a detail view that has not finished loading shows the 800px version rather than a wireframe over real content.
+
+**Verified against a real library:** DB reports version 3 with the `images` store present, the one real capture's 27 KB original moved out, rows now carry **0 KB of originals and 11 KB of thumbs**, and the detail view renders correctly from the separate store. The saving is per-capture and compounds: list state now holds N thumbs instead of N originals.
+
+**Two fixes made on the way:**
+
+- The detail file-meta line read `PNG` for every capture and sized it from the row. The import path encodes JPEG, so that label had been wrong for every real capture since it shipped. Now reports the actual MIME type, the true pixel dimensions, and the loaded original's size — `JPEG · UI SCREEN · 900×560 · 27 KB`.
+- The first version of the on-demand load reset state synchronously inside the effect, which the React Compiler lint correctly rejected as a cascading render. Rewritten to key the loaded image by capture id, which also closes a window where the previous capture's original could show under the new title.

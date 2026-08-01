@@ -84,7 +84,11 @@ export function FilterPill({ label, removable = false }: { label: string; remova
  */
 export function imageFor(s: Screenshot, size: "thumb" | "full" = "full") {
   if (size === "thumb" && s.thumbDataUrl) return s.thumbDataUrl;
-  return s.imageDataUrl ?? placeholder(s);
+  // `imageDataUrl` is null on rows whose original lives in the `images` store,
+  // so the thumb is the fallback rather than the placeholder — a detail view
+  // that has not loaded its original yet shows the 800px version, not a
+  // wireframe over real content.
+  return s.imageDataUrl ?? s.thumbDataUrl ?? placeholder(s);
 }
 
 export function Thumb({

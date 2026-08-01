@@ -1,0 +1,222 @@
+<title>Capso — five style registers</title>
+<style>
+:root{--paper:#fbf9f5;--surface:#fff;--ink:#141312;--muted:#6b6a64;--line:rgb(20 19 18/.11);--accent:#c2461f}
+@media (prefers-color-scheme:dark){:root{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13);--accent:#e8683a}}
+:root[data-theme=dark]{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13);--accent:#e8683a}
+:root[data-theme=light]{--paper:#fbf9f5;--surface:#fff;--ink:#141312;--muted:#6b6a64;--line:rgb(20 19 18/.11);--accent:#c2461f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1080px;margin:0 auto;padding:56px 24px 100px}
+h1{font-size:34px;letter-spacing:-.03em;margin:0 0 10px;font-weight:600;line-height:1.12}
+h2{font-size:22px;letter-spacing:-.02em;margin:0 0 8px;font-weight:600}
+h3{font-size:18px;margin:0;font-weight:600;letter-spacing:-.01em}
+h4{font-size:11px;margin:0 0 12px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+p{margin:0 0 14px;max-width:70ch}
+.lede{color:var(--muted);font-size:16.5px}
+code{font:.86em ui-monospace,SFMono-Regular,Menlo,monospace;background:color-mix(in srgb,var(--ink) 7%,transparent);padding:2px 6px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:48px 0}
+section{margin-bottom:46px}
+img{max-width:100%;display:block;border-radius:10px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.meta span{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.rule{border-left:3px solid var(--accent);padding:4px 0 4px 18px;margin:20px 0}
+.rule p{margin:0}
+.reg{border:1px solid var(--line);border-radius:16px;padding:22px 24px;margin-bottom:22px;background:var(--surface)}
+.hd{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+.tag{font-size:11px;border-radius:999px;padding:4px 11px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.win{background:var(--accent);color:#fff;border-color:transparent;font-weight:500}
+.grid{display:grid;grid-template-columns:1fr 1fr 1.25fr;gap:18px;align-items:start}
+.shot{background:var(--paper);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+ul{margin:6px 0 0;padding-left:17px;font-size:13px;color:var(--muted)}
+li{margin-bottom:4px}
+.pro li::marker{color:var(--accent)}
+.peers{font-size:12.5px;color:var(--muted);margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.peers b{color:var(--ink);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+td,th{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.rec{border:1px solid var(--accent);border-radius:16px;padding:26px 28px;background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.next{counter-reset:s;list-style:none;padding:0;margin:14px 0 0}
+.next li{counter-increment:s;position:relative;padding-left:30px;margin-bottom:9px;font-size:13.5px;color:var(--ink)}
+.next li::before{content:counter(s);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:999px;background:var(--accent);color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600}
+@media(max-width:820px){.grid,.two{grid-template-columns:1fr}.w{padding:32px 16px 70px}}
+</style>
+
+<div class="w">
+<h1>Five style registers</h1>
+<p class="lede">Same capsule, same locked palette, same prompt structure in all five. Style is the
+only variable, so what you are comparing is genuinely style and not colour or subject.</p>
+<div class="meta"><span>1 Aug 2026</span><span>Recraft V4.1</span><span>11 renders</span>
+<span>Palette locked via the <code>colors</code> parameter</span></div>
+
+<hr/>
+
+<section>
+<h2>What the evidence says before you look</h2>
+<p>A Mobbin sweep for mascots <em>inside working product interfaces</em> returned a consistent
+pattern, and it constrains this choice more than taste does.</p>
+<div class="rule"><p><strong>Almost nobody puts a mascot in the working surface.</strong> Alan's 3D
+bear appears on the login screen and inside a modal — never the dashboard. Gusto's pig is a loading
+state. Homerun's dog is a thank-you screen. Ferndesk's character sits in a setup panel. Duolingo is
+the single exception, and Duolingo is a game.</p></div>
+<p>Capso's UI is deliberately restrained and its canvas is full of other people's screenshots. So
+the register does not need to survive the dashboard — <strong>it needs to be excellent at the
+edges, and reducible to an icon.</strong> Those are different jobs, and they may want different
+assets.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>The five</h2>
+
+<div class="reg">
+  <div class="hd"><h3>1 · Soft 3D / clay</h3><span class="tag">marketing winner</span></div>
+  <div class="grid">
+    <div class="shot"><img src="renders-styles/S1-clay-a.png" alt="Clay capsule, frontal"></div>
+    <div class="shot"><img src="renders-styles/S1-clay-b.png" alt="Clay capsule, three-quarter"></div>
+    <div>
+      <p style="font-size:14px;margin-bottom:6px">Matte clay shell, dark eyes, translucent lower
+      half with the cards genuinely visible through it. Photographs like a product.</p>
+      <ul class="pro"><li>Best hero, OG card and App Store asset of the five by some distance</li>
+      <li>The translucency sells the whole concept in one image</li></ul>
+      <ul><li>Dimpled surface reads slightly organic — closer to a seed pod than a manufactured capsule</li>
+      <li>Cannot become the icon; needs a flat twin kept in sync</li>
+      <li>The most crowded register in AI-era software</li></ul>
+      <p class="peers"><b>Ships as:</b> Alan, Digg, Google Meet avatars. All at the edges, none in the working UI.</p>
+    </div>
+  </div>
+</div>
+
+<div class="reg" style="border-color:var(--accent)">
+  <div class="hd"><h3>2 · Flat vector</h3><span class="tag win">recommended core</span></div>
+  <div class="grid">
+    <div class="shot"><img src="renders-styles/S2-vector-a.webp" alt="Flat vector capsule, outlined"></div>
+    <div class="shot"><img src="renders-styles/S2-vector-b.webp" alt="Flat vector capsule, solid"></div>
+    <div>
+      <p style="font-size:14px;margin-bottom:6px">Solid shell, clean window, three cards in the
+      intent colours. The right-hand variant is the stronger one — no hairline, so nothing to lose
+      at small sizes.</p>
+      <ul class="pro"><li><strong>It is the icon.</strong> One SVG feeds favicon, extension, tray and mascot with nothing to sync</li>
+      <li>Native to the UI already shipping — same flat, hairline, unshaded language</li>
+      <li>Only register that survives 16px without a redraw</li>
+      <li>Came back closest to the locked accent: <code>#c1461e</code> against <code>#c2461f</code></li></ul>
+      <ul><li>Least to look at in a hero — which is exactly what register 1 is for</li></ul>
+      <p class="peers"><b>Ships as:</b> Brilliant's Koji, Sora's blob. Both appear once at onboarding, then never again.</p>
+    </div>
+  </div>
+</div>
+
+<div class="reg">
+  <div class="hd"><h3>3 · Riso / hand-drawn</h3><span class="tag">warmest</span></div>
+  <div class="grid">
+    <div class="shot"><img src="renders-styles/S3-riso-a.png" alt="Riso capsule"></div>
+    <div class="shot"><img src="renders-styles/S3-riso-b.png" alt="Riso capsule with legs"></div>
+    <div>
+      <p style="font-size:14px;margin-bottom:6px">Halftone grain, wobbly confident line, ink that
+      overprints. The left one works; the right one gave the character a bandit mask.</p>
+      <ul class="pro"><li>Most human of the five, and the clearest trend signal from the 2026 sources</li>
+      <li>Excellent on stickers, merch and onboarding</li></ul>
+      <ul><li>Grain fights the precise hairline UI — brand layer only, never in-app</li>
+      <li>Drifted warm on the shell: <code>#c1632e</code> rather than <code>#c2461f</code></li></ul>
+      <p class="peers"><b>Ships as:</b> Typeform's dog, Charma's blob — single empty states, nowhere else.</p>
+    </div>
+  </div>
+</div>
+
+<div class="reg">
+  <div class="hd"><h3>4 · Toy / collectible</h3><span class="tag">best for the project family</span></div>
+  <div class="grid">
+    <div class="shot"><img src="renders-styles/S4-toy-a.png" alt="Die-cut sticker capsule"></div>
+    <div style="display:grid;place-items:center;color:var(--muted);font-size:12.5px;border:1px dashed var(--line);border-radius:10px;padding:20px;text-align:center">Second variant<br/>failed to generate</div>
+    <div>
+      <p style="font-size:14px;margin-bottom:6px">Heavy keyline, die-cut edge, body packed with
+      cards. Built to be duplicated — one capsule per project.</p>
+      <ul class="pro"><li>Strongest fit for the per-project capsule family, the best structural idea in the whole exploration</li>
+      <li>Obvious sticker sheet and merch</li></ul>
+      <ul><li>Skews youngest; the oversized eyes read closer to a game character than a work tool</li>
+      <li>Shell drifted furthest from the locked accent</li></ul>
+      <p class="peers"><b>Ships as:</b> Duolingo. The one product that genuinely puts its mascot in the working surface — because it is a game.</p>
+    </div>
+  </div>
+</div>
+
+<div class="reg">
+  <div class="hd"><h3>5 · Editorial / engraved</h3><span class="tag">most original, least usable</span></div>
+  <div class="grid">
+    <div class="shot"><img src="renders-styles/S5-engrave-a.png" alt="Engraved capsule"></div>
+    <div class="shot"><img src="renders-styles/S5-engrave-b.png" alt="Engraved capsule, specimen plate"></div>
+    <div>
+      <p style="font-size:14px;margin-bottom:6px">Cross-hatched cap over a glass chamber, presented
+      as a catalogue specimen. The framed variant is a genuine idea: your captures as archived
+      specimens.</p>
+      <ul class="pro"><li><strong>Uncontested.</strong> No competitor in this category is anywhere near this</li>
+      <li>The only register that says "archive", which is what a memory product actually is</li>
+      <li>Pairs naturally with the serif logotype</li></ul>
+      <ul><li>Cold — hard to make it feel friendly, and you asked for fun</li>
+      <li>Hatching disappears entirely below ~64px; it can never be the icon</li>
+      <li>A third asset with no home in the product</li></ul>
+      <p class="peers"><b>Ships as:</b> nobody, in this category. That is the appeal and the risk.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<hr/>
+
+<section>
+<h4>Palette fidelity — sampled from the renders, not assumed</h4>
+<table>
+<tr><th>Register</th><th>Sampled shell</th><th>Drift from <code>#c2461f</code></th></tr>
+<tr><td>Flat vector</td><td><code>#c1461e</code></td><td>essentially exact</td></tr>
+<tr><td>Soft 3D / clay</td><td><code>#b54a2e</code></td><td>slightly muted — lighting, correctable</td></tr>
+<tr><td>Riso</td><td><code>#c1632e</code></td><td>warmer, ink-on-newsprint shift</td></tr>
+<tr><td>Toy</td><td><code>#835a3e</code></td><td>heavy keyline pulls the sample dark</td></tr>
+<tr><td>Editorial</td><td><code>#60362d</code></td><td>hatching blends ink into the shell</td></tr>
+</table>
+<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Only the vector register is
+colour-accurate enough to hand straight to production. The others would need the palette forced in
+a redraw — which is expected, since a generated render is a concept, not an asset.</p>
+</section>
+
+<hr/>
+
+<section>
+<div class="rec">
+<h4>Recommendation</h4>
+<p style="font-size:22px;font-weight:600;letter-spacing:-.015em;margin-bottom:12px">Flat vector as
+the core. Clay as its marketing photograph. Two assets, not five.</p>
+<div class="two">
+  <div>
+    <p style="margin:0 0 10px"><strong>Why not one register for everything:</strong> the Mobbin
+    evidence shows the mascot's real job is at the edges — login, loading, empty, onboarding, the
+    store listing. That job wants clay. The icon job wants vector. Forcing one register to do both
+    makes it mediocre at each.</p>
+    <p style="margin:0"><strong>Why vector is the core rather than clay:</strong> it is the only
+    one that is already the icon, already matches the shipped UI, already colour-accurate, and
+    already survives 16px. Everything downstream — <code>build_icons.py</code>, the favicon, the
+    extension, the tray template — regenerates from that one SVG with nothing to keep in sync.</p>
+  </div>
+  <div>
+    <p style="margin:0 0 10px"><strong>What I would drop:</strong> riso and toy are both good and
+    both are a third asset with no home. Riso survives as a texture treatment on merch if you ever
+    want it; it should not become the mascot.</p>
+    <p style="margin:0"><strong>The one I would keep arguing for:</strong> editorial. It is the only
+    genuinely uncontested territory here, and "your captures as catalogued specimens" is a better
+    story than anything else on this page. It loses because it cannot reduce and it is not warm —
+    but if you want the brand to be <em>interesting</em> over <em>safe</em>, say so and I will build
+    that instead.</p>
+  </div>
+</div>
+<h4 style="margin-top:24px">If flat vector + clay is approved</h4>
+<ol class="next">
+  <li>Hand-redraw the vector capsule on a 24px grid, cards in the shipped intent colours</li>
+  <li>Save it as a Higgsfield <em>Element</em> — not a Soul — so the clay renders stay on-model</li>
+  <li>Generate the clay twin from that Element: poses, expressions, the OG hero</li>
+  <li>Serif logotype lockups set in the real webfont, not generated as an image</li>
+  <li>Icon set from the one SVG; project family in the six intent colours; in situ on real app screens</li>
+</ol>
+</div>
+</section>
+</div>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
+import { getImage } from "@/lib/store";
 import { ConfidenceBar, EmptyState, IntentChip, Thumb } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
@@ -129,13 +130,17 @@ export default function InboxPage() {
                 <button
                   disabled={rerunning === s.id}
                   onClick={async () => {
-                    if (!s.imageDataUrl) {
+                    setRerunning(s.id);
+                    // Originals live in their own store now, so re-reading one
+                    // is a fetch rather than a field access.
+                    const full = s.imageDataUrl ?? (await getImage(s.id));
+                    if (!full) {
+                      setRerunning(null);
                       toast("Sample captures have no image to re-read.");
                       return;
                     }
-                    setRerunning(s.id);
                     const r = await classify(
-                      s.imageDataUrl,
+                      full,
                       threads,
                       fewShotLines(corrections, screenshots, threads),
                       // Re-read with the same page context the capture arrived

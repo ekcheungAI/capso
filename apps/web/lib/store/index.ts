@@ -87,6 +87,7 @@ export async function resetAll() {
   await Promise.all([
     idb.clear("threads"),
     idb.clear("screenshots"),
+    idb.clear("images"),
     idb.clear("corrections"),
     idb.clear("revisits"),
     idb.clear("messages"),
@@ -125,9 +126,37 @@ export async function clearSamples() {
   return loadAll();
 }
 
+/**
+ * Write a capture. The full-size original is stored separately from the row —
+ * see `STORES.images` — so the row stays small enough that loading the whole
+ * library is cheap. Callers keep passing whole `Screenshot` objects; the split
+ * is this function's business, not theirs.
+ */
 export async function putScreenshot(s: Screenshot) {
-  await idb.put("screenshots", s);
+  // Split only when a thumb exists to render in the original's place. Without
+  // one the grid would have nothing to show, so such a row keeps its image
+  // inline — the old behaviour, which is correct for it.
+  const canSplit = Boolean(s.imageDataUrl && s.thumbDataUrl);
+
+  if (canSplit) {
+    await idb.put("images", { id: s.id, dataUrl: s.imageDataUrl! });
+    await idb.put("screenshots", { ...s, imageDataUrl: null });
+  } else {
+    await idb.put("screenshots", s);
+  }
+
+  // Returned with the image still attached: the caller just handed it to us and
+  // is about to render it, so making them re-read it would be silly.
   return s;
+}
+
+/**
+ * The full-size original, on demand. Only the detail view (hero, zoom, copy,
+ * download) and re-classification need it; everything else renders `thumbDataUrl`.
+ */
+export async function getImage(id: string): Promise<string | null> {
+  const row = await idb.get<{ id: string; dataUrl: string }>("images", id);
+  return row?.dataUrl ?? null;
 }
 
 export async function putThread(t: Thread) {
@@ -270,6 +299,9 @@ export async function setIntent(s: Screenshot, intent: Screenshot["intent"]) {
 /** Hard delete, per F10 — image, rows and derived data all go. */
 export async function deleteScreenshot(s: Screenshot) {
   await idb.del("screenshots", s.id);
+  // The original lives in its own store now; deleting the row alone would leave
+  // the heaviest part of the capture orphaned and unreachable.
+  await idb.del("images", s.id);
   const [corrections, revisits] = await Promise.all([
     idb.all<Correction>("corrections"),
     idb.all<Revisit>("revisits"),
