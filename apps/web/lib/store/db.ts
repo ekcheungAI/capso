@@ -22,9 +22,33 @@ function open(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      // Another tab bumping the version later would otherwise leave this
+      // connection live and block it indefinitely.
+      req.result.onversionchange = () => req.result.close();
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
+    /**
+     * A version upgrade cannot proceed while another tab holds an older
+     * connection. Without this handler the promise simply never settles, and
+     * every caller — including the one that decides whether the app is `ready`
+     * — waits forever behind a skeleton with nothing to explain it.
+     */
+    req.onblocked = () =>
+      reject(
+        new Error(
+          "Capso is open in another tab running an older version. Close it and reload.",
+        ),
+      );
   });
+
+  // A failed open must not be cached, or the app can never recover without a
+  // full reload — the user closing the other tab should be enough.
+  dbPromise.catch(() => {
+    dbPromise = null;
+  });
+
   return dbPromise;
 }
 

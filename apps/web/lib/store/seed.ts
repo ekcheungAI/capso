@@ -3,10 +3,26 @@ import type { Screenshot, Thread } from "./types";
 /** First-run fixtures. Real ingests join these; "Reset demo data" restores them. */
 
 export const seedThreads: Thread[] = [
-  { id: "pricing-redesign", name: "Pricing page redesign" },
-  { id: "onboarding-teardown", name: "Onboarding teardown" },
-  { id: "capso-bugs", name: "Capso UI bugs" },
-  { id: "q3-launch", name: "Q3 launch campaign" },
+  {
+    id: "pricing-redesign",
+    name: "Pricing page redesign",
+    description: "Pricing tables, plan comparisons and checkout screens worth borrowing from.",
+  },
+  {
+    id: "onboarding-teardown",
+    name: "Onboarding teardown",
+    description: "First-run flows, checklists and empty states from products with good onboarding.",
+  },
+  {
+    id: "capso-bugs",
+    name: "Capso UI bugs",
+    description: "Broken layouts and visual glitches in Capso itself, saved to fix later.",
+  },
+  {
+    id: "q3-launch",
+    name: "Q3 launch campaign",
+    description: "Ad hooks, launch copy and competitor marketing for the Q3 launch.",
+  },
 ].map((t) => ({
   ...t,
   createdAt: "2026-03-01T00:00:00Z",
@@ -16,8 +32,36 @@ export const seedThreads: Thread[] = [
 
 type SeedInput = Omit<
   Screenshot,
-  "status" | "assignmentSource" | "source" | "imageDataUrl" | "archived" | "suggestedThreadId"
-> & { suggestedThreadId?: string | null };
+  | "status"
+  | "assignmentSource"
+  | "source"
+  | "imageDataUrl"
+  | "archived"
+  | "suggestedThreadId"
+  // Capture context, tagging, OCR provenance and storage paths are all derived
+  // or absent for fixtures — a fixture that had to spell out ten nulls would be
+  // unreadable, and the point of these rows is that they read like real data.
+  | "pageUrl"
+  | "pageTitle"
+  | "sourceApp"
+  | "tags"
+  | "userTags"
+  | "ocrSource"
+  | "ocrLangs"
+  | "contentHash"
+  | "originalPath"
+  | "thumbPath"
+  // Fixtures carry no real image, so there is nothing to size or make a thumb of.
+  | "thumbDataUrl"
+  | "width"
+  | "height"
+> & {
+  suggestedThreadId?: string | null;
+  /** Fixtures may opt into tags or page context to exercise the real surfaces. */
+  tags?: string[];
+  pageUrl?: string | null;
+  pageTitle?: string | null;
+};
 
 const raw: SeedInput[] = [
   {
@@ -29,6 +73,7 @@ const raw: SeedInput[] = [
     ocrText:
       "Pricing\nFree — for individuals\nBasic $8 /user /month\nBusiness $14 /user /month\nEnterprise — contact us\nBilled annually · Save 20%\nStart free trial",
     intent: "competitor",
+    tags: ["linear", "pricing table", "annual toggle", "three tiers"],
     type: "web_page",
     threadId: "pricing-redesign",
     confidence: 0.94,
@@ -43,6 +88,7 @@ const raw: SeedInput[] = [
     whySaved: "Reference for our own empty states — one action, no illustration.",
     ocrText: "Nothing here yet.\nAdd your first product to get started.\nAdd product",
     intent: "design_inspiration",
+    tags: ["stripe", "empty state", "checkout", "illustration"],
     type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.88,
@@ -58,6 +104,7 @@ const raw: SeedInput[] = [
     whySaved: "Reproducible bug — only on the external monitor.",
     ocrText: "Project = Pricing page redesign · Type = web_page\nConfirm   Adjust   Ignore",
     intent: "ux_bug",
+    tags: ["capso", "overlay", "macos traffic lights", "overlap"],
     type: "ui_screen",
     threadId: "capso-bugs",
     confidence: 0.91,
@@ -72,6 +119,7 @@ const raw: SeedInput[] = [
     whySaved: "Exactly the vocabulary our overlay chip should use.",
     ocrText: "Accept\nDiscard\nTry again\nGet unlimited AI",
     intent: "design_inspiration",
+    tags: ["notion", "ai menu", "accept discard", "dropdown"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.86,
@@ -86,6 +134,7 @@ const raw: SeedInput[] = [
     whySaved: "One concept per screen — the pacing we want for hotkey onboarding.",
     ocrText: "Step 3 of 6\nPress ⌘K to jump anywhere.\nTry it now.",
     intent: "reference",
+    tags: ["superhuman", "onboarding", "step indicator", "keyboard shortcut"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.79,
@@ -100,6 +149,7 @@ const raw: SeedInput[] = [
     whySaved: "Hook structure for the launch reel.",
     ocrText: "You screenshot it.\nYou forget it.\nEvery time.",
     intent: "marketing_hook",
+    tags: ["ad creative", "three line hook", "bold type"],
     type: "photo",
     threadId: "q3-launch",
     confidence: 0.83,
@@ -114,6 +164,7 @@ const raw: SeedInput[] = [
     whySaved: "Footer action bar pattern for our search omnibox.",
     ocrText: "Search for apps and commands…\nSuggestions\nCommands\n↵ Open   ⌘K Actions",
     intent: "design_inspiration",
+    tags: ["raycast", "command palette", "dark mode", "search input"],
     type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.9,
@@ -128,6 +179,7 @@ const raw: SeedInput[] = [
     whySaved: "Model for Inbox-above-projects ordering.",
     ocrText: "Spaces\nPinned\nToday",
     intent: "reference",
+    tags: ["arc browser", "sidebar", "spaces", "grouping"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.81,
@@ -142,6 +194,7 @@ const raw: SeedInput[] = [
     whySaved: "Second display again — likely the same scale-factor bug.",
     ocrText: "captured 2026-07-29 · 3024 × 1964 · scale 2x",
     intent: "ux_bug",
+    tags: ["capso", "retina", "thumbnail", "aspect ratio"],
     type: "ui_screen",
     threadId: "capso-bugs",
     confidence: 0.87,
@@ -156,6 +209,7 @@ const raw: SeedInput[] = [
     whySaved: "Format reference if we ever ship a public changelog.",
     ocrText: "更新日誌\n2026 年 7 月 — 改進搜尋排序、加快擷取速度\n2026 年 6 月 — 新增專案分類",
     intent: "competitor",
+    tags: ["競品", "changelog", "繁體中文", "release notes"],
     type: "web_page",
     threadId: "q3-launch",
     confidence: 0.74,
@@ -170,6 +224,7 @@ const raw: SeedInput[] = [
     whySaved: "Unclear — no strong signal from surrounding context.",
     ocrText: "Notifications\nQuiet hours  22:00 – 08:00\nDaily digest",
     intent: "other",
+    tags: ["notification settings", "quiet hours", "toggle list"],
     type: "ui_screen",
     threadId: null,
     suggestedThreadId: "onboarding-teardown",
@@ -185,6 +240,7 @@ const raw: SeedInput[] = [
     whySaved: "Possibly competitor research, possibly your own metrics.",
     ocrText: "MRR $12,480\nChurn 2.1%\nNet new 34\nLast 30 days",
     intent: "competitor",
+    tags: ["dashboard", "revenue chart", "mrr", "metrics"],
     type: "chart",
     threadId: null,
     suggestedThreadId: "q3-launch",
@@ -200,6 +256,7 @@ const raw: SeedInput[] = [
     whySaved: "Layout reference for a future mobile read view.",
     ocrText: "Home\nLibrary\nProjects\nSettings",
     intent: "design_inspiration",
+    tags: ["mobile nav", "drawer", "tap targets", "search field"],
     type: "ui_screen",
     threadId: null,
     suggestedThreadId: "onboarding-teardown",
@@ -218,4 +275,20 @@ export const seedScreenshots: Screenshot[] = raw.map((s) => ({
   source: "seed",
   imageDataUrl: null,
   archived: false,
+  pageUrl: s.pageUrl ?? null,
+  pageTitle: s.pageTitle ?? null,
+  sourceApp: null,
+  tags: s.tags ?? [],
+  userTags: [],
+  // Fixture text was written by hand, but it stands in for a model transcript —
+  // labelling it `llm` keeps the provenance honest rather than claiming an OCR
+  // engine ran over an image that does not exist.
+  ocrSource: "llm",
+  ocrLangs: [],
+  contentHash: null,
+  originalPath: null,
+  thumbPath: null,
+  thumbDataUrl: null,
+  width: null,
+  height: null,
 }));

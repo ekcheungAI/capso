@@ -52,5 +52,11 @@ export const classification = z.object({
   project_suggestion: z.string().nullable(),
   confidence: z.number().min(0).max(1),
   why_saved: z.string().max(200),
+  /**
+   * Concrete entity tags — brands, products, screen kinds, dominant colours,
+   * language. Defaulted rather than required: a missing tag list is not worth
+   * burning the one repair retry that exists to rescue genuinely broken JSON.
+   */
+  tags: z.array(z.string().min(1).max(40)).max(12).default([]),
 });
 export type Classification = z.infer<typeof classification>;

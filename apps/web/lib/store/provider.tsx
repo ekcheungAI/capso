@@ -6,6 +6,14 @@ import type { Correction, Message, Revisit, Screenshot, Thread } from "./types";
 
 type State = {
   ready: boolean;
+  /**
+   * Why the library could not be opened, if it could not. Never null-and-ready
+   * at the same time: an unreadable store has to say so, because the alternative
+   * is an infinite skeleton that looks identical to a slow load.
+   */
+  loadError: string | null;
+  /** No library and no record of a first run — Shell shows the picker instead of the app. */
+  needsSetup: boolean;
   threads: Thread[];
   screenshots: Screenshot[];
   corrections: Correction[];
@@ -20,9 +28,13 @@ type Api = State & {
   get: (id: string) => Screenshot | undefined;
   threadName: (id: string | null) => string;
   assign: (s: Screenshot, threadId: string | null, source: Screenshot["assignmentSource"]) => Promise<void>;
-  addThread: (name: string) => Promise<Thread>;
+  addThread: (name: string, description?: string) => Promise<Thread>;
+  applyTemplate: (roleId: string) => Promise<void>;
+  loadSamples: () => Promise<void>;
   saveWhySaved: (s: Screenshot, text: string) => Promise<void>;
   saveIntent: (s: Screenshot, intent: Screenshot["intent"]) => Promise<void>;
+  addTag: (s: Screenshot, tag: string) => Promise<void>;
+  dropTag: (s: Screenshot, tag: string) => Promise<void>;
   remove: (s: Screenshot) => Promise<void>;
   visit: (id: string, kind: Revisit["kind"]) => Promise<void>;
   ingest: (s: Screenshot) => Promise<void>;
@@ -31,6 +43,7 @@ type Api = State & {
   say: (m: Omit<Message, "id" | "createdAt">) => Promise<Message>;
   threadMessages: (threadId: string) => Message[];
   reset: () => Promise<void>;
+  clearSamples: () => Promise<void>;
 };
 
 const Ctx = createContext<Api | null>(null);
@@ -38,6 +51,8 @@ const Ctx = createContext<Api | null>(null);
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [s, setS] = useState<State>({
     ready: false,
+    loadError: null,
+    needsSetup: false,
     threads: [],
     screenshots: [],
     corrections: [],
@@ -46,7 +61,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    store.loadAll().then((data) => setS({ ready: true, ...data }));
+    store
+      .loadAll()
+      .then((data) => setS({ ready: true, loadError: null, ...data }))
+      .catch((err: unknown) =>
+        setS((p) => ({
+          ...p,
+          ready: true,
+          loadError: err instanceof Error ? err.message : "Your library could not be opened.",
+        })),
+      );
   }, []);
 
   const upsert = useCallback((next: Screenshot, correction?: Correction) => {
@@ -72,13 +96,26 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       threadName,
 
       async assign(shot, threadId, source) {
-        const { screenshot, correction } = await store.assignThread(shot, threadId, source);
+        const { screenshot, correction, thread } = await store.assignThread(shot, threadId, source);
         upsert(screenshot, correction);
+        if (thread)
+          setS((p) => ({
+            ...p,
+            threads: p.threads.map((t) => (t.id === thread.id ? thread : t)),
+          }));
       },
-      async addThread(name) {
-        const t = await store.createThread(name);
+      async addThread(name, description) {
+        const t = await store.createThread(name, description);
         setS((p) => ({ ...p, threads: [...p.threads, t] }));
         return t;
+      },
+      async applyTemplate(roleId) {
+        const data = await store.applyTemplate(roleId);
+        setS({ ready: true, loadError: null, ...data });
+      },
+      async loadSamples() {
+        const data = await store.loadSamples();
+        setS({ ready: true, loadError: null, ...data });
       },
       async saveWhySaved(shot, text) {
         const { screenshot, correction } = await store.editWhySaved(shot, text);
@@ -86,6 +123,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       },
       async saveIntent(shot, intent) {
         const { screenshot, correction } = await store.setIntent(shot, intent);
+        upsert(screenshot, correction);
+      },
+      async addTag(shot, tag) {
+        const { screenshot } = await store.addUserTag(shot, tag);
+        upsert(screenshot);
+      },
+      async dropTag(shot, tag) {
+        const { screenshot, correction } = await store.removeTag(shot, tag);
         upsert(screenshot, correction);
       },
       async remove(shot) {
@@ -123,7 +168,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
       async reset() {
         const data = await store.resetAll();
-        setS({ ready: true, ...data });
+        setS({ ready: true, loadError: null, ...data });
+      },
+      async clearSamples() {
+        const data = await store.clearSamples();
+        setS({ ready: true, loadError: null, ...data });
       },
     };
   }, [s, upsert]);

@@ -8,10 +8,25 @@ import type { Correction, Screenshot, Thread } from "@/lib/store";
 
 export type Classification = Pick<
   Screenshot,
-  "title" | "summary" | "whySaved" | "ocrText" | "intent" | "type" | "confidence"
+  | "title"
+  | "summary"
+  | "whySaved"
+  | "ocrText"
+  | "intent"
+  | "type"
+  | "confidence"
+  | "tags"
+  | "ocrSource"
+  | "ocrLangs"
 > & { projectSuggestion: string | null; simulated: boolean };
 
-const CANNED: Omit<Classification, "projectSuggestion" | "simulated">[] = [
+/** Page context a browser capture can supply; absent for files and pastes. */
+export type CaptureContext = { pageUrl?: string | null; pageTitle?: string | null };
+
+const CANNED: Omit<
+  Classification,
+  "projectSuggestion" | "simulated" | "ocrSource" | "ocrLangs"
+>[] = [
   {
     title: "Pricing page with plan comparison",
     summary: "Three pricing tiers laid out in a comparison table with a highlighted middle plan.",
@@ -20,6 +35,7 @@ const CANNED: Omit<Classification, "projectSuggestion" | "simulated">[] = [
     intent: "competitor",
     type: "web_page",
     confidence: 0.86,
+    tags: ["pricing table", "three tiers", "annual billing"],
   },
   {
     title: "Onboarding checklist screen",
@@ -29,6 +45,7 @@ const CANNED: Omit<Classification, "projectSuggestion" | "simulated">[] = [
     intent: "design_inspiration",
     type: "ui_screen",
     confidence: 0.72,
+    tags: ["onboarding checklist", "progress indicator", "empty state"],
   },
   {
     title: "Interface with layout glitch",
@@ -38,6 +55,7 @@ const CANNED: Omit<Classification, "projectSuggestion" | "simulated">[] = [
     intent: "ux_bug",
     type: "ui_screen",
     confidence: 0.44,
+    tags: ["overflow", "layout bug"],
   },
 ];
 
@@ -63,6 +81,7 @@ export async function classify(
   imageDataUrl: string,
   threads: Thread[],
   corrections: string[] = [],
+  context: CaptureContext = {},
 ): Promise<Classification> {
   try {
     const res = await fetch("/api/classify", {
@@ -70,8 +89,12 @@ export async function classify(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         imageDataUrl,
-        projects: threads.map((t) => t.name),
+        // Descriptions travel with the names: "Hooks & copy swipe file" alone
+        // tells the model nothing, the line under it tells it everything.
+        projects: threads.map((t) => ({ name: t.name, description: t.description })),
         corrections,
+        pageUrl: context.pageUrl ?? null,
+        pageTitle: context.pageTitle ?? null,
       }),
     });
 
@@ -86,11 +109,12 @@ export async function classify(
           project_suggestion: string | null;
           confidence: number;
           why_saved: string;
+          tags: string[];
         };
       };
 
       // The model returns a project *name*; the store works in ids.
-      const match = threads.find((t) => t.name === result.project_suggestion);
+      const match = matchThread(threads, result.project_suggestion);
 
       return {
         title: result.title,
@@ -102,6 +126,12 @@ export async function classify(
         confidence: result.confidence,
         projectSuggestion: match?.id ?? null,
         simulated: false,
+        tags: normaliseTags(result.tags),
+        // Honest provenance: the text came out of the vision model, not an OCR
+        // engine. When tesseract runs at ingest this becomes "tesseract" and the
+        // model stops being asked to transcribe at all.
+        ocrSource: "llm",
+        ocrLangs: [],
       };
     }
   } catch {
@@ -111,6 +141,83 @@ export async function classify(
   return simulated(imageDataUrl, threads);
 }
 
+/**
+ * Fold a project name to a comparison key. Models reproduce a name from the
+ * candidate list *almost* exactly and then drift on the parts that carry no
+ * meaning — an ampersand spelled out, an em-dash normalised to a hyphen, a
+ * doubled space, different casing.
+ */
+function nameKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * Last-resort key: drop the connectives too, so "Marketing & hooks" and a model
+ * that wrote "Marketing—hooks" land on the same string. Only used when exactly
+ * one candidate matches, because this is loose enough to collide.
+ */
+function loosestKey(s: string): string {
+  return nameKey(s)
+    .split(" ")
+    .filter((w) => w !== "and" && w !== "the")
+    .join(" ");
+}
+
+/**
+ * Resolve the model's project name to a thread.
+ *
+ * This used to be `threads.find((t) => t.name === result.project_suggestion)`.
+ * Exact string equality meant "Hooks & copy swipe file" vs "Hooks and copy
+ * swipe file" resolved to null — and a null suggestion does not merely lose the
+ * auto-file, it strips `suggestedThreadId` too, so the capture lands in the
+ * Inbox with no suggestion and is counted by no shelf. The failure was total,
+ * silent, and indistinguishable from the model genuinely not knowing.
+ */
+export function matchThread(threads: Thread[], name: string | null): Thread | undefined {
+  if (!name) return undefined;
+
+  const exact = threads.find((t) => t.name === name);
+  if (exact) return exact;
+
+  const key = nameKey(name);
+  let hit = threads.find((t) => nameKey(t.name) === key);
+
+  if (!hit) {
+    const loosest = loosestKey(name);
+    const candidates = threads.filter((t) => loosestKey(t.name) === loosest);
+    // Ambiguity here means guessing, and a wrong auto-file is worse than an
+    // honest "unsorted" — so only take it when the answer is unique.
+    if (candidates.length === 1) hit = candidates[0];
+  }
+
+  // Worth knowing about: it means the prompt's "copied exactly" rule is not
+  // holding, and every near-miss this does not catch is an unfiled capture.
+  console.info(
+    hit
+      ? `[capso] project name matched loosely: model said "${name}", filed as "${hit.name}"`
+      : `[capso] project name matched no candidate: model said "${name}"`,
+  );
+
+  return hit;
+}
+
+/**
+ * Models drift from any tag format you give them. Trim, lowercase, drop empties
+ * and duplicates, cap the list — cheaper and more reliable than another retry.
+ */
+function normaliseTags(tags: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  for (const t of tags ?? []) {
+    const clean = t.trim().toLowerCase().replace(/^#/, "").slice(0, 40);
+    if (clean) seen.add(clean);
+  }
+  return [...seen].slice(0, 8);
+}
+
 async function simulated(imageDataUrl: string, threads: Thread[]): Promise<Classification> {
   await new Promise((r) => setTimeout(r, 1400));
   const pick = CANNED[imageDataUrl.length % CANNED.length]!;
@@ -118,5 +225,11 @@ async function simulated(imageDataUrl: string, threads: Thread[]): Promise<Class
     pick.confidence >= 0.5 && threads.length > 0
       ? (threads[imageDataUrl.length % threads.length]?.id ?? null)
       : null;
-  return { ...pick, projectSuggestion: suggestion, simulated: true };
+  return {
+    ...pick,
+    projectSuggestion: suggestion,
+    simulated: true,
+    ocrSource: null,
+    ocrLangs: [],
+  };
 }
