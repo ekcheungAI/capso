@@ -9,6 +9,14 @@ src="$root/apps/extension"
 out_dir="$root/apps/web/public"
 version="$(node -p "require('$src/manifest.json').version")"
 
+# Runs inside the Vercel build too, so it must fail loudly rather than leave the
+# download page serving a 404 — which is precisely what happened when this only
+# ever ran on a developer's machine.
+if ! command -v zip >/dev/null 2>&1; then
+  echo "build-extension: 'zip' not found — /extension would serve a broken download." >&2
+  exit 1
+fi
+
 mkdir -p "$out_dir"
 rm -f "$out_dir/capso-extension.zip"
 

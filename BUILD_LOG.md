@@ -390,3 +390,26 @@ Now split three ways: **503** (no key) is a deliberate demo mode and still retur
 **Also:** `classify` gained an `AbortSignal.timeout` — a hung connection used to park a row at `processing` forever with no recovery but deletion. The Inbox re-read now patches instead of writing a full object, so `status` actually moves; without it a re-read capture stayed "Analysing…" permanently, undraggable and invisible to `/review`. And Inbox **Confirm is disabled when there is no suggestion** — it used to assign `null → null`, a visible no-op that still wrote a correction teaching the model to file into Inbox.
 
 **Next:** Phase 1, the extension — direct-to-Supabase, image processing moved into the service worker, and `/api/ingest` deleted along with its in-memory queue and `access-control-allow-origin: *`.
+
+## Loop 18 — Extension: compress at source, configurable endpoint, and a closed CORS hole
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done — but the transport swap is blocked, see below
+
+**Blocker found before starting.** Phase 1 of the plan was "extension writes direct to Supabase". The web app has **no Supabase client, not even a dependency, and no auth surface** — the store is pure IndexedDB. An extension writing to Supabase would put captures where the app cannot read them. Direct-to-Supabase is therefore gated on the web app's own store migration, and is now recorded as such in `specs/api_contracts.md`. Everything below is correct in every future architecture, so it was done first.
+
+**Security: `/api/ingest` was readable by any site.** `cors()` returned `access-control-allow-origin: *` on **every** response including the `GET` that drains the queue, so any page the user visited could read the full base64 of screenshots taken from their private tabs, or push forged captures in. The comment directly above it read "allow only the local app". Now only `chrome-extension://` origins get a header at all, and only for `POST`/`OPTIONS`; the drain is same-origin.
+
+**Captures are no longer destroyed on read.** `GET` used to `splice` the queue, so a throw part-way through the client's loop — or the tab closing — lost every remaining item from both sides silently. Items are now held in-flight and confirmed with `POST { ack: [...] }` once genuinely stored; anything unacknowledged for 60s is re-offered. A full queue answers **507** instead of evicting silently and still reporting 200, which had the extension saying "Sent to Capso" for a capture it had thrown away.
+
+**Compression moved into the service worker.** `captureVisibleTab` returns an uncompressed retina PNG: ~4.1 MB, **5.46 MB base64 — over Vercel's 4.5 MB body cap**, so the extension could never have worked against a deployment. It now downscales to ≤1600px JPEG via `OffscreenCanvas` + `convertToBlob` before sending: ~293 KB on the wire. The app's own `downscale` ran *after* receipt, which is too late to help.
+
+**The endpoint is configurable.** `CAPSO_ORIGIN` was hardcoded in `background.js` and a second time in `popup.js`. Now stored in `chrome.storage.local`, set from a new options page, with Chrome host access requested for that origin at save time from `optional_host_permissions` rather than shipping a wildcard.
+
+**The download page 404'd on every deployment.** `.vercelignore` excluded `apps/extension` and `scripts/`, and the zip plus `extension-version.json` are gitignored build artefacts — so `/capso-extension.zip` never existed in production and the update check silently no-opped forever. The web build now runs `build-extension.sh` first, which fails loudly if `zip` is absent rather than shipping a broken download. Verified: 11 files, 16 KB, v0.2.0.
+
+**Manifest.** Full icon set (16/32/48/128) plus `action.default_icon` — only `icon128` existed, which is why Chrome showed a generic letter tile; the PNGs come from the brand work in `drafts/brand/mark/out/`. Added `options_ui`. Version to 0.2.0.
+
+**Smaller fixes:** every non-OK response used to report "Capso isn't running", including a 507 and a 500; the popup reimplemented the update check with a `!==` compare that flagged a *newer* local build as outdated, and built its link with `innerHTML` from a now user-configurable origin — rebuilt as a DOM node; `chrome.notifications?.` guarded a declared permission; an unknown message type closed the port silently so the popup reported a bare "Failed."
+
+**Specs.** `api_contracts.md` gained the extension section it never had, and `extension` was added to the `source` enum — the extension had been sending it since loop 10 while the contract disagreed. `permission_model.md` gained an extension threat model, including the honest statement that blur-before-upload is the only pre-cloud redaction control and the extension has no annotation surface, so browser captures reach the classifier unredacted.
+
+**Still not verified:** loading the extension in a real Chrome. Every previous loop said the same; it needs a human at a browser.

@@ -22,16 +22,37 @@ go.addEventListener("click", async () => {
   }
 });
 
-// Nudge toward the download page when the hosted build is newer.
-fetch("http://localhost:3000/extension-version.json", { cache: "no-store" })
-  .then((r) => (r.ok ? r.json() : null))
-  .then((info) => {
-    if (!info) return;
-    const mine = chrome.runtime.getManifest().version;
-    if (info.version !== mine) {
-      last.innerHTML =
-        'Update available: v' + info.version +
-        ' — <a href="http://localhost:3000/extension" target="_blank">download</a>';
-    }
-  })
-  .catch(() => {});
+/** Newer-than compare. `!==` used to flag a *newer* local build as outdated. */
+function isNewer(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+// Nudge toward the download page when the hosted build is newer. The origin
+// comes from the background rather than a second hardcoded literal.
+(async () => {
+  try {
+    const { origin } = await chrome.runtime.sendMessage({ type: "getOrigin" });
+    if (!origin) return;
+    const res = await fetch(`${origin}/extension-version.json`, { cache: "no-store" });
+    if (!res.ok) return;
+    const { version } = await res.json();
+    if (!version || !isNewer(version, chrome.runtime.getManifest().version)) return;
+
+    last.textContent = `Update available: v${version} — `;
+    const link = document.createElement("a");
+    link.href = `${origin}/extension`;
+    link.target = "_blank";
+    link.textContent = "download";
+    // Built as a node rather than innerHTML: `origin` is user-configurable, and
+    // interpolating it into markup would make the options page an XSS vector.
+    last.appendChild(link);
+  } catch {
+    // app not running — nothing to check against
+  }
+})();

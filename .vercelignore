@@ -3,10 +3,12 @@
 # build. Everything else here is docs or tooling the Next.js build never reads.
 apps/mac/src-tauri/target
 apps/mac/dist
-apps/extension
 drafts
 supabase
 prompts
 specs
-scripts
 *.md
+
+# apps/extension and scripts/ are NOT excluded: the web build zips the
+# extension into public/ so /extension can actually serve it. Excluding them is
+# why /capso-extension.zip 404'd on every deployment while working locally.

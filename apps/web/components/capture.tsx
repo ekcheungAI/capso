@@ -196,21 +196,41 @@ export function CaptureLayer() {
         const res = await fetch("/api/ingest");
         if (!res.ok) return;
         const { items } = (await res.json()) as {
-          items: { imageDataUrl: string; pageUrl?: string; pageTitle?: string }[];
+          items: { id: string; imageDataUrl: string; pageUrl?: string; pageTitle?: string }[];
         };
-        for (const item of items) {
-          if (stop) return;
-          // The extension has always sent the tab's URL and title; until now
-          // they were read off the wire and dropped. They are the strongest
-          // signal a browser capture carries, for classification and search.
-          //
-          // The image goes through `downscale` like every other path. It used to
-          // be stored exactly as it arrived — `captureVisibleTab` returns an
-          // uncompressed retina PNG, so a single browser capture cost megabytes.
-          await start(await downscale(item.imageDataUrl), "extension", {
-            pageUrl: item.pageUrl ?? null,
-            pageTitle: item.pageTitle ?? null,
-          });
+
+        // Acknowledged one at a time, after the capture is genuinely stored.
+        // The server holds anything unacknowledged and re-offers it, so a throw
+        // partway through this loop — or the tab closing — no longer destroys
+        // the captures that had already been handed out.
+        const stored: string[] = [];
+        try {
+          for (const item of items) {
+            if (stop) break;
+            // The extension has always sent the tab's URL and title; until now
+            // they were read off the wire and dropped. They are the strongest
+            // signal a browser capture carries, for classification and search.
+            //
+            // The image goes through `downscale` like every other path. It used
+            // to be stored exactly as it arrived — `captureVisibleTab` returns
+            // an uncompressed retina PNG, so one capture cost megabytes.
+            await start(await downscale(item.imageDataUrl), "extension", {
+              pageUrl: item.pageUrl ?? null,
+              pageTitle: item.pageTitle ?? null,
+            });
+            stored.push(item.id);
+          }
+        } finally {
+          if (stored.length > 0) {
+            await fetch("/api/ingest", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ack: stored }),
+            }).catch(() => {
+              // Unacknowledged captures are re-offered after a minute, so a
+              // failed ack costs a duplicate at worst, never a loss.
+            });
+          }
         }
       } catch {
         // app runs fine without the extension; a failed poll is not an error

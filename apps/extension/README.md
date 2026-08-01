@@ -8,10 +8,11 @@ Captures the **visible browser tab** into your Capso memory. Browser tabs only �
 
 ## Install (unpacked, local only)
 
-1. Start the web app: `pnpm dev:web` — the extension posts to `http://localhost:3000`.
+1. Start the web app: `pnpm dev:web` — the extension defaults to `http://localhost:3000`.
 2. Open `chrome://extensions`, enable **Developer mode** (top right).
 3. **Load unpacked** → select this folder (`apps/extension`).
 4. Optional: `chrome://extensions/shortcuts` to change the hotkey. Default is **⌘⇧U** (macOS) / **Ctrl+Shift+U**.
+5. To point at a deployment instead of localhost, open the extension's **Options** and save the address. Chrome asks for host access for that origin at save time.
 
 ## Use
 
@@ -21,17 +22,21 @@ Captures the **visible browser tab** into your Capso memory. Browser tabs only �
 
 ## How it reaches the app
 
-A service worker cannot write to the web app's IndexedDB, so the extension POSTs to `/api/ingest` and the open Capso tab drains that queue. The queue is in-memory and holds at most 20 captures — it survives seconds, not a server restart. When data moves to Supabase in P1 this becomes the real ingest endpoint from `specs/api_contracts.md` and the queue disappears.
+The image is downscaled to ≤1600px JPEG **in the service worker** before it is sent. `captureVisibleTab` returns an uncompressed retina PNG — around 4 MB, or 5.5 MB once base64-encoded, which is over Vercel's 4.5 MB request limit. Compressing at the source is what makes the extension viable against a deployment at all.
 
-**Consequence worth knowing:** if no Capso tab is open, captures sit in the queue and are lost on restart. The Mac app's on-disk queue is the durable path; this one is a demo bridge.
+A service worker cannot write to the web app's IndexedDB, so the extension POSTs to `/api/ingest` and the open Capso tab drains that queue. Captures are **held, not deleted, on read**: the app confirms each one once it is genuinely stored, and anything unconfirmed for 60s is offered again. A failure part-way through no longer destroys the rest of the batch. A full queue answers `507` rather than reporting success for a capture it threw away.
+
+**Consequence worth knowing:** if no Capso tab is open, captures sit in the queue and are lost on server restart. The Mac app's on-disk queue is the durable path; this one is a bridge. Replacing it with direct Supabase writes is blocked on the web app moving off IndexedDB — see `specs/api_contracts.md` §Chrome extension.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `manifest.json` | MV3 manifest: `activeTab`, `storage`, `notifications`, localhost host permission, hotkey command |
-| `background.js` | Service worker: `chrome.tabs.captureVisibleTab` → POST → notification |
+| `manifest.json` | MV3 manifest: `activeTab`, `storage`, `notifications`, optional host permissions, hotkey command |
+| `background.js` | Service worker: `captureVisibleTab` → OffscreenCanvas compress → POST → notification |
 | `popup.html` / `popup.js` | Toolbar popup with a capture button and the last capture |
+| `options.html` / `options.js` | Where the Capso address is set; requests host access for it |
+| `icons/` | 16/32/48/128 — Chrome needs all four, or the toolbar shows a generic tile |
 
 ## Updating
 
@@ -41,4 +46,6 @@ The background worker fetches `/extension-version.json` on startup and notifies 
 
 ## Not built yet
 
-Region crop before sending (Chrome captures the whole viewport), full-page scrolling capture, capturing while the app is closed, and any auth — the endpoint trusts localhost.
+Region crop before sending (Chrome captures the whole viewport), full-page scrolling capture, annotation or blur before upload, capturing while the app is closed, and **any auth** — the endpoint identifies no user. That last one blocks direct-to-Supabase writes; the threat model is in `specs/permission_model.md` §Chrome extension.
+
+**Never verified:** loading this in a real Chrome. The manifest and hotkey registration are unconfirmed.

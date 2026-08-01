@@ -105,3 +105,17 @@ Clients render images via `createSignedUrl` with **60s expiry** (detail view) / 
 - [ ] PostHog live events inspected for one full capture→chat cycle: no OCR text, names, or query text present (event_schema.md PII rule).
 
 Review cadence: re-audit this file when adding any new capture kind, provider, or the first non-owner user.
+
+## Chrome extension (added 2026-08-01)
+
+This document had no extension threat model, despite the extension shipping in loop 10.
+
+**What it can reach.** `activeTab` only — granted per user gesture (toolbar click or ⌘⇧U), never ambient. It has no `tabs` permission, so it cannot enumerate or read tabs the user has not explicitly captured. `host_permissions` is the localhost default plus whatever single origin the user saves in options, requested through `optional_host_permissions` at save time rather than shipped as a wildcard.
+
+**What it captures.** The visible viewport of the active tab, plus that tab's URL and title. Chrome refuses `chrome:`, `edge:`, `about:`, `devtools:` and `view-source:` by policy, and the extension checks those before asking.
+
+**Where it goes.** To the configured Capso origin only. The ingest endpoint accepts cross-origin requests exclusively from `chrome-extension://` origins, and only `POST`. The drain (`GET`) is same-origin, so only a Capso tab can read queued captures — until 2026-08-01 it carried `access-control-allow-origin: *`, meaning any site the user visited could read the full contents of screenshots taken from their private tabs, or inject forged ones.
+
+**Redaction gap, stated plainly.** §Blur-before-upload is the only pre-cloud redaction control in this model, and the extension has no annotation surface — so a browser capture reaches the classifier unredacted. A capture containing a secret cannot be blurred before it leaves the machine. Until region capture and annotation exist in the extension, the mitigation is behavioural: use the Mac app for anything sensitive.
+
+**No identity yet.** The extension holds no credential. Attribution to a user is unsolved and blocks direct-to-Supabase writes; see `api_contracts.md` §Chrome extension.

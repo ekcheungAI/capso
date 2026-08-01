@@ -60,7 +60,21 @@ Request:
 }
 ```
 
-`source` ∈ `hotkey_region | hotkey_window | drag | clipboard | web_upload`. (`capture_kind` is implicitly `screenshot` in v1; field reserved per ../04_MVP_SCOPE.md.)
+`source` ∈ `hotkey_region | hotkey_window | drag | clipboard | web_upload | extension`. (`capture_kind` is implicitly `screenshot` in v1; field reserved per ../04_MVP_SCOPE.md.)
+
+> **`extension` added 2026-08-01.** The Chrome extension has been sending this value since loop 10 and the client type has accepted it since; the enum here had never been updated, so the server contract and the client disagreed. See §Chrome extension below.
+
+## Chrome extension (added 2026-08-01)
+
+The extension was absent from this document entirely, which is why its transport was never designed. Recording the current state and the target.
+
+**Today (transitional).** `POST {origin}/api/ingest` with `{ imageDataUrl, source: "extension", pageUrl, pageTitle }`. The origin is user-configurable via the extension's options page and stored in `chrome.storage.local`; Chrome host access for it is requested at save time from `optional_host_permissions`. The image is downscaled to ≤1600px JPEG **in the service worker** before sending — the raw `captureVisibleTab` PNG is ~5.5 MB base64 and exceeds Vercel's 4.5 MB body limit.
+
+The endpoint holds captures rather than deleting them on read: `GET` hands them out and moves them in-flight, and the client confirms with `POST { ack: [id] }` once each is genuinely stored. Anything unacknowledged for 60s is re-offered. A full queue answers **507**, not 200 — it used to evict silently and still report success.
+
+CORS is restricted to `chrome-extension://` origins and to `POST`/`OPTIONS`. `GET` is same-origin only. It previously returned `access-control-allow-origin: *` on every response, so any page the user visited could drain their queued screenshots or push forged ones in.
+
+**Target.** The extension authenticates against Supabase and writes the row plus Storage objects directly, per §Auth above; `/api/ingest` is deleted along with its in-memory queue. **Blocked on the web app moving off IndexedDB** — until the app reads Supabase, an extension writing there would put captures where the app cannot see them. Auth mechanism (`chrome.identity.launchWebAuthFlow` vs `externally_connectable` token handoff) to be decided and recorded here before that work starts.
 
 Response `201`:
 
