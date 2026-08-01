@@ -19,7 +19,7 @@ import {
 } from "@/components/ui";
 
 type DateRange = "all" | "7d" | "30d" | "90d";
-type Grouping = "project" | "month" | "intent";
+type Grouping = "gallery" | "project" | "month" | "intent";
 
 const RANGE_LABEL: Record<DateRange, string> = {
   all: "Any date",
@@ -29,16 +29,26 @@ const RANGE_LABEL: Record<DateRange, string> = {
 };
 
 const GROUPINGS: [Grouping, string][] = [
+  ["gallery", "Gallery"],
   ["project", "Projects"],
   ["month", "Months"],
   ["intent", "Intent"],
 ];
 
 /**
- * The library defaults to project shelves rather than a chronological wall.
- * Capture is deliberately messy; this page is where the mess is shown to have
- * been sorted, so the shape of the collection has to be the first thing read —
- * not a date you did not choose and cannot remember.
+ * The library opens as one gallery of everything, newest first.
+ *
+ * This reverses the loop-12a default of project shelves, and the reasoning is
+ * worth recording rather than quietly flipping. Shelves are the right way to
+ * show that filing *happened* — but they answer a question you only have once
+ * the library is full, and they pay for it by splitting the collection into
+ * rows that are mostly empty and mostly below the fold. A screenshot tool whose
+ * front page is five headings reading "Nothing here yet" is showing you its
+ * filing cabinet instead of your screenshots, which inverts principle 5: the
+ * captures are the hero and the chrome recedes.
+ *
+ * Shelves are one click away and everything that made them good is intact —
+ * this changes which question the page answers first, not what it can answer.
  */
 export default function LibraryPage() {
   const { ready, screenshots, filed, inbox, threads, threadName, assign, revisits } = useStore();
@@ -49,7 +59,7 @@ export default function LibraryPage() {
   const [mountedAt] = useState(() => Date.now());
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [grouping, setGrouping] = useState<Grouping>("project");
+  const [grouping, setGrouping] = useState<Grouping>("gallery");
   const [intent, setIntent] = useState<Intent | "all">("all");
   const [project, setProject] = useState<string>("all");
   // `since` is stamped when the user picks a range — Date.now() must not run during render.
@@ -81,6 +91,12 @@ export default function LibraryPage() {
 
   /** Captures with no home and no guess — otherwise invisible everywhere. */
   const unsorted = useMemo(() => results.filter((s) => shelfOf(s) === null), [results]);
+
+  /** The gallery: everything that survived the filters, newest first. */
+  const gallery = useMemo(
+    () => [...results].sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)),
+    [results],
+  );
 
   // Shelves are ordered by recency of use, so the project you are working in
   // rises to the top — including right after you drop something into it. Untouched
@@ -263,14 +279,45 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {grouping === "project" ? (
+      {grouping === "gallery" ? (
+        gallery.length === 0 ? (
+          // A library with projects but no captures used to land on five shelf
+          // headings all reading "Nothing here yet" — five statements of
+          // absence where one belongs.
+          <EmptyState
+            title={filtering ? "No captures match" : "Nothing captured yet"}
+            body={
+              filtering
+                ? "These filters exclude everything you've saved so far."
+                : "Drop an image anywhere on this page, paste from the clipboard, or press Capture."
+            }
+            action={
+              filtering ? (
+                <button onClick={resetFilters}>Reset the filters to see all captures</button>
+              ) : (
+                <Link href="/extension">Capture from a browser tab</Link>
+              )
+            }
+          />
+        ) : (
+          // Everything, newest first, undivided. The filters above still narrow
+          // it and the shelf views are one click away — this is the wall of
+          // screenshots the product is for, not a view of its filing.
+          <Masonry
+            items={gallery}
+            selected={selected}
+            onSelect={toggle}
+            suggestionFor={suggestionFor}
+          />
+        )
+      ) : grouping === "project" ? (
         shelves.length === 0 ? (
           <EmptyState
             title="No projects yet"
             body="Make one in the sidebar, or let a capture suggest its own from the Inbox."
             action={
-              <button onClick={() => withTransition(() => setGrouping("month"))}>
-                Browse by month instead
+              <button onClick={() => withTransition(() => setGrouping("gallery"))}>
+                Show every capture instead
               </button>
             }
           />

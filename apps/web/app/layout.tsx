@@ -5,10 +5,30 @@ import { Shell } from "@/components/shell";
 import { StoreProvider } from "@/lib/store/provider";
 import { ToastProvider } from "@/components/toast";
 
-// No production domain is registered yet, so this reads from the environment
-// and falls back to the dev server. metadataBase has to be absolute — without
-// it, the relative og:image path below is a build error rather than a warning.
-const SITE = new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000");
+/**
+ * Absolute base for every URL-shaped metadata field. It has to be absolute or
+ * the relative og:image below is a build error rather than a warning.
+ *
+ * The localhost fallback alone was not enough: no domain is registered yet, so
+ * the first preview deploy shipped `og:image: http://localhost:3000/og-image.png`
+ * — a share card pointing at a machine that is not there. Vercel injects its own
+ * host, so prefer that before falling back.
+ *
+ *   NEXT_PUBLIC_SITE_URL              set this once a real domain exists
+ *   VERCEL_PROJECT_PRODUCTION_URL     the project's stable production host
+ *   VERCEL_URL                        this specific deployment (preview)
+ *
+ * Production is preferred over the per-deployment host so shared links stay
+ * canonical rather than pointing at a preview that will be superseded.
+ */
+const host =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000");
+const SITE = new URL(host);
 
 export const metadata: Metadata = {
   metadataBase: SITE,
