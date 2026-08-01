@@ -14,7 +14,7 @@ import { imageFor, INTENT_LABEL, INTENTS } from "@/components/ui";
 export default function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, remove, visit } =
+  const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, addTag, dropTag, remove, visit } =
     useStore();
   const s = get(id);
 
@@ -30,6 +30,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const [ocrOpen, setOcrOpen] = useState(true);
   const [draft, setDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
   const visited = useRef(false);
 
   useEffect(() => {
@@ -122,7 +123,13 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
               }`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
-              <img src={imageFor(n)} alt="" className="h-10 w-full object-cover object-top" />
+              <img
+                src={imageFor(n, "thumb")}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className="h-10 w-full object-cover object-top"
+              />
             </Link>
           ))}
         </div>
@@ -161,7 +168,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
       <aside className="w-full shrink-0 space-y-5 lg:w-80">
         <div>
-          <h1 className="text-sm font-semibold">{s.title}</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{s.title}</h1>
           <p className="mt-1 text-xs text-muted">
             {new Date(s.capturedAt).toLocaleString("en-GB")} · {s.source.replace(/_/g, " ")}
           </p>
@@ -199,7 +206,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                     await saveWhySaved(s, draft.trim());
                     setDraft(null);
                   }}
-                  className="rounded-md bg-accent px-3 py-1 text-xs text-white"
+                  className="rounded-md bg-accent px-3 py-1 text-xs text-accent-ink"
                 >
                   Save
                 </button>
@@ -208,6 +215,45 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                 </button>
               </div>
             </div>
+          )}
+        </Field>
+
+        <Field label="Tags">
+          <div className="flex flex-wrap gap-1.5">
+            {s.userTags.map((t) => (
+              <Tag key={`u-${t}`} label={t} mine onRemove={() => void dropTag(s, t)} />
+            ))}
+            {s.tags.map((t) => (
+              <Tag key={`a-${t}`} label={t} onRemove={() => void dropTag(s, t)} />
+            ))}
+            {s.tags.length === 0 && s.userTags.length === 0 && (
+              <span className="text-[11px] text-muted">No tags yet.</span>
+            )}
+          </div>
+
+          <input
+            value={tagDraft}
+            onChange={(e) => setTagDraft(e.target.value)}
+            // Handled on the key rather than via a <form>: a single-input form
+            // with no submit button relies on implicit submission, which is the
+            // kind of thing that quietly stops working. Enter should mean Enter.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              void addTag(s, tagDraft);
+              setTagDraft("");
+            }}
+            placeholder="Add a tag…"
+            className="mt-2 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+          />
+
+          {s.tags.length > 0 && (
+            // Say which ones were guessed. Without this the owner cannot tell
+            // what Capso inferred from what they told it, and removing a tag
+            // stops reading as feedback.
+            <p className="mt-1.5 text-[11px] text-muted">
+              Unfilled tags are suggestions — removing one teaches Capso.
+            </p>
           )}
         </Field>
 
@@ -268,6 +314,30 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         </Field>
       </aside>
     </div>
+  );
+}
+
+/**
+ * One tag chip. `mine` fills it; a suggestion stays outlined — the same visual
+ * split Air uses to separate custom metadata from smart metadata, so "who said
+ * this" is legible at a glance rather than needing a legend.
+ */
+function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemove: () => void }) {
+  return (
+    <span
+      className={`group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+        mine ? "bg-accent/12 text-foreground" : "border border-line text-muted"
+      }`}
+    >
+      {label}
+      <button
+        onClick={onRemove}
+        aria-label={`Remove tag ${label}`}
+        className="opacity-0 transition-opacity duration-[120ms] group-hover:opacity-100 focus-visible:opacity-100 hover:text-accent"
+      >
+        ×
+      </button>
+    </span>
   );
 }
 

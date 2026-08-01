@@ -95,7 +95,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
     <div className="flex gap-6">
       <div className="min-w-0 flex-1 space-y-5">
         <div>
-          <h1 className="text-sm font-semibold">{threadName(id)}</h1>
+          <h1 className="text-xl font-semibold tracking-tight">{threadName(id)}</h1>
           <p className="mt-1 text-xs text-muted">{shots.length} captures in this project</p>
         </div>
 
@@ -151,7 +151,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
           <button
             onClick={() => void ask()}
             disabled={busy || !q.trim()}
-            className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-white disabled:opacity-40"
+            className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink disabled:opacity-40"
           >
             Ask
           </button>

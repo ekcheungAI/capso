@@ -105,12 +105,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 }`}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px]">{s.title}</span>
+                  <span className="block truncate text-sm">{s.title}</span>
                   <span className="block truncate text-[11px] text-muted">
                     {threadName(s.threadId)} · {s.summary}
                   </span>
                 </span>
-                <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] text-muted">
+                <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
                   {INTENT_LABEL[s.intent]}
                 </span>
               </button>

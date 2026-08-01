@@ -95,7 +95,7 @@ export default function SearchPage() {
         <button
           onClick={() => void ask(q)}
           disabled={busy || !q.trim()}
-          className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-white disabled:opacity-40"
+          className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink disabled:opacity-40"
         >
           {busy ? "Thinking…" : "Ask"}
         </button>

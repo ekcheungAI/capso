@@ -8,17 +8,22 @@ import { createContext, useCallback, useContext, useRef, useState } from "react"
  * what makes one-click filing safe enough to do without thinking.
  */
 
-type Toast = { id: number; text: string; undo?: () => void };
+/**
+ * `label` defaults to "Undo" because that is what almost every toast offers.
+ * It is configurable so a toast can offer the obvious *next* step instead —
+ * an import's follow-up is reviewing what just landed, not undoing it.
+ */
+type Toast = { id: number; text: string; undo?: () => void; label: string };
 
-const Ctx = createContext<(text: string, undo?: () => void) => void>(() => {});
+const Ctx = createContext<(text: string, undo?: () => void, label?: string) => void>(() => {});
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seq = useRef(0);
 
-  const push = useCallback((text: string, undo?: () => void) => {
+  const push = useCallback((text: string, undo?: () => void, label = "Undo") => {
     const id = ++seq.current;
-    setToasts((t) => [...t.slice(-2), { id, text, undo }]);
+    setToasts((t) => [...t.slice(-2), { id, text, undo, label }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000);
   }, []);
 
@@ -40,7 +45,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 }}
                 className="font-medium underline underline-offset-2"
               >
-                Undo
+                {t.label}
               </button>
             )}
           </div>

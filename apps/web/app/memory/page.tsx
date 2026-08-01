@@ -23,7 +23,7 @@ export default function MemoryPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-sm font-semibold">Memory</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Memory</h1>
         <p className="mt-1 text-xs text-muted">
           What Capso has worked out about how you save things — and where it&apos;s wrong.
         </p>
@@ -94,7 +94,7 @@ function Learned() {
       </div>
 
       <section>
-        <h2 className="mb-2 text-xs font-medium">Rules it has picked up</h2>
+        <h2 className="mb-2 text-base font-semibold">Rules it has picked up</h2>
         {rules.length === 0 ? (
           <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-xs text-muted">
             Nothing learned yet. Move a capture to a different project and the rule appears here.
@@ -121,7 +121,7 @@ function Learned() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-xs font-medium">Correction history</h2>
+        <h2 className="mb-2 text-base font-semibold">Correction history</h2>
         {corrections.length === 0 ? (
           <p className="text-xs text-muted">No corrections recorded yet.</p>
         ) : (
@@ -142,10 +142,17 @@ function Learned() {
                       <span className="text-muted">deleted capture</span>
                     )}
                     <span className="block text-muted">
-                      {c.field === "project" ? "filed under" : `${c.field} set to`}{" "}
-                      {c.field === "project"
-                        ? threadName(c.userValue === "inbox" ? null : c.userValue)
-                        : c.userValue}
+                      {c.field === "project" ? (
+                        <>filed under {threadName(c.userValue === "inbox" ? null : c.userValue)}</>
+                      ) : c.field === "tags" ? (
+                        // A tag rejection has no new value — it is a deletion.
+                        // "tags set to" with nothing after it read as a bug.
+                        <>rejected the tag “{c.aiValue}”</>
+                      ) : (
+                        <>
+                          {c.field.replace("_", " ")} set to {c.userValue}
+                        </>
+                      )}
                       {c.wasAiAccepted && " · agreed with Capso"}
                     </span>
                   </span>
@@ -196,7 +203,7 @@ function Tidy() {
   return (
     <div className="space-y-6">
       <section>
-        <h2 className="mb-2 text-xs font-medium">Possible duplicates</h2>
+        <h2 className="mb-2 text-base font-semibold">Possible duplicates</h2>
         {dupes.length === 0 ? (
           <p className="text-xs text-muted">None found.</p>
         ) : (
@@ -229,7 +236,7 @@ function Tidy() {
       </section>
 
       <section>
-        <h2 className="mb-2 text-xs font-medium">Thin projects</h2>
+        <h2 className="mb-2 text-base font-semibold">Thin projects</h2>
         <p className="mb-2 text-[11px] text-muted">
           Under three captures, Capso can&apos;t match reliably against a project — it falls back to
           guessing from the image alone.
@@ -257,7 +264,7 @@ function Tidy() {
 
       {archived.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-medium">Archived ({archived.length})</h2>
+          <h2 className="mb-2 text-base font-semibold">Archived ({archived.length})</h2>
           <ul className="space-y-1.5">
             {archived.map((s) => (
               <li
@@ -325,7 +332,7 @@ function Review() {
             <Thumb s={s} />
           </Link>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-medium">{s.title}</p>
+            <p className="truncate text-sm font-medium">{s.title}</p>
             <p className="text-[11px] text-muted">
               {threadName(s.threadId)} · saved{" "}
               {new Date(s.capturedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
@@ -337,7 +344,7 @@ function Review() {
                   void visit(s.id, "opened_detail");
                   setDone((d) => new Set(d).add(s.id));
                 }}
-                className="rounded-md bg-accent px-3 py-1 text-xs text-white"
+                className="rounded-md bg-accent px-3 py-1 text-xs text-accent-ink"
               >
                 Still useful
               </button>

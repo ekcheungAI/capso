@@ -66,7 +66,7 @@ export default function InboxPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-sm font-semibold">Inbox</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
         <p className="mt-1 text-xs text-muted">
           {inbox.length} need a decision. Anything above 80% confidence was filed automatically.{" "}
           <span className="text-[11px]">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
@@ -88,7 +88,7 @@ export default function InboxPage() {
 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <Link href={`/s/${s.id}`} className="truncate text-[13px] font-medium hover:text-accent">
+                <Link href={`/s/${s.id}`} className="truncate text-sm font-medium hover:text-accent">
                   {s.title}
                 </Link>
                 <IntentChip intent={s.intent} />
@@ -106,7 +106,7 @@ export default function InboxPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => void file(s, s.suggestedThreadId)}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white"
+                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
                 >
                   Confirm
                 </button>
@@ -138,6 +138,9 @@ export default function InboxPage() {
                       s.imageDataUrl,
                       threads,
                       fewShotLines(corrections, screenshots, threads),
+                      // Re-read with the same page context the capture arrived
+                      // with, or the second guess is worse-informed than the first.
+                      { pageUrl: s.pageUrl, pageTitle: s.pageTitle },
                     );
                     await ingest({
                       ...s,
@@ -149,6 +152,12 @@ export default function InboxPage() {
                       type: r.type,
                       confidence: r.confidence,
                       suggestedThreadId: r.projectSuggestion,
+                      // Model-owned fields refresh; `userTags` rides through on
+                      // the spread, because a re-read must never discard tags
+                      // the owner added by hand.
+                      tags: r.tags,
+                      ocrSource: r.ocrSource,
+                      ocrLangs: r.ocrLangs,
                     });
                     setRerunning(null);
                     toast(r.simulated ? "Re-read with sample data" : "Re-read with MiniMax M3");

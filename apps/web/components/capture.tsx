@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
+import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
 
@@ -14,13 +15,50 @@ import { newId, routeConfidence, type Screenshot } from "@/lib/store";
  */
 export function CaptureLayer() {
   const { ready, threads, screenshots, corrections, ingest, get } = useStore();
+  const toast = useToast();
+  const router = useRouter();
   const [pending, setPending] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
+  const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
 
   const start = useCallback(
-    async (dataUrl: string, source: Screenshot["source"]) => {
+    async (
+      /**
+       * Always a processed image, never a raw data URL. Taking `Downscaled`
+       * rather than a string is what stops a capture path from skipping the
+       * pipeline — the extension used to hand its raw retina PNG straight in
+       * here, at 3–11 MB a row.
+       */
+      image: Downscaled,
+      source: Screenshot["source"],
+      opts: {
+        overlay?: boolean;
+        /** Page context, when the capture came from a browser tab. */
+        pageUrl?: string | null;
+        pageTitle?: string | null;
+      } = {},
+    ) => {
       const id = newId();
       const now = new Date().toISOString();
+      const { dataUrl, thumbDataUrl, aspect, width, height } = image;
+
+      /**
+       * Fields that describe where the capture came from rather than what the
+       * model made of it. They are written on the first pass and carried through
+       * the second unchanged, so a classification failure never loses them.
+       */
+      const context = {
+        pageUrl: opts.pageUrl ?? null,
+        pageTitle: opts.pageTitle ?? null,
+        sourceApp: null,
+        userTags: [],
+        contentHash: null,
+        originalPath: null,
+        thumbPath: null,
+        thumbDataUrl,
+        width,
+        height,
+      };
 
       // Saved first, classified second — capture is never blocked by the model.
       await ingest({
@@ -40,17 +78,32 @@ export function CaptureLayer() {
         capturedAt: now,
         imageDataUrl: dataUrl,
         hue: 210,
-        aspect: "wide",
+        aspect,
         archived: false,
+        tags: [],
+        ocrSource: null,
+        ocrLangs: [],
+        ...context,
       });
-      setPending((p) => [id, ...p]);
+      if (opts.overlay !== false) setPending((p) => [id, ...p]);
 
       const result = await classify(
         dataUrl,
         threads,
         fewShotLines(corrections, screenshots, threads),
+        { pageUrl: context.pageUrl, pageTitle: context.pageTitle },
       );
       const band = routeConfidence(result.confidence);
+
+      /**
+       * Filed only when the band says so AND a project was actually resolved.
+       * Derived once, because computing `threadId` and `assignmentSource` from
+       * two separate expressions let them disagree: a high-confidence result
+       * whose project name failed to match wrote `assignmentSource: "auto"`
+       * with `threadId: null` — a row claiming to be auto-filed while sitting
+       * unfiled, which no surface could explain.
+       */
+      const filedTo = band === "auto" ? result.projectSuggestion : null;
 
       await ingest({
         id,
@@ -60,29 +113,68 @@ export function CaptureLayer() {
         ocrText: result.ocrText,
         intent: result.intent,
         type: result.type,
-        threadId: band === "auto" ? result.projectSuggestion : null,
+        threadId: filedTo,
         suggestedThreadId: result.projectSuggestion,
         confidence: result.confidence,
         status: "done",
-        assignmentSource: band === "auto" ? "auto" : null,
+        assignmentSource: filedTo ? "auto" : null,
         source,
         capturedAt: now,
         imageDataUrl: dataUrl,
         hue: 210,
-        aspect: "wide",
+        aspect,
         archived: false,
+        tags: result.tags,
+        ocrSource: result.ocrSource,
+        ocrLangs: result.ocrLangs,
+        ...context,
       });
     },
     [ingest, threads, screenshots, corrections],
   );
 
-  const readFile = useCallback(
-    (file: File) => {
-      const reader = new FileReader();
-      reader.onload = () => void start(String(reader.result), "drag");
-      reader.readAsDataURL(file);
+  /**
+   * One or many files, same path. A single file keeps the signature overlay; a
+   * bulk import (a folder of real screenshots) reports progress instead, since
+   * fifty overlays would bury the app. Classification stays sequential — the
+   * model call is the slow part and firing fifty at once helps nobody.
+   */
+  const ingestFiles = useCallback(
+    async (files: File[], source: Screenshot["source"]) => {
+      const images = files.filter((f) => f.type.startsWith("image/"));
+      if (images.length === 0) return;
+
+      const overlay = images.length === 1;
+      let failed = 0;
+      if (!overlay) setImporting({ done: 0, total: images.length });
+
+      for (const [i, file] of images.entries()) {
+        try {
+          await start(await downscale(file), source, { overlay });
+        } catch {
+          failed++; // an unreadable file must not abort the rest of the import
+        }
+        if (!overlay) setImporting({ done: i + 1, total: images.length });
+      }
+
+      setImporting(null);
+      if (!overlay) {
+        const landed = images.length - failed;
+        toast(
+          failed
+            ? `Imported ${landed} of ${images.length} — ${failed} could not be read`
+            : `Imported ${images.length} screenshots`,
+          // A bulk import is exactly when the classifier has the least to go on,
+          // so it is exactly when the sweep is worth offering. Below three it is
+          // faster to confirm on the cards than to open another screen.
+          landed >= 3 ? () => router.push("/review") : undefined,
+          "Review",
+        );
+      } else if (failed) {
+        toast("That file could not be read as an image");
+      }
     },
-    [start],
+    [start, toast, router],
   );
 
   // Drain anything the Chrome extension queued while this tab was open.
@@ -95,11 +187,21 @@ export function CaptureLayer() {
         const res = await fetch("/api/ingest");
         if (!res.ok) return;
         const { items } = (await res.json()) as {
-          items: { imageDataUrl: string; pageTitle?: string }[];
+          items: { imageDataUrl: string; pageUrl?: string; pageTitle?: string }[];
         };
         for (const item of items) {
           if (stop) return;
-          await start(item.imageDataUrl, "extension");
+          // The extension has always sent the tab's URL and title; until now
+          // they were read off the wire and dropped. They are the strongest
+          // signal a browser capture carries, for classification and search.
+          //
+          // The image goes through `downscale` like every other path. It used to
+          // be stored exactly as it arrived — `captureVisibleTab` returns an
+          // uncompressed retina PNG, so a single browser capture cost megabytes.
+          await start(await downscale(item.imageDataUrl), "extension", {
+            pageUrl: item.pageUrl ?? null,
+            pageTitle: item.pageTitle ?? null,
+          });
         }
       } catch {
         // app runs fine without the extension; a failed poll is not an error
@@ -125,11 +227,11 @@ export function CaptureLayer() {
 
   useEffect(() => {
     const onDrop = (e: DragEvent) => {
-      const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));
-      if (!file) return;
+      const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+      if (files.length === 0) return;
       e.preventDefault();
       setDragging(false);
-      readFile(file);
+      void ingestFiles(files, "drag");
     };
     const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) {
@@ -143,7 +245,7 @@ export function CaptureLayer() {
     const onPaste = (e: ClipboardEvent) => {
       const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
       const file = item?.getAsFile();
-      if (file) readFile(file);
+      if (file) void ingestFiles([file], "clipboard");
     };
 
     window.addEventListener("drop", onDrop);
@@ -156,19 +258,45 @@ export function CaptureLayer() {
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("paste", onPaste);
     };
-  }, [readFile]);
+  }, [ingestFiles]);
 
   if (!ready) return null;
 
   return (
     <>
-      <button
-        onClick={() => void start(sampleCapture(), "hotkey_region")}
-        title="Stands in for ⌃⇧C until the Mac app is wired up"
-        className="fixed right-6 bottom-6 z-30 rounded-full bg-accent px-4 py-2.5 text-xs font-medium text-white shadow-lg"
-      >
-        Capture
-      </button>
+      <div className="fixed right-6 bottom-6 z-30 flex items-center gap-2">
+        {importing && (
+          <span className="rounded-full bg-surface px-3 py-2 text-xs text-muted shadow-lg ring-1 ring-line">
+            Importing {importing.done}/{importing.total}…
+          </span>
+        )}
+
+        <label
+          title="Pick real screenshots from your Mac — they are classified like any capture"
+          className="cursor-pointer rounded-full bg-surface px-4 py-2.5 text-xs font-medium shadow-lg ring-1 ring-line"
+        >
+          Import…
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            className="sr-only"
+            onChange={(e) => {
+              const files = [...(e.target.files ?? [])];
+              e.target.value = ""; // re-picking the same files must still fire
+              void ingestFiles(files, "web_upload");
+            }}
+          />
+        </label>
+
+        <button
+          onClick={async () => void start(await downscale(sampleCapture()), "hotkey_region")}
+          title="Stands in for ⌃⇧C until the Mac app is wired up"
+          className="rounded-full bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink shadow-lg"
+        >
+          Capture
+        </button>
+      </div>
 
       {dragging && (
         <div className="capso-fade pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm">
@@ -226,7 +354,12 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
       className="capso-overlay w-64 overflow-hidden rounded-xl bg-surface shadow-xl ring-1 ring-line"
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
-      <img src={s.imageDataUrl ?? ""} alt="" className="h-28 w-full object-cover object-top" />
+      <img
+        src={s.thumbDataUrl ?? s.imageDataUrl ?? ""}
+        alt=""
+        decoding="async"
+        className="h-28 w-full object-cover object-top"
+      />
 
       <div key={state} className="capso-fade space-y-2 p-3">
         {state === "loading" && (
@@ -242,7 +375,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
             <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => void assign(s, s.suggestedThreadId, "auto")}
-                className="rounded-md bg-accent px-2.5 py-1 text-[11px] text-white"
+                className="rounded-md bg-accent px-2.5 py-1 text-[11px] text-accent-ink"
               >
                 ✓ Confirm
               </button>
@@ -320,6 +453,73 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
       </div>
     </div>
   );
+}
+
+/** Long edge, in px, that every ingested image is capped at. */
+const MAX_EDGE = 1600;
+/** Thumb long edge — 14_BACKEND_AND_STORAGE.md §25: WebP, 800 px, quality ~80. */
+const THUMB_EDGE = 800;
+
+export type Downscaled = {
+  dataUrl: string;
+  thumbDataUrl: string;
+  aspect: Screenshot["aspect"];
+  width: number;
+  height: number;
+};
+
+/** Draw a bitmap at a given long-edge cap and encode it. */
+function encode(bitmap: ImageBitmap, maxEdge: number, type: string, quality: number) {
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas unavailable");
+  ctx.drawImage(bitmap, 0, 0, w, h);
+
+  return { dataUrl: canvas.toDataURL(type, quality), w, h };
+}
+
+/**
+ * Real Mac screenshots are 3–4 MB at @2x, and a browser-tab capture is an
+ * uncompressed retina PNG. Stored raw they bloat IndexedDB and every model call.
+ *
+ * Two variants come out of one decode: the ≤1600px original that OCR and the
+ * detail view need, and an 800px WebP thumb that every grid, sidebar, filmstrip
+ * and citation renders instead. Before this, a 14px citation chip decoded the
+ * same full-size JPEG as the zoom view.
+ *
+ * WebP is encoded by the canvas itself — no dependency, which is what doc 14
+ * means by "generated client-side at capture time".
+ */
+export async function downscale(src: Blob | string): Promise<Downscaled> {
+  const blob = typeof src === "string" ? await (await fetch(src)).blob() : src;
+  const bitmap = await createImageBitmap(blob);
+
+  try {
+    const full = encode(bitmap, MAX_EDGE, "image/jpeg", 0.85);
+    const thumb = encode(bitmap, THUMB_EDGE, "image/webp", 0.8);
+
+    const ratio = full.w / full.h;
+    return {
+      dataUrl: full.dataUrl,
+      // Safari only gained canvas WebP encoding in 16; `toDataURL` silently
+      // returns a PNG when the type is unsupported, which would make the
+      // "thumb" larger than the original. Fall back to a small JPEG instead.
+      thumbDataUrl: thumb.dataUrl.startsWith("data:image/webp")
+        ? thumb.dataUrl
+        : encode(bitmap, THUMB_EDGE, "image/jpeg", 0.8).dataUrl,
+      aspect: ratio > 1.2 ? "wide" : ratio < 0.85 ? "tall" : "square",
+      width: full.w,
+      height: full.h,
+    };
+  } finally {
+    bitmap.close();
+  }
 }
 
 /**

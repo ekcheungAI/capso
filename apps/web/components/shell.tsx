@@ -5,27 +5,22 @@ import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store/provider";
 import { CaptureLayer } from "@/components/capture";
 import { CommandPalette } from "@/components/palette";
-import { useToast } from "@/components/toast";
+import { FirstRun } from "@/components/first-run";
+import { DropZone, useDragCount } from "@/components/ui";
+import { useMoveCaptures } from "@/lib/move";
 
 /**
  * Sidebar: Inbox pinned above projects, no folder tree. Project rows are drop
  * targets — dragging a card onto one files it (07: adjusting is always ≤2 steps).
  */
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { ready, inbox, threads, byThread, get, assign, addThread, reset } = useStore();
-  const [over, setOver] = useState<string | null>(null);
+  const { ready, loadError, needsSetup, inbox, threads, byThread, addThread, reset, clearSamples } =
+    useStore();
   const [adding, setAdding] = useState(false);
   const [palette, setPalette] = useState(false);
-  const toast = useToast();
-  const [dragCount, setDragCount] = useState(0);
+  const move = useMoveCaptures();
+  const dragCount = useDragCount();
   const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
-
-  // While a drag is in flight the sidebar advertises itself as a target.
-  useEffect(() => {
-    const onCount = (e: Event) => setDragCount((e as CustomEvent<number>).detail);
-    window.addEventListener("capso:dragcount", onCount);
-    return () => window.removeEventListener("capso:dragcount", onCount);
-  }, []);
 
   useEffect(() => {
     fetch("/api/classify")
@@ -46,34 +41,36 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const drop = async (threadId: string, payload: string) => {
-    const ids = payload.split(",").filter(Boolean);
-    const moved = ids.map((id) => get(id)).filter((s): s is NonNullable<typeof s> => Boolean(s));
-    setOver(null);
-    setDragCount(0);
-    if (moved.length === 0) return;
+  /**
+   * An unreadable library is the one state that must never hide behind a
+   * skeleton — a shimmer that never resolves is indistinguishable from a slow
+   * load, and the user has no way to learn that closing another tab fixes it.
+   */
+  if (loadError)
+    return (
+      <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="max-w-sm space-y-3 text-center">
+          <p className="text-sm font-semibold tracking-tight">Capso can’t open your library</p>
+          <p className="text-xs leading-relaxed text-muted">{loadError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs text-accent-ink"
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    );
 
-    const previous = moved.map((s) => [s, s.threadId] as const);
-    const run = () => Promise.all(moved.map((s) => assign(s, threadId, "manual")));
-
-    // View Transitions make the cards travel to their new positions instead of
-    // snapping. Guarded because Safari/Firefox lag on support.
-    if (typeof document.startViewTransition === "function") {
-      await new Promise<void>((res) =>
-        document.startViewTransition!(async () => {
-          await run();
-          res();
-        }),
-      );
-    } else {
-      await run();
-    }
-
-    const name = threads.find((t) => t.id === threadId)?.name ?? "Inbox";
-    toast(`Moved ${moved.length > 1 ? `${moved.length} captures` : "1 capture"} to ${name}`, () => {
-      for (const [s, prev] of previous) void assign(s, prev, "manual");
-    });
-  };
+  // One idea per screen (15 §onboarding): during setup there is no sidebar, no
+  // search bar and no capture button to compete with the single decision.
+  if (ready && needsSetup)
+    return (
+      <div className="min-h-screen px-6">
+        <p className="py-4 text-sm font-semibold tracking-tight">Capso</p>
+        <FirstRun />
+      </div>
+    );
 
   return (
     <div className="flex min-h-screen">
@@ -93,31 +90,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <p className="mt-6 mb-1 flex items-center gap-2 px-2 text-[11px] uppercase tracking-wide text-muted">
           Projects
           {dragCount > 0 && (
-            <span className="capso-fade rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-white">
+            <span className="capso-fade rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink">
               drop {dragCount}
             </span>
           )}
         </p>
         <nav className="space-y-0.5">
           {threads.map((t) => (
-            <div
+            <DropZone
               key={t.id}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setOver(t.id);
-              }}
-              onDragLeave={() => setOver((o) => (o === t.id ? null : o))}
-              onDrop={(e) => {
-                e.preventDefault();
-                const id = e.dataTransfer.getData("text/capso-id");
-                if (id) void drop(t.id, id);
-              }}
-              className={`capso-drop rounded-md ${
-                over === t.id ? "capso-drop-active bg-accent/10 ring-2 ring-accent" : ""
-              } ${dragCount > 0 && over !== t.id ? "ring-1 ring-dashed ring-accent/30" : ""}`}
+              armed={dragCount > 0}
+              onDropIds={(ids) => void move(t.id, ids)}
             >
-              <Row href={`/threads/${t.id}`} label={t.name} badge={byThread(t.id).length} />
-            </div>
+              <Row
+                href={`/threads/${t.id}`}
+                label={t.name}
+                badge={byThread(t.id).length}
+                title={t.description || undefined}
+              />
+            </DropZone>
           ))}
         </nav>
 
@@ -133,12 +124,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
               }
               if (e.key === "Escape") setAdding(false);
             }}
-            className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1 text-[13px]"
+            className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1 text-sm"
           />
         ) : (
           <button
             onClick={() => setAdding(true)}
-            className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-[13px] text-muted hover:bg-surface"
+            className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-sm text-muted hover:bg-surface"
           >
             + New project
           </button>
@@ -162,12 +153,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </p>
         )}
 
-        <button
-          onClick={() => confirm("Reset demo data?") && void reset()}
-          className="mt-2 px-2 text-[11px] text-muted hover:text-accent"
-        >
-          Reset demo data
-        </button>
+        <div className="mt-2 flex flex-col items-start gap-1 px-2 text-[11px] text-muted">
+          <button
+            onClick={() =>
+              confirm("Delete the sample captures and keep only your own screenshots?") &&
+              void clearSamples()
+            }
+            className="hover:text-accent"
+          >
+            Use only my screenshots
+          </button>
+          <button
+            onClick={() => confirm("Reset demo data?") && void reset()}
+            className="hover:text-accent"
+          >
+            Reset demo data
+          </button>
+        </div>
       </aside>
 
       <div className="min-w-0 flex-1">
@@ -177,7 +179,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             className="flex w-full max-w-2xl items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"
           >
             Search your memory…
-            <kbd className="ml-auto rounded border border-line px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+            <kbd className="ml-auto rounded border border-line px-1.5 py-0.5 text-[11px]">⌘K</kbd>
           </button>
         </header>
         <main className="px-6 py-6">{children}</main>
@@ -188,13 +190,28 @@ export function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Row({ href, label, badge }: { href: string; label: string; badge?: number }) {
+function Row({
+  href,
+  label,
+  badge,
+  title,
+}: {
+  href: string;
+  label: string;
+  badge?: number;
+  title?: string;
+}) {
   return (
     <Link
       href={href}
-      className="flex items-center justify-between rounded-md px-2 py-1.5 text-[13px] hover:bg-surface"
+      className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-surface"
     >
-      <span className="truncate">{label}</span>
+      {/* `title` sits on the label, not the link: on the anchor it would replace
+          the accessible name, so the row would announce its description instead
+          of the project it goes to. */}
+      <span className="truncate" title={title}>
+        {label}
+      </span>
       {badge !== undefined && <span className="text-[11px] text-muted">{badge}</span>}
     </Link>
   );

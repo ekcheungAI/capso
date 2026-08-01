@@ -23,7 +23,7 @@ export default function ExtensionPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h1 className="text-sm font-semibold">Chrome extension</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Chrome extension</h1>
         <p className="mt-1 text-xs text-muted">
           Captures the visible browser tab into Capso. Native app windows still need the Mac app.
         </p>
@@ -31,7 +31,7 @@ export default function ExtensionPage() {
 
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium">
+          <p className="text-sm font-medium">
             Capso for Chrome {info ? `v${info.version}` : ""}
           </p>
           <p className="mt-0.5 text-[11px] text-muted">
@@ -43,14 +43,14 @@ export default function ExtensionPage() {
         <a
           href="/capso-extension.zip"
           download
-          className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-white"
+          className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-ink"
         >
           Download .zip
         </a>
       </div>
 
       <section className="space-y-2">
-        <h2 className="text-xs font-medium">Install or update</h2>
+        <h2 className="text-base font-semibold">Install or update</h2>
         <ol className="list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-muted">
           <li>Unzip the download.</li>
           <li>
@@ -75,7 +75,7 @@ export default function ExtensionPage() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-xs font-medium">Why there is no auto-update</h2>
+        <h2 className="text-base font-semibold">Why there is no auto-update</h2>
         <p className="text-xs leading-relaxed text-muted">
           Chrome only auto-updates extensions installed from the Web Store, and it refuses{" "}
           <code className="rounded bg-surface px-1">.crx</code> files served from a website unless
