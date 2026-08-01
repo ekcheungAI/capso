@@ -1,0 +1,156 @@
+<title>Capso — type scale, current vs proposed</title>
+<style>
+:root{--background:#fafaf8;--surface:#fff;--foreground:#141412;--muted:#6b6a64;--line:rgb(20 20 18/.1);--accent:#e8683a}
+@media (prefers-color-scheme:dark){:root{--background:#141412;--surface:#1c1c19;--foreground:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.12)}}
+:root[data-theme=dark]{--background:#141412;--surface:#1c1c19;--foreground:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.12)}
+:root[data-theme=light]{--background:#fafaf8;--surface:#fff;--foreground:#141412;--muted:#6b6a64;--line:rgb(20 20 18/.1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--background);color:var(--foreground);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1180px;margin:0 auto;padding:48px 24px 80px}
+h1.t{font-size:28px;letter-spacing:-.02em;margin:0 0 8px;font-weight:600}
+.lede{color:var(--muted);font-size:15px;max-width:70ch;margin:0 0 8px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:32px}
+.col>h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0 0 4px;font-weight:600}
+.col>p{font-size:12.5px;color:var(--muted);margin:0 0 12px;min-height:34px}
+.app{border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+.chrome{display:flex;gap:0;min-height:430px}
+/* 178px here stands in for the real w-56 (224px) sidebar, scaled to this mock's
+   narrower frame — so the larger nav type does not appear to wrap when it would not. */
+.side{width:178px;border-right:1px solid var(--line);padding:14px 12px;flex:none}
+.main{flex:1;padding:18px 18px 20px;min-width:0}
+.nav{display:block;padding:5px 8px;border-radius:6px;color:var(--muted);text-decoration:none}
+.nav.on{background:color-mix(in srgb,var(--foreground) 6%,transparent);color:var(--foreground);font-weight:500}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px}
+.card{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--background)}
+.card .im{height:62px;background:color-mix(in srgb,var(--foreground) 7%,transparent)}
+.card .mt{padding:8px 9px}
+.chip{display:inline-block;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.strip{display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--background);margin-bottom:4px}
+.dot{width:6px;height:6px;border-radius:99px;background:var(--accent);flex:none}
+
+/* ---------- CURRENT: measured from the codebase ---------- */
+/* h1 = text-sm 14px · h2 = text-xs 12px · body = text-xs 12px · meta = 11px */
+.cur .brand{font-size:14px;font-weight:600}
+.cur .nav{font-size:13px}
+.cur h1{font-size:14px;font-weight:600;margin:0 0 2px}
+.cur .sub{font-size:11px;color:var(--muted);margin:0 0 10px}
+.cur h2{font-size:12px;font-weight:500;color:var(--muted);margin:14px 0 6px}
+.cur .card .ttl{font-size:13px;font-weight:500;margin:0 0 3px}
+.cur .card .meta{font-size:11px;color:var(--muted)}
+.cur .chip{font-size:11px}
+.cur .strip{font-size:11px;color:var(--muted)}
+
+/* ---------- PROPOSED: the scale already in 15_DESIGN_SYSTEM_AND_UX.md:106 ---------- */
+/* 12 / 14 / 16 / 20 / 28 / 36 */
+.new .brand{font-size:16px;font-weight:600;letter-spacing:-.01em}
+.new .nav{font-size:14px}
+.new h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0 0 4px;line-height:1.2}
+.new .sub{font-size:14px;color:var(--muted);margin:0 0 14px}
+.new h2{font-size:16px;font-weight:600;color:var(--foreground);margin:20px 0 8px;letter-spacing:-.01em}
+.new .card .ttl{font-size:14px;font-weight:500;margin:0 0 3px;line-height:1.35}
+.new .card .meta{font-size:12px;color:var(--muted)}
+.new .chip{font-size:12px}
+.new .strip{font-size:14px}
+.new .strip b{font-weight:600}
+
+.note{margin-top:28px;border-left:3px solid var(--accent);padding:2px 0 2px 16px;color:var(--muted);font-size:13.5px}
+.note b{color:var(--foreground)}
+.scale{display:flex;flex-wrap:wrap;gap:18px;align-items:baseline;margin-top:14px;padding:16px 18px;border:1px solid var(--line);border-radius:12px}
+.scale div{text-align:center}
+.scale span{display:block;font-size:10.5px;color:var(--muted);margin-top:4px;font-family:ui-monospace,Menlo,monospace}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+td,th{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+code{font:.88em ui-monospace,Menlo,monospace;background:color-mix(in srgb,var(--foreground) 7%,transparent);padding:1px 5px;border-radius:4px}
+@media(max-width:820px){.cols{grid-template-columns:1fr}}
+</style>
+
+<div class="w">
+<h1 class="t">Type scale — the single biggest visual lever</h1>
+<p class="lede">The same screen, same colours, same spacing, same components. The only thing that
+changes is type size. Nothing here requires new design.</p>
+
+<div class="cols">
+
+  <div class="col cur">
+    <h2>Current — measured from the code</h2>
+    <p>Range 11px → 14px. <code>h1</code> is <code>text-sm</code>, <code>h2</code> is <code>text-xs</code>.</p>
+    <div class="app"><div class="chrome">
+      <div class="side">
+        <div class="brand" style="margin-bottom:12px">Capso</div>
+        <a class="nav on">Everything</a><a class="nav">Inbox</a><a class="nav">Memory</a>
+        <a class="nav">Landing redesign</a><a class="nav">Competitor watch</a>
+      </div>
+      <div class="main">
+        <h1>Everything</h1>
+        <p class="sub">142 captures</p>
+        <div class="strip"><span class="dot"></span>3 captures need a project</div>
+        <h2>Recent</h2>
+        <div class="grid">
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Stripe pricing toggle</p><p class="meta">2d · <span class="chip">reference</span></p></div></div>
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Linear empty state</p><p class="meta">4d · <span class="chip">inspiration</span></p></div></div>
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Onboarding step 2</p><p class="meta">1w · <span class="chip">reference</span></p></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="col new">
+    <h2>Proposed — the spec you already wrote</h2>
+    <p>Range 12px → 24px. Implements <code>15_DESIGN_SYSTEM_AND_UX.md:106</code>.</p>
+    <div class="app"><div class="chrome">
+      <div class="side">
+        <div class="brand" style="margin-bottom:12px">Capso</div>
+        <a class="nav on">Everything</a><a class="nav">Inbox</a><a class="nav">Memory</a>
+        <a class="nav">Landing redesign</a><a class="nav">Competitor watch</a>
+      </div>
+      <div class="main">
+        <h1>Everything</h1>
+        <p class="sub">142 captures</p>
+        <div class="strip"><span class="dot"></span><span><b>3 captures</b> need a project</span></div>
+        <h2>Recent</h2>
+        <div class="grid">
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Stripe pricing toggle</p><p class="meta">2d · <span class="chip">reference</span></p></div></div>
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Linear empty state</p><p class="meta">4d · <span class="chip">inspiration</span></p></div></div>
+          <div class="card"><div class="im"></div><div class="mt"><p class="ttl">Onboarding step 2</p><p class="meta">1w · <span class="chip">reference</span></p></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+</div>
+
+<div class="note"><b>The left panel has no entry point.</b> Because the page title, the section
+heading, the card titles and the metadata are all within 3px of each other, the eye lands nowhere
+and scans everything at equal weight. The report calls Minimalism 2.0 explicitly typography-led —
+<em>"typography and spacing doing most of the visual work."</em> Capso currently asks colour and
+spacing to do all of it alone.</div>
+
+<h2 style="font-size:19px;margin-top:38px">What is actually in the build</h2>
+<table>
+<tr><th>Size</th><th>Instances</th><th>Used for</th></tr>
+<tr><td><code>text-xs</code> · 12px</td><td>85</td><td>body, <code>h2</code>, most labels</td></tr>
+<tr><td><code>text-[11px]</code></td><td>48</td><td>chips, overlay copy, all metadata</td></tr>
+<tr><td><code>text-sm</code> · 14px</td><td>18</td><td><strong>every <code>h1</code></strong>, chat body</td></tr>
+<tr><td><code>text-[13px]</code></td><td>10</td><td>card titles, nav rows</td></tr>
+<tr><td><code>text-[10px]</code></td><td>3</td><td>kbd hints, drop badge</td></tr>
+<tr><td><code>text-lg</code> · 18px</td><td>1</td><td>one stat in <code>/memory</code></td></tr>
+<tr><td><code>text-xl</code> · 20px</td><td>1</td><td>the first-run heading</td></tr>
+</table>
+<p style="font-size:13px;color:var(--muted);margin-top:10px">146 of ~166 text instances sit at
+13px or below. Two sit above 14px, and one of those is a screen the user sees exactly once.</p>
+
+<h2 style="font-size:19px;margin-top:34px">The proposed scale</h2>
+<div class="scale">
+  <div><span style="font-size:36px;color:var(--foreground);font-weight:600;display:block;line-height:1">Aa</span><span>36 · display</span></div>
+  <div><span style="font-size:28px;color:var(--foreground);font-weight:600;display:block;line-height:1">Aa</span><span>28 · page</span></div>
+  <div><span style="font-size:20px;color:var(--foreground);font-weight:600;display:block;line-height:1">Aa</span><span>20 · section</span></div>
+  <div><span style="font-size:16px;color:var(--foreground);font-weight:600;display:block;line-height:1">Aa</span><span>16 · subhead</span></div>
+  <div><span style="font-size:14px;color:var(--foreground);display:block;line-height:1">Aa</span><span>14 · body</span></div>
+  <div><span style="font-size:12px;color:var(--muted);display:block;line-height:1">Aa</span><span>12 · meta floor</span></div>
+</div>
+<p style="font-size:13px;color:var(--muted);margin-top:12px">Not invented here —
+<code>15_DESIGN_SYSTEM_AND_UX.md:106</code> already specifies 12/14/16/20/28/36. The build simply
+never adopted it. The open question is only whether the metadata floor is 11px or 12px, which
+affects about 50 instances.</p>
+</div>

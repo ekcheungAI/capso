@@ -16,10 +16,10 @@ apps/mac/src-tauri/target/
 apps/web/public/capso-extension.zip
 apps/web/public/extension-version.json
 
-# generated brand renders — images stay out of git
-drafts/brand/renders/
-drafts/brand/renders-v2/
-drafts/brand/renders-v3/
+# generated brand renders — images stay out of git.
+# Glob, not a list: a `renders-styles/` folder appeared that matched none of the
+# three enumerated rules and 22 MB of PNGs went in before anyone noticed.
+drafts/brand/renders*/
 
 # tooling
 .DS_Store

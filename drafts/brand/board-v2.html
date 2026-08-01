@@ -1,0 +1,214 @@
+<title>Capso — mascot concepts, round 2</title>
+<style>
+:root{--bg:#fafaf8;--surface:#fff;--fg:#141412;--muted:#6b6a64;--line:rgb(20 20 18/.1);--accent:#e8683a}
+@media (prefers-color-scheme:dark){:root{--bg:#141412;--surface:#1c1c19;--fg:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.12)}}
+:root[data-theme=dark]{--bg:#141412;--surface:#1c1c19;--fg:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.12)}
+:root[data-theme=light]{--bg:#fafaf8;--surface:#fff;--fg:#141412;--muted:#6b6a64;--line:rgb(20 20 18/.1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1080px;margin:0 auto;padding:56px 24px 96px}
+h1{font-size:30px;letter-spacing:-.02em;margin:0 0 10px;font-weight:600}
+h2{font-size:21px;letter-spacing:-.01em;margin:0 0 6px;font-weight:600}
+h3{font-size:16px;margin:0 0 4px;font-weight:600}
+h4{font-size:11px;margin:0 0 10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+p{margin:0 0 12px}
+.lede{color:var(--muted);font-size:15.5px;max-width:70ch}
+code{font:.88em ui-monospace,SFMono-Regular,Menlo,monospace;background:color-mix(in srgb,var(--fg) 7%,transparent);padding:1px 5px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:44px 0}
+section{margin-bottom:44px}
+img{max-width:100%;display:block;border-radius:10px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.meta span{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.kill{border-left:3px solid var(--accent);padding:4px 0 4px 16px;margin:18px 0}
+.kill p{margin:0 0 8px}.kill p:last-child{margin:0}
+.mech{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:26px 28px}
+.big{font-size:24px;font-weight:600;letter-spacing:-.01em;margin:0 0 10px}
+.sys{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-top:22px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.card .fig{background:var(--bg);border-bottom:1px solid var(--line);padding:14px;display:grid;place-items:center;min-height:150px}
+.card .fig img{border-radius:6px}
+.card .txt{padding:14px 16px}
+.card p{font-size:12.5px;color:var(--muted);margin:0}
+.wide{grid-column:1/-1}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:center}
+.terr{display:grid;grid-template-columns:200px 1fr;gap:22px;align-items:start;padding:20px 0;border-top:1px solid var(--line)}
+.terr img{border:1px solid var(--line)}
+.score{font-size:11px;border-radius:999px;padding:3px 10px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.win{background:var(--accent);color:#fff;border-color:transparent;font-weight:500}
+.hd{display:flex;gap:12px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+ul{margin:8px 0 0;padding-left:17px;font-size:12.5px;color:var(--muted)}
+li{margin-bottom:4px}
+.next{counter-reset:s;list-style:none;padding:0;margin:14px 0 0}
+.next li{counter-increment:s;position:relative;padding-left:30px;margin-bottom:9px;font-size:13.5px;color:var(--fg)}
+.next li::before{content:counter(s);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:999px;background:var(--accent);color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600}
+@media(max-width:760px){.terr,.row{grid-template-columns:1fr}.w{padding:32px 16px 64px}}
+</style>
+
+<div class="w">
+<h1>Capso — mascot concepts, round 2</h1>
+<p class="lede">Round one was safe and forgettable. This is a wider concept space, generated
+expressively rather than reduced to death, with one direction that actually says what the
+product does.</p>
+<div class="meta"><span>1 Aug 2026</span><span>Recraft V4.1 · standard + vector</span>
+<span>6 mechanisms · 20 renders</span><span>No files under <code>apps/</code> touched</span></div>
+
+<hr/>
+
+<section>
+<h2>Why round one failed</h2>
+<div class="kill">
+<p>The mark was a rounded blob with two dots — the single most crowded shape in software
+branding. It had no <em>distinctive element</em>: no silhouette idea, no negative-space device,
+no unexpected colour relationship.</p>
+<p>The blunt test: <strong>could that identity be renamed for another brand without meaningful
+changes?</strong> Yes. It could be Headspace, Calm, or any wellness app. That is a fail.</p>
+<p>The cause was my prompting, not the model. Every round-one prompt said <em>minimal, extremely
+simple, must read at 16px</em>, locked to three colours in <code>model_type: vector</code>. I
+optimised for reduction and got something reduced to nothing. Concept first, reduce afterwards.</p>
+</div>
+</section>
+
+<hr/>
+
+<section>
+<div class="mech">
+<h4>Central mechanism</h4>
+<p class="big">The capsule is transparent, and you can see everything you captured inside it.</p>
+<p class="lede" style="margin:0">One idea that generates the mark, the mascot, the colour
+system, and the motion — rather than four decisions that merely coexist. The shell stays
+terracotta and constant; the <em>contents</em> carry all the variety. That is the product:
+one container, many captured things.</p>
+</div>
+</section>
+
+<section>
+<h2>The system</h2>
+<p class="lede">Same object at four scales.</p>
+<div class="sys">
+
+  <div class="card">
+    <div class="fig"><img src="renders-v2/M1-icon-b.webp" alt="Capsule icon with three cards inside" style="width:150px"></div>
+    <div class="txt"><h3>Mark</h3><p>Three cards, hard stop. The cream window is the
+    distinctive element — no other capsule mark has visible cargo.</p></div>
+  </div>
+
+  <div class="card">
+    <div class="fig"><img src="renders-v2/M1-loaded-b.png" alt="Loaded capsule character" style="width:150px"></div>
+    <div class="txt"><h3>Character</h3><p>Packed dense with hundreds of cards. Same object,
+    more detail — used large, never shrunk to icon size.</p></div>
+  </div>
+
+  <div class="card">
+    <div class="fig"><img src="renders-v2/M5-rack-b.png" alt="Five capsules in different hues" style="width:100%"></div>
+    <div class="txt"><h3>Project system</h3><p>One capsule per thread — different hue,
+    different contents. The identity scales with the product instead of repeating.</p></div>
+  </div>
+
+  <div class="card wide">
+    <div class="fig" style="padding:0"><img src="renders-v2/M1-motion-b.png" alt="Capsule dissolving into pixels and reassembling into a grid" style="width:100%;border-radius:0"></div>
+    <div class="txt"><h3>Motion — capture and retrieval</h3><p>Capsule → dissolve → reassemble.
+    Note the third frame: the pixels reform into a <em>grid</em>, which is literally the app's
+    masonry layout. The brand's motion and the product's main screen are the same gesture.
+    Runs on the existing <code>--dur-panel</code> / <code>--ease-out-strong</code> tokens — no
+    new dependency.</p></div>
+  </div>
+
+</div>
+</section>
+
+<section>
+<h4>The character has poses</h4>
+<img src="renders-v2/M1-poses-b.png" alt="Four poses of the capsule character" style="border:1px solid var(--line)">
+<p style="font-size:12.5px;color:var(--muted);margin-top:10px">Resting, curious, alert, and
+tipping over with contents spilling. Grapheine's finding on Bibendum and Benny the Bull was that
+<em>personality beats appearance</em> — a mascot that does something outlives one that poses. The
+fourth frame is the retrieval story in one image.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>The other five territories</h2>
+<p class="lede">Explored properly, rated honestly. None of these is the answer, but two are worth
+keeping as secondary devices.</p>
+
+<div class="terr">
+  <img src="renders-v2/M3-swallow-b.png" alt="Capsule creature eating a card">
+  <div><div class="hd"><h3>The Swallower</h3><span class="score">keep as illustration</span></div>
+  <p style="font-size:13px;color:var(--muted);margin:0">A capsule hinged open, hands pulling a
+  screen inside. The most energetic thing generated and genuinely funny.</p>
+  <ul><li>Too complex to reduce — dies below about 64px</li>
+  <li>Reads as an egg or a locket before it reads as a capsule</li>
+  <li>Strong for onboarding and marketing illustration, wrong for the mark</li></ul></div>
+</div>
+
+<div class="terr">
+  <img src="renders-v2/M6-memory-b.png" alt="Capsule dissolving into pixels">
+  <div><div class="hd"><h3>Half-Remembered</h3><span class="score">absorbed into motion</span></div>
+  <p style="font-size:13px;color:var(--muted);margin:0">A capsule disintegrating into falling
+  pixels. Conceptually the sharpest of the six — the product's real magic is retrieving something
+  you only half-remember.</p>
+  <ul><li>Not a mascot: no face, no character, and you asked for one</li>
+  <li>The pixels vanish entirely at icon sizes</li>
+  <li>Too good to discard — it became the motion language above</li></ul></div>
+</div>
+
+<div class="terr">
+  <img src="renders-v2/M2-crop-b.png" alt="C formed from crop marks">
+  <div><div class="hd"><h3>C-as-Crop</h3><span class="score">smart, timid</span></div>
+  <p style="font-size:13px;color:var(--muted);margin:0">The letter C implied by two selection
+  corners and a dashed marquee — literally the gesture of taking a screenshot, and the initial.</p>
+  <ul><li>The idea is better than any execution the model produced</li>
+  <li>Reads as a loading spinner or a selection box, not a letter</li>
+  <li>Zero warmth — the opposite of the "cool fun" brief</li></ul></div>
+</div>
+
+<div class="terr">
+  <img src="renders-v2/M4-crema-a.png" alt="Espresso pod from above">
+  <div><div class="hd"><h3>Crema</h3><span class="score">rejected</span></div>
+  <p style="font-size:13px;color:var(--muted);margin:0">Espresso pod from above, crema as a
+  spiral of rectangles.</p>
+  <ul><li>Renders as woven rattan, not coffee</li>
+  <li>Says nothing about screenshots — leans entirely on one half of the name</li>
+  <li>Beautiful object, wrong brief</li></ul></div>
+</div>
+</section>
+
+<hr/>
+
+<section>
+<div class="mech" style="border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))">
+<div class="row">
+  <div>
+    <h4>Recommendation</h4>
+    <p class="big" style="margin-bottom:12px">The Loaded Capsule</p>
+    <p>It passes the rename test — a capsule packed with captured screens cannot be lifted onto
+    another product without becoming meaningless. It gives the brand a colour system for free
+    (the shell stays constant, the contents vary), a mascot with poses, a project device, and a
+    motion language that resolves into the app's own grid.</p>
+    <p style="margin:0"><strong>Still a draft, not an asset.</strong> These are generated
+    concepts. The mark needs redrawing by hand as it was last time — but this time there is an
+    idea worth drawing.</p>
+  </div>
+  <div style="display:grid;place-items:center"><img src="renders-v2/M1-icon-b.webp" alt="Recommended mark" style="width:190px"></div>
+</div>
+<h4 style="margin-top:24px">If this is approved</h4>
+<ol class="next">
+  <li>Redraw the mark by hand — capsule shell plus exactly three cards, on a 24px grid</li>
+  <li>Decide the card palette: it becomes a real second tier of the identity, and needs to survive on cream and on <code>#1c1c19</code></li>
+  <li>Rebuild the icon set from it — <code>build_icons.py</code> already handles everything downstream of one SVG</li>
+  <li>Test the 16px case early: three cards may be one too many, and the hinted master may need two</li>
+  <li>Keep the Swallower as the onboarding illustration and the dissolve as the capture animation</li>
+</ol>
+</div>
+</section>
+
+<hr/>
+<section>
+<h4>Method note</h4>
+<p style="font-size:12.5px;color:var(--muted);margin:0">Mechanisms were built with the Higgsfield
+brandkit workflow's Design Brain discipline — one concept per direction, each requiring a concrete
+distinctive element rather than adjectives, screened against its anti-slop list and its
+rename test. Round one is preserved in <code>board.html</code> and <code>mark/</code> for comparison.</p>
+</section>
+</div>

@@ -18,7 +18,7 @@
 ## Design principles (Requirement)
 
 1. **Calm over busy.** Fewer elements per screen than feels safe. If a screen has two competing focal points, cut one.
-2. **Memory, not filing.** No folders, no tag managers, no taxonomy chores. The user captures and confirms; the system organizes.
+2. **Memory, not filing.** No folders to create, no tag managers, no taxonomy chores. The user captures and confirms; the system organizes. *(Amended 2026-08-01: the library groups captures into per-project **shelves** by default. This is a read-only view of project threads the system already maintains — the user still never builds or maintains a hierarchy. What is banned is filing **work**, not the visible evidence that filing happened.)*
 3. **AI suggests, user confirms.** AI output is always presented as a dismissible suggestion chip, never a silent mutation (auto-assign ≥0.8 is the one exception, and it's always visibly undoable).
 4. **Speed = trust for capture.** Any latency or friction at capture time erodes the whole product. Capture path never waits on network, AI, or animation.
 5. **Screenshots are the hero — chrome recedes.** UI is a quiet frame: neutral surfaces, thin borders, images carry the color.
@@ -74,6 +74,7 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 
 - Target: **under 3 minutes** from sign-in to first captured-and-classified screenshot (measured via PostHog `onboarding_completed`).
 - One idea per screen, max 4 screens (sign in → install → permission explainer → first capture live-wait).
+- **Starter-kit screen (added 2026-08-01).** Before the first capture, one screen asks what kind of work the user screenshots for and creates that role's projects (03 §starter kits). No sidebar, no search bar and no capture button compete with it. Each card lists the projects it would create, so the choice is legible rather than blind. Skippable via "Start empty"; never shown again.
 - The finale is the product itself doing its trick: user presses ⌃⇧C, the web page shows the capture appear and classify in realtime. That moment is the onboarding.
 
 ## AI companion presence (Requirement)
@@ -93,7 +94,7 @@ No illustrations of sad boxes/empty folders. A quiet line of text and one action
 ## What to avoid (Requirement)
 
 - Dense dashboards, stat walls, "activity" charts.
-- Folder trees, nested collections, manual tag-management UI.
+- Folder **trees**, nested collections, manual tag-management UI. (Flat project shelves in the library are fine — one level, system-maintained, no nesting ever.)
 - Social features (sharing feeds, likes), gamification (streaks, badges).
 - Notification spam — the only pushes ever considered: upload failure (opt-in), weekly digest (email, opt-in).
 - Onboarding checklists that outlive onboarding.

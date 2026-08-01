@@ -1,0 +1,268 @@
+<title>Capso — the identity, decided</title>
+<style>
+:root{
+  --paper:#fbf9f5; --surface:#ffffff; --ink:#141312; --muted:#6b6a64; --line:rgb(20 19 18/.11);
+  --accent:#c2461f;
+  --i-ref:#4a6fa5; --i-insp:#5b7a4b; --i-comp:#8f5c80; --i-hook:#6a5ba8; --i-idea:#3e7a75; --i-bug:#a8465c;
+}
+@media (prefers-color-scheme:dark){:root{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13);--accent:#e8683a}}
+:root[data-theme=dark]{--paper:#141312;--surface:#1c1c19;--ink:#ededea;--muted:#9a9890;--line:rgb(237 237 234/.13);--accent:#e8683a}
+:root[data-theme=light]{--paper:#fbf9f5;--surface:#fff;--ink:#141312;--muted:#6b6a64;--line:rgb(20 19 18/.11);--accent:#c2461f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:960px;margin:0 auto;padding:60px 24px 100px}
+h1{font-size:38px;letter-spacing:-.03em;margin:0 0 12px;font-weight:600;line-height:1.1}
+h2{font-size:23px;letter-spacing:-.02em;margin:0 0 8px;font-weight:600}
+h3{font-size:17px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+h4{font-size:11px;margin:0 0 12px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+p{margin:0 0 14px;max-width:68ch}
+.lede{color:var(--muted);font-size:17px}
+code{font:.86em ui-monospace,SFMono-Regular,Menlo,monospace;background:color-mix(in srgb,var(--ink) 7%,transparent);padding:2px 6px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:52px 0}
+section{margin-bottom:48px}
+.rule{border-left:3px solid var(--accent);padding:4px 0 4px 18px;margin:20px 0}
+.rule p{margin:0}
+.box{border:1px solid var(--line);border-radius:16px;padding:26px 28px;background:var(--surface)}
+.sw{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+.chip{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
+.chip .c{height:72px}
+.chip .t{padding:10px 12px}
+.chip b{display:block;font-size:13px;font-weight:600}
+.chip span{font:11px ui-monospace,Menlo,monospace;color:var(--muted)}
+.chip em{display:block;font-size:11.5px;color:var(--muted);font-style:normal;margin-top:3px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center}
+.mark{display:grid;place-items:center;padding:26px;background:var(--paper);border:1px solid var(--line);border-radius:14px}
+.icons{display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
+.icons figure{margin:0;text-align:center}
+.icons figcaption{font-size:10.5px;color:var(--muted);margin-top:6px}
+.tile{border-radius:22%;background:var(--accent);display:grid;place-items:center;overflow:hidden}
+.intents{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.ic{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:4px 12px 4px 10px;font-size:12.5px;background:var(--surface)}
+.ic i{width:8px;height:8px;border-radius:99px;display:block}
+.before{opacity:.62}
+.mock{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface);margin-top:8px}
+.mock .row{display:flex;gap:12px;padding:12px 14px;align-items:center;border-bottom:1px solid var(--line)}
+.mock .row:last-child{border-bottom:0}
+.mock .sh{width:52px;height:36px;border-radius:6px;flex:none}
+.mock .ttl{font-size:14px;font-weight:500}
+.mock .mt{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+td,th{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.yes{color:var(--accent);font-weight:600}
+@media(max-width:760px){.two{grid-template-columns:1fr}.w{padding:36px 16px 70px}h1{font-size:30px}}
+</style>
+
+<!-- The mark, hand-drawn. 24-unit grid, same construction as mark/capso-mark.svg,
+     with the lower half opened into a window showing three captured cards. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="capso" viewBox="0 0 24 24">
+  <clipPath id="cbody"><rect x="4" y="3" width="16" height="18" rx="7"/></clipPath>
+  <g clip-path="url(#cbody)">
+    <rect x="4" y="3" width="16" height="9.1" fill="var(--accent)"/>
+    <rect x="4" y="12.1" width="16" height="9" fill="#ffffff"/>
+    <g>
+      <rect x="6.1" y="14.9" width="5.4" height="3.7" rx=".5" fill="var(--i-ref)" transform="rotate(-9 8.8 16.7)"/>
+      <rect x="9.1" y="13.9" width="5.4" height="3.7" rx=".5" fill="var(--i-insp)" transform="rotate(7 11.8 15.7)"/>
+      <rect x="7.7" y="16.6" width="5.4" height="3.7" rx=".5" fill="var(--i-comp)" transform="rotate(-3 10.4 18.4)"/>
+    </g>
+  </g>
+  <rect x="4" y="3" width="16" height="18" rx="7" fill="none" stroke="var(--ink)" stroke-opacity=".9" stroke-width=".5"/>
+  <circle cx="9.15" cy="8" r="1.6" fill="var(--ink)"/><circle cx="14.85" cy="8" r="1.6" fill="var(--ink)"/>
+</symbol>
+<symbol id="capso-tile" viewBox="0 0 24 24">
+  <clipPath id="cbody2"><rect x="4" y="3" width="16" height="18" rx="7"/></clipPath>
+  <g clip-path="url(#cbody2)">
+    <rect x="4" y="3" width="16" height="9.1" fill="#fbf9f5"/>
+    <rect x="4" y="12.1" width="16" height="9" fill="#fbf9f5" fill-opacity=".34"/>
+    <g>
+      <rect x="6.1" y="14.9" width="5.4" height="3.7" rx=".5" fill="#fbf9f5" transform="rotate(-9 8.8 16.7)"/>
+      <rect x="9.1" y="13.9" width="5.4" height="3.7" rx=".5" fill="#fbf9f5" fill-opacity=".8" transform="rotate(7 11.8 15.7)"/>
+    </g>
+  </g>
+  <circle cx="9.15" cy="8" r="1.6" fill="var(--accent)"/><circle cx="14.85" cy="8" r="1.6" fill="var(--accent)"/>
+</symbol>
+</defs></svg>
+
+<div class="w">
+<h1>This is the identity I'd build</h1>
+<p class="lede">One direction, not a menu. Every value below is measured and passes AA in both
+modes.</p>
+
+<hr/>
+
+<section>
+<h2>The constraint that decides everything</h2>
+<p><strong>Capso's canvas is full of other people's screenshots.</strong> A Stripe pricing page, a
+purple dashboard, a green empty state — colour you do not control, arriving all day. That single
+fact settles most of the design questions, and it is why the earlier Riso direction was wrong for
+the product even though it was the most beautiful board.</p>
+<div class="rule"><p><strong>The interface must be nearly colourless so the captures carry the
+colour.</strong> White walls, not a patterned gallery. Brand colour lives only where content
+cannot: the mark, onboarding, empty states, marketing.</p></div>
+<p>It also settles the accent argument in an unexpected way. Blue, purple, green and black are the
+most common accent colours <em>inside</em> SaaS screenshots. Orange is rare. So a warm terracotta
+is not the safe default choice here — it is the <em>functionally correct</em> one, because it stays
+distinguishable from the content it sits beside all day.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>Colour</h2>
+<h4>Ground and voice</h4>
+<div class="sw">
+  <div class="chip"><div class="c" style="background:#fbf9f5"></div><div class="t"><b>Paper</b><span>#fbf9f5</span><em>Warmer than the current #fafaf8. Screenshots are mostly cool white, so a warm ground makes them read as objects sitting on a surface.</em></div></div>
+  <div class="chip"><div class="c" style="background:#141312"></div><div class="t"><b>Ink</b><span>#141312</span><em>17.65:1. Also the dark ground.</em></div></div>
+  <div class="chip"><div class="c" style="background:#c2461f"></div><div class="t"><b>Accent, light</b><span>#c2461f</span><em>4.77:1 as text, 5.01:1 under white. Already shipped.</em></div></div>
+  <div class="chip"><div class="c" style="background:#e8683a"></div><div class="t"><b>Accent, dark</b><span>#e8683a</span><em>5.68:1. Ink flips to #141312 on top.</em></div></div>
+</div>
+
+<h4 style="margin-top:30px">The rule that makes it a system</h4>
+<div class="rule"><p><strong>Warm means Capso is speaking. Cool means your content is being
+described.</strong> The accent is reserved — buttons, focus, the product's own voice. It never
+labels your material.</p></div>
+
+<h4 style="margin-top:26px">Intent palette — your content's taxonomy</h4>
+<p>Capso already classifies every capture into seven intents, and today renders all seven as
+identical grey chips. That taxonomy is the obvious home for the secondary palette: it is
+information the product already has, currently thrown away visually.</p>
+
+<div class="intents">
+  <span class="ic"><i style="background:var(--i-ref)"></i>Reference</span>
+  <span class="ic"><i style="background:var(--i-insp)"></i>Design inspiration</span>
+  <span class="ic"><i style="background:var(--i-comp)"></i>Competitor</span>
+  <span class="ic"><i style="background:var(--i-hook)"></i>Marketing hook</span>
+  <span class="ic"><i style="background:var(--i-idea)"></i>Content idea</span>
+  <span class="ic"><i style="background:var(--i-bug)"></i>UX bug</span>
+  <span class="ic"><i style="background:var(--muted)"></i>Other</span>
+</div>
+<p class="before" style="margin-top:14px;font-size:13px">Today, all seven look like this:
+<span class="ic" style="color:var(--muted)">Reference</span>
+<span class="ic" style="color:var(--muted)">Competitor</span>
+<span class="ic" style="color:var(--muted)">UX bug</span></p>
+
+<table>
+<tr><th>Intent</th><th>Hex</th><th>On paper</th><th>On dark</th></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-ref)"></i>Reference</span></td><td><code>#4a6fa5</code></td><td>4.86</td><td>3.61</td></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-insp)"></i>Design inspiration</span></td><td><code>#5b7a4b</code></td><td>4.61</td><td>3.80</td></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-comp)"></i>Competitor</span></td><td><code>#8f5c80</code></td><td>4.98</td><td>3.52</td></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-hook)"></i>Marketing hook</span></td><td><code>#6a5ba8</code></td><td>5.43</td><td>3.23</td></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-idea)"></i>Content idea</span></td><td><code>#3e7a75</code></td><td>4.70</td><td>3.73</td></tr>
+<tr><td><span class="ic" style="border:0;padding:0;background:none"><i style="background:var(--i-bug)"></i>UX bug</span></td><td><code>#a8465c</code></td><td>5.40</td><td>3.25</td></tr>
+</table>
+<p style="font-size:13px;color:var(--muted);margin-top:12px">All six are deliberately mid-tone and
+low-chroma, so a single value clears 3:1 on <em>both</em> grounds and needs no light/dark pair —
+unlike the accent. They appear as an 8px dot, never as text colour, so 3:1 is the right bar.
+Every one is cool or cool-leaning except UX bug, which earns its warmth by being an alert.</p>
+
+<div class="mock" style="margin-top:20px">
+  <div class="row"><div class="sh" style="background:#e8eef7"></div><div><div class="ttl">Stripe pricing toggle</div><div class="mt">2d</div></div><span class="ic" style="margin-left:auto"><i style="background:var(--i-ref)"></i>Reference</span></div>
+  <div class="row"><div class="sh" style="background:#efe9f5"></div><div><div class="ttl">Linear empty state</div><div class="mt">4d</div></div><span class="ic" style="margin-left:auto"><i style="background:var(--i-insp)"></i>Design inspiration</span></div>
+  <div class="row"><div class="sh" style="background:#f3e9e9"></div><div><div class="ttl">Overlay chip overlaps traffic lights</div><div class="mt">1w</div></div><span class="ic" style="margin-left:auto"><i style="background:var(--i-bug)"></i>UX bug</span></div>
+</div>
+</section>
+
+<hr/>
+
+<section>
+<h2>The mark</h2>
+<div class="two">
+  <div class="mark"><svg width="176" height="176"><use href="#capso"/></svg></div>
+  <div>
+    <h3>A capsule you can see into</h3>
+    <p>The upper half is the shell — constant, terracotta, the product. The lower half is a window
+    holding three captured cards, and those cards are drawn in the intent colours. So the mark is
+    literally the product's data model.</p>
+    <p style="margin:0">It is the only form where mascot, logo and app icon are one object, and it
+    survives a rename, because it is a capsule rather than the letters C-A-P-S-O.</p>
+  </div>
+</div>
+
+<h4 style="margin-top:28px">On a tile, which is how icons actually ship</h4>
+<div class="icons">
+  <figure><div class="tile" style="width:96px;height:96px"><svg width="74" height="74"><use href="#capso-tile"/></svg></div><figcaption>96</figcaption></figure>
+  <figure><div class="tile" style="width:48px;height:48px"><svg width="37" height="37"><use href="#capso-tile"/></svg></div><figcaption>48</figcaption></figure>
+  <figure><div class="tile" style="width:32px;height:32px"><svg width="25" height="25"><use href="#capso-tile"/></svg></div><figcaption>32</figcaption></figure>
+  <figure><div class="tile" style="width:16px;height:16px"><svg width="13" height="13"><use href="#capso-tile"/></svg></div><figcaption>16</figcaption></figure>
+</div>
+<p style="font-size:13px;color:var(--muted);margin-top:14px">The three cards collapse to one light
+block below about 32px. That degradation is designed, not accidental — at favicon size the mark is
+a capsule with a face and nothing else, which is the correct amount of information for 16 pixels.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>Typography</h2>
+<div class="two" style="align-items:start">
+  <div class="box">
+    <h4>Interface</h4>
+    <p style="margin:0 0 8px"><strong>Keep the system stack.</strong></p>
+    <p style="font-size:13.5px;color:var(--muted);margin:0">No webfont, no layout shift, native
+    rendering, zero bytes. Scale is 12/14/16/20/28 — now implemented. The UI's job is to disappear.</p>
+  </div>
+  <div class="box">
+    <h4>Brand</h4>
+    <p style="margin:0 0 8px"><strong>One warm display serif</strong> — wordmark, marketing
+    headlines, onboarding. Never inside the app.</p>
+    <p style="font-size:13.5px;color:var(--muted);margin:0">Fraunces (variable, free) as first
+    choice; Instrument Serif as the lighter alternative.</p>
+  </div>
+</div>
+<p style="margin-top:18px">A serif is the real differentiator here. Every competitor in this
+category is sans-everything. A memory product has genuine licence to feel like an archive or an
+editorial object rather than a utility, and a serif wordmark against a system-sans UI says that in
+one move — while costing nothing in the interface itself.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>Motion</h2>
+<p>No new dependency. Everything reuses the tokens already in <code>globals.css:37-143</code> —
+<code>--dur-panel</code> 220ms and <code>--ease-out-strong</code>.</p>
+<table>
+<tr><th>Moment</th><th>Behaviour</th></tr>
+<tr><td>Capture</td><td>The capsule's halves part and the new card drops in</td></tr>
+<tr><td>Analysing</td><td>Cards inside shuffle slowly — the only looping animation in the product</td></tr>
+<tr><td>Filed</td><td>Halves close; the shelf's card count ticks up</td></tr>
+<tr><td>Retrieval</td><td>Scattered squares reassemble into the masonry grid — the brand's motion and the product's main screen are the same gesture</td></tr>
+</table>
+</section>
+
+<hr/>
+
+<section>
+<h2>Where it appears</h2>
+<table>
+<tr><th>Surface</th><th></th></tr>
+<tr><td>App icon, favicon, extension, macOS tray</td><td class="yes">always</td></tr>
+<tr><td>The post-capture overlay — the signature moment</td><td class="yes">yes</td></tr>
+<tr><td>First run, once</td><td class="yes">yes, with the character at full size</td></tr>
+<tr><td>The true zero state only</td><td class="yes">yes</td></tr>
+<tr><td>Marketing, OG image, docs</td><td class="yes">yes, loud</td></tr>
+<tr><td>The other seven empty states</td><td>never</td></tr>
+<tr><td>Sidebar, nav, chrome</td><td>never</td></tr>
+<tr><td>Beside AI responses, toasts, buttons</td><td>never</td></tr>
+</table>
+</section>
+
+<hr/>
+
+<section>
+<div class="box" style="border-color:var(--accent)">
+<h4>What this actually costs to build</h4>
+<table>
+<tr><td>Paper <code>#fafaf8</code> → <code>#fbf9f5</code></td><td>1 line</td></tr>
+<tr><td>Six intent tokens + colour the <code>IntentChip</code></td><td>~15 lines, <code>ui.tsx</code></td></tr>
+<tr><td>Redraw the mark with the card window</td><td>1 SVG; <code>build_icons.py</code> regenerates the rest</td></tr>
+<tr><td>Fraunces on marketing surfaces</td><td>outside the app bundle</td></tr>
+<tr><td>Motion</td><td>existing tokens, no dependency</td></tr>
+</table>
+<p style="margin:16px 0 0"><strong>The accent and the type scale are already shipped.</strong> What
+remains is the intent palette, the mark, and the serif — and the intent palette is the piece I would
+do first, because it makes the product more legible rather than merely better dressed.</p>
+</div>
+</section>
+</div>

@@ -71,5 +71,16 @@ Six use cases. Feature IDs reference 04_MVP_SCOPE.md MUST-HAVE table. All six ar
 ## Out of scope
 
 - Persona expansion (students, researchers, support teams, agencies) — revisit only after customer-zero retention is proven.
-- Persona-specific onboarding or templates — one product surface for all three; the classifier adapts via the learning loop, not via modes.
+- ~~Persona-specific onboarding or templates~~ — **reversed by owner decision 2026-08-01, see below.**
+- Persona-specific *modes* — there is still exactly one product surface for all three personas. No persona changes the taxonomy, the labels, or the way the classifier adapts.
 - Any team/collaboration flow — excluded outright in 04_MVP_SCOPE.md.
+
+## Decision: starter kits at first run (owner, 2026-08-01)
+
+The previous out-of-scope line conflated two things. **Modes** stay out; **starter kits** are now in.
+
+Picking a role on first run (Marketing / Product & design / Founder / Start empty) creates a named set of project threads with `one_line_description` filled in — and does nothing else. No role is stored, nothing is branched on it afterwards, and the user can rename or delete every project. The learning loop remains the only mechanism by which Capso adapts to a person.
+
+Why it was wrong to exclude: the classifier can only file into projects that exist. With an empty project list every early capture routes to the Inbox regardless of confidence (07 §routing), so a new user's first session is a triage queue rather than the product working. The starter kit exists to make the *first* capture classifiable; the correction ledger takes over from there.
+
+Implemented in `apps/web/lib/templates.ts` — see `BUILD_LOG.md` loop 12.

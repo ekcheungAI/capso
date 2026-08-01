@@ -1,0 +1,41 @@
+<!--
+  Capso — primary mark (two-tone capsule)
+
+  Drawn on a 24-unit grid. Every number here is deliberate:
+
+    body    x4 y3 w16 h18 rx7   — 16:18 ratio, matching the approved A1 render's
+                                   0.9 proportion. rx7 leaves only a 2-unit straight
+                                   run horizontally and 4 vertically, so it reads as
+                                   a capsule rather than a rounded rectangle.
+    seam    y12                  — dead centre of the body (3→21). At y12 the silhouette
+                                   is in its straight vertical run, so the seam spans the
+                                   full 16 units cleanly.
+    eyes    cy8.2 r1.25          — 58% down the upper half. The A1 render sat them too
+                                   high; dropping them grounds the face.
+            cx9.3 / cx14.7       — 5.4 apart, symmetric about x12.
+
+  The hairline stroke is what lets the cream lower half survive on a light
+  background. It still vanishes below ~24px, which is why the shipping icon uses
+  the accent plate (capso-icon-web.svg) rather than this mark bare.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Capso">
+  <defs>
+    <clipPath id="capso-body">
+      <rect x="4" y="3" width="16" height="18" rx="7"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#capso-body)">
+    <rect x="4" y="3"  width="16" height="9" fill="#e8683a"/>
+    <rect x="4" y="12" width="16" height="9" fill="#ffffff"/>
+  </g>
+
+  <rect x="4" y="3" width="16" height="18" rx="7"
+        fill="none" stroke="#141412" stroke-opacity="0.92" stroke-width="0.55"/>
+
+  <g fill="#141412">
+    <circle cx="9.15"  cy="8.2" r="1.65"/>
+    <circle cx="14.85" cy="8.2" r="1.65"/>
+  </g>
+</svg>

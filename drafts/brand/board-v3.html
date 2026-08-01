@@ -1,0 +1,253 @@
+<title>Capso — fresh colour &amp; 2026 direction</title>
+<style>
+:root{
+  --paper:#efeae0; --ink:#1a1a18; --muted:#6f6a5e; --line:rgb(26 26 24/.14);
+  --blue:#1f28ae; --pink:#ff48b0; --yellow:#ffe800; --violet:#8a3a9e; --surface:#f7f4ec;
+}
+@media (prefers-color-scheme:dark){:root{--paper:#141414;--ink:#ece7dc;--muted:#918b7e;--line:rgb(236 231 220/.14);--surface:#1d1d1b}}
+:root[data-theme=dark]{--paper:#141414;--ink:#ece7dc;--muted:#918b7e;--line:rgb(236 231 220/.14);--surface:#1d1d1b}
+:root[data-theme=light]{--paper:#efeae0;--ink:#1a1a18;--muted:#6f6a5e;--line:rgb(26 26 24/.14);--surface:#f7f4ec}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.w{max-width:1080px;margin:0 auto;padding:56px 24px 96px}
+h1{font-size:32px;letter-spacing:-.025em;margin:0 0 10px;font-weight:650}
+h2{font-size:21px;letter-spacing:-.01em;margin:0 0 6px;font-weight:600}
+h3{font-size:16px;margin:0;font-weight:600}
+h4{font-size:11px;margin:0 0 10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+p{margin:0 0 12px}
+.lede{color:var(--muted);font-size:15.5px;max-width:70ch}
+code{font:.88em ui-monospace,SFMono-Regular,Menlo,monospace;background:color-mix(in srgb,var(--ink) 8%,transparent);padding:1px 5px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:44px 0}
+section{margin-bottom:44px}
+img{max-width:100%;display:block;border-radius:8px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.meta span{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+.key{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:26px 28px}
+.big{font-size:23px;font-weight:600;letter-spacing:-.015em;margin:0 0 10px;line-height:1.3}
+.worlds{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;margin-top:22px}
+.world{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}
+.world img{border-radius:0;width:100%}
+.world .b{padding:15px 17px}
+.hd{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:7px}
+.tag{font-size:10.5px;border-radius:999px;padding:3px 9px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.win{background:var(--blue);color:#fff;border-color:transparent;font-weight:500}
+.no{opacity:.55}
+.world p{font-size:12.5px;color:var(--muted);margin:0}
+ul{margin:7px 0 0;padding-left:16px;font-size:12.5px;color:var(--muted)}li{margin-bottom:3px}
+.sw{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:16px 0 6px}
+.chip{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.chip .c{height:64px}
+.chip .t{padding:8px 10px;font-size:11px}
+.chip .t b{display:block;font-weight:600;font-size:11.5px}
+.chip .t span{color:var(--muted);font:10.5px ui-monospace,Menlo,monospace}
+.mock{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+.app{border:1px solid var(--line);border-radius:14px;overflow:hidden;font-size:11px}
+.app .bar{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line)}
+.dot{width:20px;height:20px;border-radius:6px;background:var(--blue);position:relative;flex:none}
+.dot::after{content:"";position:absolute;left:4px;right:4px;bottom:4px;height:7px;border-radius:2px;background:var(--yellow)}
+.app .body{padding:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.sc{border-radius:7px;border:1px solid var(--line);overflow:hidden}
+.sc .im{height:44px}
+.sc .m{padding:6px 7px;font-size:9.5px;color:var(--muted)}
+.pill{display:inline-block;padding:1px 6px;border-radius:999px;font-size:9px;color:#fff}
+.ov{margin-top:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ov .t{padding:8px 10px;display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--muted)}
+.lt{background:#efeae0;color:#1a1a18}.dk{background:#141414;color:#ece7dc}
+.lt .sc,.lt .app,.lt .ov{border-color:rgb(26 26 24/.14)}
+.dk .sc,.dk .ov{border-color:rgb(236 231 220/.14)}
+.next{counter-reset:s;list-style:none;padding:0;margin:14px 0 0}
+.next li{counter-increment:s;position:relative;padding-left:30px;margin-bottom:9px;font-size:13.5px;color:var(--ink)}
+.next li::before{content:counter(s);position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:999px;background:var(--blue);color:#fff;font-size:11px;display:grid;place-items:center;font-weight:600}
+.trend{display:grid;grid-template-columns:200px 1fr;gap:14px;padding:11px 0;border-top:1px solid var(--line);font-size:13px}
+.trend b{font-weight:600}
+.trend span{color:var(--muted)}
+@media(max-width:760px){.mock,.trend{grid-template-columns:1fr}.w{padding:32px 16px 64px}}
+</style>
+
+<div class="w">
+<h1>Fresh colour &amp; a 2026 direction</h1>
+<p class="lede">Five colour worlds carrying the same capsule mechanism, built from the three
+trend sources. Terracotta is off the table — but the real finding is that swapping one accent
+for another is itself the dated move.</p>
+<div class="meta"><span>1 Aug 2026</span><span>Recraft V4.1 standard</span><span>5 worlds · 10 renders</span><span>No files under <code>apps/</code> touched</span></div>
+
+<hr/>
+
+<section>
+<div class="key">
+<h4>The finding that matters</h4>
+<p class="big">Fixed single-accent palettes are the thing that dates a brand. The move is a
+palette <em>system</em>.</p>
+<p class="lede" style="margin:0">Both branding sources say the same thing independently:
+The Branding Journal calls for <em>"variable colour themes that can shift and evolve"</em>,
+recognisable by <strong>colour mood rather than a strict palette</strong>; Outcrowd calls rigid
+guidelines and one-dimensional systems explicitly dated, in favour of modular constructor
+frameworks. So the answer to "fresh colour" is not a different hex in the <code>--accent</code>
+slot. It is a constant, quiet shell plus contents that shift — which is precisely what the
+loaded-capsule mechanism already wanted.</p>
+</div>
+</section>
+
+<section>
+<h2>What actually applies to Capso</h2>
+<p class="lede">Thirteen-plus trends across the three sources. Most are noise for a screenshot
+tool. These five are load-bearing.</p>
+<div class="trend"><b>Flexible palettes</b><span>Shell constant, contents variable. Solves the colour question and the project-thread question with one decision.</span></div>
+<div class="trend"><b>Imperfect print / analog-digital hybrid</b><span>Grain, misregistration, scanned texture. Thematically exact: a screenshot <em>is</em> a scan of a screen. Also the sharpest break from flat-vector SaaS default.</span></div>
+<div class="trend"><b>Living brand characters</b><span>Marks with calm / active / focused states. <code>capture.tsx:268-275</code> already has four states — loading, suggestion, confirmed, timeout. The hook exists.</span></div>
+<div class="trend"><b>Modular identity systems</b><span>Combinable elements over fixed templates. One capsule per project thread.</span></div>
+<div class="trend"><b>Anti-AI / human touch</b><span>Micro-imperfection and asymmetry as a trust signal. Directly counters the flat-vector look round one produced.</span></div>
+<p style="font-size:12.5px;color:var(--muted);margin-top:16px">Deliberately ignored: neo-brutalism
+and maximalism (wrong for a calm memory tool), gamification, 3D/WebGL, retrofuturism, neumorphism
+(dated on arrival), and every AI-agent trend — those are product strategy, not identity.</p>
+</section>
+
+<hr/>
+
+<section>
+<h2>Five worlds</h2>
+<div class="worlds">
+
+<div class="world">
+  <img src="renders-v3/W1-riso-a.png" alt="Risograph capsule character">
+  <div class="b"><div class="hd"><h3>Riso</h3><span class="tag win">recommended</span></div>
+  <p>Three fluorescent inks on newsprint, with visible grain and misregistration.</p>
+  <ul><li>Hits three trends at once: imperfect print, analog-digital, human touch</li>
+  <li>Warm and genuinely funny without being childish</li>
+  <li>Overprint gives a fourth colour free where inks overlap</li>
+  <li>Risk: fluoro inks are for the brand layer, not the working UI</li></ul></div>
+</div>
+
+<div class="world">
+  <img src="renders-v3/W4-dopamine-b.png" alt="Three saturated capsule characters">
+  <div class="b"><div class="hd"><h3>Dopamine</h3><span class="tag">best system demo</span></div>
+  <p>Saturated shells — violet, lime, cobalt — each with different cargo.</p>
+  <ul><li>Shows the flexible-palette idea most literally: shell varies, mechanism holds</li>
+  <li>Joyful and immediately legible</li>
+  <li>Risk: fully saturated shells fight a calm working surface, and the big cartoon eyes read generic</li></ul></div>
+</div>
+
+<div class="world">
+  <img src="renders-v3/W2-cold-b.png" alt="Dark graphite capsule with glowing contents">
+  <div class="b"><div class="hd"><h3>Cold storage</h3><span class="tag">premium, cold</span></div>
+  <p>Graphite shell, smoked glass, contents glowing cyan and magenta on near-black.</p>
+  <ul><li>The most distinctive and most premium of the five</li>
+  <li>"Archived data" reads instantly</li>
+  <li>Risk: dark-native, so it fights the app's light default — and it is not fun, which was the brief</li></ul></div>
+</div>
+
+<div class="world">
+  <img src="renders-v3/W3-glass-a.png" alt="Translucent glass capsule">
+  <div class="b"><div class="hd"><h3>Glass / specimen</h3><span class="tag">beautiful, not a mark</span></div>
+  <p>Frosted translucent capsule, cards suspended and refracted inside.</p>
+  <ul><li>Nails the sensory/tactile trend — glassy, waxy, almost touchable</li>
+  <li>Risk: it is a 3D render, not a mark. No character, and nothing survives reduction to an icon</li>
+  <li>Keep it for hero imagery, not identity</li></ul></div>
+</div>
+
+<div class="world no">
+  <img src="renders-v3/W5-fluid-b.png" alt="Melting fluid blobs">
+  <div class="b"><div class="hd"><h3>Fluid adaptive</h3><span class="tag">rejected</span></div>
+  <p>Soft-edged melting mark, mid-transformation.</p>
+  <ul><li>The capsule dissolves into an amoeba — the form is gone</li>
+  <li>Leans on gradient mesh, which the Design Brain lists as an anti-slop cliché: "random gradients as an automatic synonym for modern"</li>
+  <li>The one trend I would actively avoid</li></ul></div>
+</div>
+
+</div>
+</section>
+
+<hr/>
+
+<section>
+<div class="key" style="border-color:var(--blue)">
+<h4>Recommendation</h4>
+<p class="big">Riso palette, flexible shell — brand layer loud, working UI quiet.</p>
+<p>Riso wins the brand layer. But nobody can work all day inside fluorescent pink, so the system
+splits: <strong>the inks carry the mascot, onboarding, marketing and the OG card. The app itself
+keeps one ink as its accent and lets captured content supply the rest of the colour.</strong>
+That is the flexible-palette trend applied honestly rather than decoratively.</p>
+
+<h4 style="margin-top:22px">Core palette</h4>
+<div class="sw">
+  <div class="chip"><div class="c" style="background:#efeae0"></div><div class="t"><b>Newsprint</b><span>#efeae0</span></div></div>
+  <div class="chip"><div class="c" style="background:#1f28ae"></div><div class="t"><b>Federal Blue</b><span>#1f28ae</span></div></div>
+  <div class="chip"><div class="c" style="background:#6b7cff"></div><div class="t"><b>Blue, lifted</b><span>#6b7cff</span></div></div>
+  <div class="chip"><div class="c" style="background:#ff48b0"></div><div class="t"><b>Fluoro Pink</b><span>#ff48b0</span></div></div>
+  <div class="chip"><div class="c" style="background:#ffe800"></div><div class="t"><b>Riso Yellow</b><span>#ffe800</span></div></div>
+  <div class="chip"><div class="c" style="background:#8a3a9e"></div><div class="t"><b>Overprint</b><span>#8a3a9e</span></div></div>
+  <div class="chip"><div class="c" style="background:#1a1a18"></div><div class="t"><b>Ink</b><span>#1a1a18</span></div></div>
+</div>
+<p style="font-size:12px;color:var(--muted);margin:0 0 22px">Blue, pink and yellow are true Riso
+ink values. Overprint is what pink and blue actually make where they overlap — a real fourth
+colour you get for free, not an invented one. Newsprint replaces <code>#fafaf8</code>.</p>
+
+<div style="border:1px solid var(--blue);border-radius:12px;padding:18px 20px;background:color-mix(in srgb,var(--blue) 5%,transparent)">
+<h4 style="margin-bottom:8px">Contrast audit — one finding changes the architecture</h4>
+<p style="margin-bottom:12px"><strong>No single blue works in both modes.</strong> Federal Blue
+is superb on newsprint and nearly invisible on dark. Measured, not estimated:</p>
+<div class="scrollx" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+<tr style="color:var(--muted);text-align:left"><th style="padding:6px 8px">Pair</th><th style="padding:6px 8px">Ratio</th><th style="padding:6px 8px">Verdict</th></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Federal Blue on newsprint</td><td style="padding:6px 8px"><code>8.88</code></td><td style="padding:6px 8px">AAA — light-mode accent</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Federal Blue on <code>#141414</code></td><td style="padding:6px 8px"><code>1.73</code></td><td style="padding:6px 8px"><b>fails badly</b> — unusable</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Lifted blue on <code>#141414</code></td><td style="padding:6px 8px"><code>5.22</code></td><td style="padding:6px 8px">AA — dark-mode accent</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">White on Federal Blue</td><td style="padding:6px 8px"><code>10.64</code></td><td style="padding:6px 8px">AAA — button labels safe</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Overprint violet on newsprint</td><td style="padding:6px 8px"><code>5.51</code></td><td style="padding:6px 8px">AA — safe for text</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Pink on newsprint</td><td style="padding:6px 8px"><code>2.57</code></td><td style="padding:6px 8px"><b>fill only</b>, never text</td></tr>
+<tr style="border-top:1px solid var(--line)"><td style="padding:6px 8px">Yellow on newsprint</td><td style="padding:6px 8px"><code>1.04</code></td><td style="padding:6px 8px"><b>decorative only</b></td></tr>
+</table></div>
+<p style="margin:12px 0 0;font-size:12.5px;color:var(--muted)">So the accent has to be
+mode-dependent — <code>#1f28ae</code> light, <code>#6b7cff</code> dark. That is a real change from
+today's architecture, where <code>globals.css:12-20</code> deliberately leaves <code>--accent</code>
+un-overridden in dark because terracotta happens to survive both. Losing that one-line simplicity
+is the actual cost of leaving terracotta, and it is worth naming before you decide.</p>
+</div>
+
+<h4 style="margin-top:26px">In context — the actual UI, both modes</h4>
+<div class="mock">
+  <div class="app lt">
+    <div class="bar"><div class="dot"></div><b style="font-size:12px">Capso</b>
+      <span style="margin-left:auto;color:#6f6a5e">Landing page redesign</span></div>
+    <div class="body">
+      <div class="sc"><div class="im" style="background:#dcd6c8"></div><div class="m">Pricing toggle <span class="pill" style="background:#1f28ae">auto</span></div></div>
+      <div class="sc"><div class="im" style="background:#e6dfd0"></div><div class="m">Hero variant <span class="pill" style="background:#8a3a9e">ask</span></div></div>
+      <div class="sc"><div class="im" style="background:#d6cfc0"></div><div class="m">Nav spacing</div></div>
+    </div>
+    <div class="ov" style="margin:0 12px 12px"><div class="t"><div class="dot" style="width:15px;height:15px;border-radius:5px"></div>Analysing…</div></div>
+  </div>
+
+  <div class="app dk">
+    <div class="bar" style="border-color:rgb(236 231 220/.14)"><div class="dot" style="background:#6b7cff"></div><b style="font-size:12px">Capso</b>
+      <span style="margin-left:auto;color:#918b7e">Inbox</span></div>
+    <div class="body">
+      <div class="sc"><div class="im" style="background:#2a2a27"></div><div class="m">Competitor ad <span class="pill" style="background:#ff48b0;color:#1a1a18">new</span></div></div>
+      <div class="sc"><div class="im" style="background:#242422"></div><div class="m">Onboarding flow</div></div>
+      <div class="sc"><div class="im" style="background:#2e2e2a"></div><div class="m">Type scale <span class="pill" style="background:#6b7cff;color:#141414">auto</span></div></div>
+    </div>
+    <div class="ov" style="margin:0 12px 12px"><div class="t"><div class="dot" style="width:15px;height:15px;border-radius:5px;background:#6b7cff"></div>Saved to Landing page redesign</div></div>
+  </div>
+</div>
+<p style="font-size:12px;color:var(--muted);margin-top:12px">Blue carries confidence states,
+overprint violet carries "needs you", pink carries new/unread. Three signals from one ink set
+— where terracotta could only ever say one thing.</p>
+
+<h4 style="margin-top:26px">Next</h4>
+<ol class="next">
+  <li>Confirm the world before any drawing — Riso, Dopamine or Cold storage. The mark is cheap to redraw; the world is the real decision</li>
+  <li>Generate the mascot properly in the chosen world: poses, the four capture states, and the per-project shell variants</li>
+  <li>Accept the mode-dependent accent, or reject the whole palette on that basis — it is the one structural cost of leaving terracotta</li>
+  <li>Decide how far the grain travels — brand layer only, or a subtle paper texture in the app itself</li>
+  <li>Then redraw and rebuild the icon set; <code>build_icons.py</code> still works unchanged from one SVG</li>
+</ol>
+</div>
+</section>
+
+<hr/>
+<section>
+<h4>Sources</h4>
+<p style="font-size:12.5px;color:var(--muted);margin:0">The Branding Journal, <em>Top branding
+&amp; design trends 2026</em> · Outcrowd, <em>Branding 2026: fundamental changes</em> · Figma
+Resource Library, <em>Web design trends</em>. All three retrieved in full. Palette hexes sampled
+directly from the renders, then snapped to true Riso ink values.</p>
+</section>
+</div>

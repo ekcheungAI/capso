@@ -13,6 +13,7 @@
 A ProjectThread is one row (`project_threads`) owning:
 
 - `name`, `one_line_description` (used verbatim in the classifier's candidate list — see `06_FEATURE_SPEC_AI_MEMORY.md` §8; keep descriptions honest, they do real work)
+  - **Shipped 2026-08-01** (`Thread.description` in `apps/web/lib/store/types.ts`). `/api/classify` now renders candidates as `- "Name": description` and the system prompt instructs the model to decide on the description, not the name alone. Descriptions arrive pre-written from the first-run starter kits (03 §starter kits) and are surfaced as the sidebar row tooltip and the library shelf subtitle, so what the model reads is what the user reads. A thread created by hand still starts with an empty description — bare names remain valid input.
 - `centroid_embedding` (pgvector) — running mean of member-capture embeddings, recomputed on attach/detach (cheap at this scale: full recompute, no incremental math needed)
 - `system_summary` — a rolling 3–6 sentence AI-maintained summary of what this thread is about, regenerated (Haiku-class) when the thread gains 10 new captures or on manual "refresh summary" (idea: also on rename)
 - `status`: `active | archived`

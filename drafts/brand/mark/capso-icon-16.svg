@@ -1,0 +1,33 @@
+<!--
+  Capso — pixel-hinted 16px master (favicon / extension toolbar)
+
+  A downscale of the full mark cannot work at this size: a 1.65-unit circular eye
+  lands on ~1.5 device pixels and antialiases into a smudge. So this size is drawn
+  on its own 16-unit grid, where every edge falls on a whole pixel.
+
+    plate    0,0 16x16 rx3.5    — full bleed, no wasted pixels
+    capsule  x3.5 y2.5 9x11 rx4 — half-pixel x keeps the 9-wide body centred on 16
+    seam     y8, 1 unit tall    — exactly 1 device pixel
+    eyes     2x2 SQUARES        — squares, not circles. At 2px a circle is mush;
+                                  a square lands crisp. Nobody can tell at 16px.
+
+  This is the only file in the set whose geometry deliberately differs from
+  capso-silhouette.svg. Everything 32px and above derives from that one.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     role="img" aria-label="Capso">
+  <rect x="0" y="0" width="16" height="16" rx="3.5" fill="#e8683a"/>
+
+  <!-- Body halves let their curves antialias; only the seam and eyes are hinted.
+       shape-rendering="crispEdges" was tried here and is wrong — it quantises the
+       arcs and visibly deforms the lower half. -->
+  <g fill="#fafaf8">
+    <path d="M3.5 7.5 v-1 a4 4 0 0 1 4-4 h1 a4 4 0 0 1 4 4 v1 z"/>
+    <path d="M3.5 8.5 h9 v1.5 a3.5 3.5 0 0 1 -3.5 3.5 h-2 a3.5 3.5 0 0 1 -3.5 -3.5 z"/>
+  </g>
+
+  <g fill="#e8683a" shape-rendering="crispEdges">
+    <rect x="5" y="5" width="2" height="2"/>
+    <rect x="9" y="5" width="2" height="2"/>
+  </g>
+</svg>

@@ -81,8 +81,17 @@ Indexes: `(user_id)`, partial unique `(user_id) WHERE is_inbox`.
 | embedding | vector(1536) NULL | W2 output |
 | captured_at | timestamptz NOT NULL | client capture time |
 | created_at / deleted_at? | timestamptz | **no soft delete** — delete is hard (below) |
+| page_url / page_title | text | Browser captures only. The extension always sent these; nothing read them until loop 12 |
+| tags | text[] NOT NULL DEFAULT '{}' | W1 output — model-proposed entity tags |
+| user_tags | text[] NOT NULL DEFAULT '{}' | Owner-typed. **Never merged with `tags`** — removing a model tag is a correction, removing your own is an edit |
+| ocr_source | ocr_source enum | `llm \| tesseract \| apple_vision` (06 §2) |
+| ocr_langs | text[] | Detected languages; picks the analyzer |
+| content_hash | text | Exact-duplicate detection at ingest |
+| search_text | text NOT NULL DEFAULT '' | Pre-segmented searchable text — see the tsvector note below |
 
-Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`; GIN on `search_tsv`; **HNSW** on `embedding` (`vector_cosine_ops`) — HNSW over ivfflat: no training step, fine at MVP row counts, better recall; `(user_id, processing_status)` partial WHERE status <> 'processed' (worker + badge queries).
+Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`; GIN on `search_tsv`; GIN on `tags` and `user_tags`; **HNSW** on `embedding` (`vector_cosine_ops`) — HNSW over ivfflat: no training step, fine at MVP row counts, better recall; `(user_id, processing_status)` partial WHERE status <> 'processed' (worker + badge queries); `(user_id, content_hash)` partial WHERE not null.
+
+**Amendment (loop 12) — `search_tsv` config.** The row above specifies `to_tsvector('english', ocr_text || summary)`. That is wrong for this corpus: the `english` config treats a run of Han characters as one token, so `定價` never matches a document containing `定價頁面`, and hosted Supabase does not offer `zhparser`. Shipped instead: the client segments text with `Intl.Segmenter` (`apps/web/lib/retrieve.ts`) and writes the space-joined result to `search_text`; the generated column is `to_tsvector('simple', search_text)`. English loses stemming, which the raw text carried alongside restores adequately at personal corpus size. Revisit if English recall measurably suffers.
 
 ### capture_events
 Append-only audit of the capture lifecycle (funnel analytics + undo trail).
