@@ -54,16 +54,20 @@ The meta-outcome: **externalized memory**. The user executes instead of remember
 
 ## Positioning statement
 
-**For** solo founders, marketers, and product builders who screenshot constantly as their fastest form of note-taking, **who** lose those screenshots to unnamed files and flat galleries the moment they're captured, **Capso is** a screenshot-first AI memory tool that captures like a pro tool and then OCRs, classifies, and files every shot into project threads you can search in plain language and chat with, **unlike** CleanShot X (excellent capture, zero intelligence, no memory), mymind (beautiful bookmarking brain, but not screenshot-native, no project threads, no capture tooling, no chat-about-this-image), and ShotSnap-style auto-filers (auto-tagging into a flat gallery is organization theater — tags without retrieval-by-meaning and without conversation are still a junk drawer).
+**For** solo founders, marketers, and product builders who screenshot constantly as their fastest form of note-taking, **who** lose those screenshots to unnamed files and flat galleries the moment they're captured, **Capso is** a screenshot-first AI memory tool that captures like a pro tool and then OCRs, classifies, and files every shot into project threads you can search in plain language and chat with, **unlike** CleanShot X (excellent capture and on-device OCR, but no search over what you captured and no memory), mymind (beautiful bookmarking brain with real AI tagging and resurfacing, but not screenshot-native, no project threads, no capture tooling, no chat-about-this-image), ShotSnap-style auto-filers (auto-tagging into a flat gallery is organization theater — tags without retrieval-by-meaning and without conversation are still a junk drawer), and Apple's own Visual Intelligence (answers about one screenshot, then forgets it — no projects, no trail, no learning).
 
 ### Competitive one-liner table
 
+*Corrected 2026-08-01 against vendor sources — three of four rows previously overstated Capso's advantage. Full teardown, citations and category scan: [25_MARKET_AND_COMPETITIVE_RESEARCH.md](25_MARKET_AND_COMPETITIVE_RESEARCH.md). Re-verify before any public positioning; these facts perish.*
+
 | Competitor | What they do well | What they don't do | Capso's wedge |
 |---|---|---|---|
-| CleanShot X | Best-in-class capture UX, annotation, scrolling capture | No OCR search, no AI, no organization, no memory | Match daily-driver capture, add the entire memory layer |
-| mymind | Calm design, no-folders saving, visual search | Not screenshot-native, no Mac capture bar, no project context, no AI chat about saved items | Screenshot-first, project threads, conversational retrieval |
-| ShotSnap-style auto-filers | Auto-tags screenshots | Flat gallery; tags ≠ meaning; no chat; no project routing; no learning from corrections | Confirm-on-overlay routing + semantic search + thread chat + learning loop |
-| Apple Screenshots + Spotlight | Free, built-in OCR (Live Text) | No classification, no projects, no chat, retrieval limited to literal text | Meaning-based retrieval and project memory, not just text match |
+| CleanShot X | Best-in-class capture UX, annotation, scrolling capture, on-device OCR (extract-to-clipboard), Cloud share links, capture history, **manual tagging** | **No search over past captures**; no AI classification, no routing, no memory, no conversation | OCR that *indexes for retrieval* rather than extracts to clipboard; a corpus you can query, not a history you scroll |
+| mymind | Calm design, no-folders saving, visual search, AI image tagging, image text recognition, Smart Spaces auto-grouping, Serendipity resurfacing (all from $7.99/mo; no free tier) | Not screenshot-native, no Mac capture bar, no project context, no AI chat about saved items | Screenshot-first, project threads, conversational retrieval |
+| ShotSnap-style auto-filers | Auto-tags screenshots. A real and growing category (ShotSnap, Pizazoo, SnapStash, ScreenDrafter, Sorti, Filex AI) — two of them compete on on-device privacy | Flat smart-folders; tags ≠ meaning; no chat; no project routing; no learning from corrections | Confirm-on-overlay routing + semantic search + thread chat + learning loop. Note: "organization theater" is an argument, not a moat |
+| Apple Screenshots + Spotlight + **Visual Intelligence** | Free, on-device, OS-integrated. Spotlight indexes text inside screenshots; Visual Intelligence does Highlight to Search, Ask (via ChatGPT), and Add to Calendar from a detected date | Operates on **one screenshot at a time and forgets it**: no projects, no cross-capture synthesis, no longitudinal trail, no learning from corrections | The corpus, not the moment (see below) |
+
+**The strategic line that follows from this table: Apple owns the single-screenshot moment; Capso must own the accumulated corpus.** Working test for every roadmap item — *"would Apple's per-screenshot Visual Intelligence already do this?"* If yes, don't build it.
 
 ## Non-goals
 

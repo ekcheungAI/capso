@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { intent as BRAND_INTENT } from "@capso/shared/tokens";
 import { placeholder, type Intent, type Screenshot } from "@/lib/store";
+import { allTags } from "@/lib/tags";
 
 // Defined in lib/intent.ts so the retriever can use them without pulling in a
 // React module; re-exported here because every UI call site imports them from ui.
@@ -114,6 +115,8 @@ export function ScreenshotCard({
   onSelect,
   selectedIds,
   suggestion,
+  onTagClick,
+  activeTag,
 }: {
   s: Screenshot;
   note?: string;
@@ -126,6 +129,9 @@ export function ScreenshotCard({
    * cost a trip to another screen.
    */
   suggestion?: { label: string; onConfirm: () => void };
+  /** Makes the card's tags a way to navigate rather than a label to read. */
+  onTagClick?: (tag: string) => void;
+  activeTag?: string;
 }) {
   const processing = s.status === "processing";
   /**
@@ -136,6 +142,18 @@ export function ScreenshotCard({
    * (the library shelves) it is the moment the capture becomes yours.
    */
   const [seating, setSeating] = useState(false);
+  /**
+   * Plays the arrival once, and only for a capture that genuinely just landed.
+   *
+   * Decided on the capture's own age rather than on mount, because every card
+   * mounts on every page load — keying off mount would animate the entire grid
+   * every time you opened the app, which is the opposite of calm. Eight seconds
+   * covers the ingest-to-render path with room for a slow classify, and the
+   * initial state is computed once so a re-render cannot replay it.
+   */
+  const [arriving] = useState(
+    () => Date.now() - new Date(s.capturedAt).getTime() < 8_000,
+  );
 
   return (
     <div
@@ -166,7 +184,7 @@ export function ScreenshotCard({
               // has to be visible at grid scale, not only on the card you hover.
               "ring-1 ring-accent/35 ring-dashed hover:ring-accent/70"
             : "ring-1 ring-line hover:ring-accent/60"
-      } ${seating ? "capso-seat capso-crimp" : ""}`}
+      } ${seating ? "capso-seat capso-crimp" : ""} ${arriving ? "capso-arrive" : ""}`}
     >
       {onSelect && !processing && (
         <button
@@ -234,8 +252,30 @@ export function ScreenshotCard({
         </div>
       </Link>
 
-      {/* Outside the Link on purpose — a button inside an anchor is invalid and
-          swallows the click. */}
+      {/* Outside the Link, like the confirm row below and for the same reason:
+          a button inside an anchor is invalid and swallows the click. Revealed
+          on hover or focus so the resting card stays just the screenshot. */}
+      {onTagClick && !processing && allTags(s).length > 0 && (
+        <div className="hidden flex-wrap gap-1 px-1 pt-1 group-focus-within:flex group-hover:flex">
+          {allTags(s)
+            .slice(0, 4)
+            .map((t) => (
+              <button
+                key={t}
+                onClick={() => onTagClick(t)}
+                title={`Show everything tagged “${t}”`}
+                className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                  t === activeTag
+                    ? "border-accent bg-accent text-accent-ink"
+                    : "border-line text-muted hover:border-accent hover:text-accent"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+        </div>
+      )}
+
       {suggestion && !processing && (
         <div className="flex items-center gap-1.5 px-1 pt-1 pb-0.5">
           <button
@@ -268,12 +308,16 @@ export function Masonry({
   selected,
   onSelect,
   suggestionFor,
+  onTagClick,
+  activeTag,
 }: {
   items: Screenshot[];
   noteFor?: (s: Screenshot) => string;
   selected?: Set<string>;
   onSelect?: (id: string) => void;
   suggestionFor?: (s: Screenshot) => { label: string; onConfirm: () => void } | undefined;
+  onTagClick?: (tag: string) => void;
+  activeTag?: string;
 }) {
   return (
     <div className="columns-2 gap-4 lg:columns-3 xl:columns-4">
@@ -286,6 +330,8 @@ export function Masonry({
           onSelect={onSelect}
           selectedIds={selected ? [...selected] : undefined}
           suggestion={suggestionFor?.(s)}
+          onTagClick={onTagClick}
+          activeTag={activeTag}
         />
       ))}
     </div>

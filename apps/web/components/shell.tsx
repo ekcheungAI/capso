@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CapsoMark, CapsoMarkDefs, fillFor } from "@/components/mark.generated";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store/provider";
@@ -94,13 +95,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   if (ready && needsSetup && pathname !== "/extension")
     return (
       <div className="min-h-screen px-6">
-        <p className="py-4 text-sm font-semibold tracking-tight">Capso</p>
+        <CapsoMarkDefs />
+        <p className="flex items-center gap-2 py-4 text-sm font-semibold tracking-tight">
+          <CapsoMark size={17} />
+          Capso
+        </p>
         <FirstRun />
       </div>
     );
 
   return (
     <div className="flex min-h-screen">
+      <CapsoMarkDefs />
       {/* Below md the sidebar was `hidden` with nothing replacing it, so Inbox,
           Search, Memory, every project and "+ New project" were unreachable on a
           phone. Shown as a drawer rather than duplicated into a bottom bar: one
@@ -117,11 +123,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           nav ? "fixed inset-y-0 left-0 z-40 overflow-y-auto bg-background" : "hidden"
         } w-56 shrink-0 border-r border-line px-3 py-4 md:static md:block md:overflow-visible`}
       >
+        {/* The mark was drawn, shipped to every icon surface, and never once
+            appeared in the product itself. It is the only thing on screen at
+            all times, so it is the cheapest possible carrier of the brand. */}
         <Link
           href="/"
           onClick={dismissNav}
-          className="mb-6 block px-2 text-sm font-semibold tracking-tight"
+          className="mb-6 flex items-center gap-2 px-2 text-sm font-semibold tracking-tight"
         >
+          <CapsoMark size={17} />
           Capso
         </Link>
 
@@ -157,6 +167,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 label={t.name}
                 badge={byThread(t.id).length}
                 title={t.description || undefined}
+                fill={fillFor(byThread(t.id).length)}
               />
             </DropZone>
           ))}
@@ -260,24 +271,35 @@ function Row({
   label,
   badge,
   title,
+  fill,
 }: {
   href: string;
   label: string;
   badge?: number;
   title?: string;
+  /**
+   * Present only on project rows. An open ring is a slot waiting; a part face
+   * is a shelf with something on it. This is what turns the sidebar from a list
+   * with four zeroes into a rack — and it makes emptiness legible rather than
+   * flat, which was most of why the app read as dull.
+   */
+  fill?: "empty" | "some" | "full";
 }) {
   return (
     <Link
       href={href}
-      className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-surface"
+      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface"
     >
+      {fill && <CapsoMark size={15} fill={fill} className="opacity-80" />}
       {/* `title` sits on the label, not the link: on the anchor it would replace
           the accessible name, so the row would announce its description instead
           of the project it goes to. */}
       <span className="truncate" title={title}>
         {label}
       </span>
-      {badge !== undefined && <span className="text-[11px] text-muted">{badge}</span>}
+      {badge !== undefined && (
+        <span className="ml-auto text-[11px] text-muted tabular-nums">{badge}</span>
+      )}
     </Link>
   );
 }

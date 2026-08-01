@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
 import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
+import { tagVocabulary } from "@/lib/tags";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
 
 /**
@@ -93,6 +94,7 @@ export function CaptureLayer() {
         threads,
         fewShotLines(corrections, screenshots, threads),
         { pageUrl: context.pageUrl, pageTitle: context.pageTitle },
+        tagVocabulary(screenshots),
       );
       const band = routeConfidence(result.confidence);
 

@@ -134,6 +134,34 @@ body {
   animation: capso-seat var(--dur-panel) var(--ease-out-strong);
 }
 
+/* A capture arriving in the grid.
+
+   The seat above fires on Confirm, which happens once per suggestion. This is
+   the same idea on the action that happens every single time the product is
+   used, which is where the feeling actually has to live.
+
+   It lands rather than appears: down and slightly across, corners softening
+   toward the lid as it settles, and a hard stop. Same rule as the seat — no
+   overshoot, because the material does not bounce. */
+@keyframes capso-arrive {
+  0% {
+    opacity: 0;
+    transform: translate3d(-10px, -18px, 0) scale(0.94);
+    border-radius: 20px;
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    border-radius: var(--radius-card);
+  }
+}
+.capso-arrive {
+  animation: capso-arrive var(--dur-panel) var(--ease-out-strong);
+}
+
 /* The crimp — the seal. The card's edge acknowledges once and settles. One
    tighten, no rebound, and it fades out rather than snapping off so the eye
    is not pulled back to a card it has finished with. */

@@ -7,6 +7,7 @@ import { getImage } from "@/lib/store";
 import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
+import { tagVocabulary } from "@/lib/tags";
 
 /**
  * Inbox triage — keyboard-first per 07: j/k navigate, ⏎ accepts the suggestion,
@@ -169,6 +170,7 @@ export default function InboxPage() {
                       // Re-read with the same page context the capture arrived
                       // with, or the second guess is worse-informed than the first.
                       { pageUrl: s.pageUrl, pageTitle: s.pageTitle },
+                      tagVocabulary(screenshots),
                     );
                     // A patch, so a re-read cannot clobber edits made while it
                     // ran — and so `status` actually moves. Without it, a

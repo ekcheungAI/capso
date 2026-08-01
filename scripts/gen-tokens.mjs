@@ -46,8 +46,104 @@ const css = (from) =>
   vars("dark").replace(/^ {2}/gm, "    ") +
   `\n  }\n}\n`;
 
+/**
+ * The mark, as a React component.
+ *
+ * Generated from the same SVG the icon builders read, for the same reason the
+ * colours are generated: a hand-copied `<path d="...">` in a .tsx is the exact
+ * drift the rest of this script exists to prevent.
+ *
+ * The notch is a mask, and a mask needs an id. Rather than mint one per
+ * instance (which would force a client component for `useId`), the three fill
+ * states are defined once as `<symbol>`s and every instance is a `<use>`. One
+ * definition, valid ids, and the fill state stays declarative.
+ *
+ * Fill is quantised to three steps, not continuous: at a 15px glyph a linear
+ * map puts one-of-eight at r0.75, under a device pixel, so "has something in
+ * it" renders identically to "empty" — the most important distinction in the
+ * control. The exact count is already on the row.
+ */
+function markComponent(src) {
+  const svg = readFileSync(join(ROOT, "drafts/brand/mark/capso-lid.svg"), "utf8");
+  const rim = svg.match(/d="(M12 1\.6[^"]+)"/s);
+  if (!rim) throw new Error("capso-lid.svg: rim path not found — did the mark change shape?");
+  const d = rim[1].replace(/\s+/g, " ").trim();
+  const notch = svg.match(/<rect x="12" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/);
+  if (!notch) throw new Error("capso-lid.svg: notch rect not found");
+  const [, ny, nw, nh] = notch;
+
+  const symbol = (name, r) => `      <symbol id="capso-lid-${name}" viewBox="0 0 24 24">
+        <g fill="currentColor" fillRule="evenodd" mask="url(#capso-notch-def)">
+          <path d="${d}" />${r ? `\n          <circle cx="12" cy="12" r="${r}" />` : ""}
+        </g>
+      </symbol>`;
+
+  return `${BANNER(src)}
+type Fill = "empty" | "some" | "full";
+
+/**
+ * Renders once, near the root. Every <CapsoMark> is a <use> of one of these.
+ */
+export function CapsoMarkDefs() {
+  return (
+    <svg width="0" height="0" aria-hidden="true" style={{ position: "absolute" }}>
+      <defs>
+        <mask id="capso-notch-def">
+          <rect width="24" height="24" fill="#fff" />
+          <rect x="12" y="${ny}" width="${nw}" height="${nh}" fill="#000" />
+        </mask>
+${symbol("empty", 0)}
+${symbol("some", 3)}
+${symbol("full", 6)}
+      </defs>
+    </svg>
+  );
+}
+
+/**
+ * \`fill\` is the provenance-free half of the brand: an open ring is a slot
+ * waiting, a part face is a shelf with something on it, a full face is one that
+ * is filling up. Pass a \`label\` to make it announced; without one it is
+ * decorative and hidden from assistive tech.
+ */
+export function CapsoMark({
+  size = 16,
+  fill = "full",
+  className = "",
+  label,
+}: {
+  size?: number;
+  fill?: Fill;
+  className?: string;
+  label?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      className={className}
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      style={{ display: "block", flex: "none" }}
+    >
+      <use href={\`#capso-lid-\${fill}\`} />
+    </svg>
+  );
+}
+
+/** Counts to fill states. Kept here so every surface bands them identically. */
+export function fillFor(count: number): Fill {
+  if (count <= 0) return "empty";
+  return count < 5 ? "some" : "full";
+}
+`;
+}
+
 /** Files this script owns. Anything here is overwritten without asking. */
 const TARGETS = [
+  ["apps/web/components/mark.generated.tsx",
+    () => markComponent("drafts/brand/mark/capso-lid.svg")],
   ["apps/web/app/tokens.generated.css", (rel) => css(rel)],
   ["apps/extension/tokens.generated.css", (rel) => css(rel)],
   ["apps/mac/src/tokens.generated.css", (rel) => css(rel)],
@@ -74,6 +170,7 @@ const HEX_ALLOWED = new Set([
   "apps/extension/tokens.generated.css",
   "apps/mac/src/tokens.generated.css",
   "drafts/brand/tokens.generated.json",
+  "apps/web/components/mark.generated.tsx",
 ]);
 
 const SCAN_DIRS = ["apps/web/app", "apps/web/components", "apps/web/lib",

@@ -121,6 +121,11 @@ export async function classify(
   threads: Thread[],
   corrections: string[] = [],
   context: CaptureContext = {},
+  /**
+   * Tags the library already uses. Without this the model coins a near-synonym
+   * per capture and the tag axis fragments into facets of one — see lib/tags.ts.
+   */
+  vocabulary: string[] = [],
 ): Promise<Classification> {
   // A hung connection used to park the row at `status: "processing"` forever,
   // with no recovery except deleting the capture.
@@ -137,6 +142,7 @@ export async function classify(
         // tells the model nothing, the line under it tells it everything.
         projects: threads.map((t) => ({ name: t.name, description: t.description })),
         corrections,
+        vocabulary,
         pageUrl: context.pageUrl ?? null,
         pageTitle: context.pageTitle ?? null,
       }),
@@ -266,7 +272,10 @@ function normaliseTags(tags: string[] | undefined): string[] {
     const clean = t.trim().toLowerCase().replace(/^#/, "").slice(0, 40);
     if (clean) seen.add(clean);
   }
-  return [...seen].slice(0, 8);
+  // Eight was right when tags were decoration on the detail page. They are the
+  // navigation axis now, and a capture that earns a subject, a surface and a
+  // brand tag should not lose the fourth angle to a cap set for a sidebar list.
+  return [...seen].slice(0, 12);
 }
 
 /**

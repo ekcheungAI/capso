@@ -58,7 +58,18 @@ Tag rules:
 - Concrete nouns only. "checkout form" is a tag; "useful", "interesting", "design" are not.
 - Never repeat the intent or type values as tags — those are separate fields.
 - If a page URL is supplied, its domain is usually worth one tag.
-- Fewer good tags beat more vague ones. Return [] rather than padding.`;
+- Fewer good tags beat more vague ones. Return [] rather than padding.
+- Cover more than one angle when the screenshot supports it: what it is about,
+  what kind of surface it is, and whose product it is are three different tags.
+
+Reusing the user's vocabulary — this matters more than picking the perfect word:
+- A list of tags this user's library already uses may be supplied. If one of them
+  means what you mean, use it VERBATIM. Do not coin a near-synonym.
+- "pricing", "pricing page" and "pricing table" as three tags for three captures
+  of the same thing makes every one of them useless for finding anything, because
+  each ends up holding a single capture.
+- Only invent a tag when nothing in the list fits. A genuinely new subject
+  deserves a new tag; a new phrasing of an existing subject does not.`;
 
 export async function POST(req: Request) {
   // Same-origin only. This route has no CORS headers, so a cross-origin call
@@ -79,6 +90,7 @@ export async function POST(req: Request) {
     imageDataUrl?: string;
     projects?: (string | { name?: string; description?: string })[];
     corrections?: string[];
+    vocabulary?: string[];
     pageUrl?: string | null;
     pageTitle?: string | null;
   };
@@ -126,9 +138,20 @@ export async function POST(req: Request) {
         .join("\n")
     : "";
 
+  // Capped and sanitised rather than trusted: this is library-derived text going
+  // into a prompt, and a tag is user-editable.
+  const vocabulary = (body.vocabulary ?? [])
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().replace(/\s+/g, " ").slice(0, 40))
+    .filter(Boolean)
+    .slice(0, 60);
+
   const prompt = [
     `Candidate projects:\n${candidates}`,
     shots.length ? `\nHow this user has filed things before:\n${shots.join("\n")}` : "",
+    vocabulary.length
+      ? `\nTags this library already uses — reuse one verbatim when it fits:\n${vocabulary.join(", ")}`
+      : "",
     context,
     "\nClassify the screenshot.",
   ].join("\n");

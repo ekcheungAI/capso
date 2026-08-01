@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { useMoveCaptures } from "@/lib/move";
 import { resurface } from "@/lib/resurface";
+import { allTags, tagCounts } from "@/lib/tags";
 import type { Intent, Screenshot, Thread } from "@/lib/store";
 import {
   DropZone,
@@ -62,6 +63,14 @@ export default function LibraryPage() {
   const [grouping, setGrouping] = useState<Grouping>("gallery");
   const [intent, setIntent] = useState<Intent | "all">("all");
   const [project, setProject] = useState<string>("all");
+  /**
+   * A fourth filter, against the tripwire in 15 §reference board — which says
+   * add one only when a real query fails without it. This is that case: a
+   * capture belongs to exactly one project but is about several things, and
+   * "the pricing screens, whichever project they landed in" had no way to be
+   * asked. Tags were computed on every capture and navigable from nowhere.
+   */
+  const [tag, setTag] = useState<string>("all");
   // `since` is stamped when the user picks a range — Date.now() must not run during render.
   const [range, setRange] = useState<{ kind: DateRange; since: number }>({ kind: "all", since: 0 });
 
@@ -84,10 +93,14 @@ export default function LibraryPage() {
           !s.archived &&
           (intent === "all" || s.intent === intent) &&
           (project === "all" || shelfOf(s) === project) &&
+          (tag === "all" || allTags(s).includes(tag)) &&
           (range.kind === "all" || new Date(s.capturedAt).getTime() >= range.since),
       ),
-    [screenshots, intent, project, range],
+    [screenshots, intent, project, tag, range],
   );
+
+  /** Every tag in the library, most-used first — the filter's options. */
+  const tags = useMemo(() => tagCounts(screenshots), [screenshots]);
 
   /** Captures with no home and no guess — otherwise invisible everywhere. */
   const unsorted = useMemo(() => results.filter((s) => shelfOf(s) === null), [results]);
@@ -112,7 +125,8 @@ export default function LibraryPage() {
       );
   }, [threads, project]);
 
-  const filtering = intent !== "all" || project !== "all" || range.kind !== "all";
+  const filtering =
+    intent !== "all" || project !== "all" || tag !== "all" || range.kind !== "all";
 
   /**
    * The second clause of the brand promise: the rack holds everything, Capso
@@ -157,6 +171,7 @@ export default function LibraryPage() {
   const resetFilters = () => {
     setIntent("all");
     setProject("all");
+    setTag("all");
     setRange({ kind: "all", since: 0 });
   };
 
@@ -231,6 +246,17 @@ export default function LibraryPage() {
             </option>
           ))}
         </Select>
+
+        {tags.length > 0 && (
+          <Select value={tag} onChange={setTag}>
+            <option value="all">Any tag</option>
+            {tags.map(([t, n]) => (
+              <option key={t} value={t}>
+                {t} ({n})
+              </option>
+            ))}
+          </Select>
+        )}
 
         <Select
           value={range.kind}
@@ -308,6 +334,8 @@ export default function LibraryPage() {
             selected={selected}
             onSelect={toggle}
             suggestionFor={suggestionFor}
+            onTagClick={(t) => withTransition(() => setTag(t === tag ? "all" : t))}
+            activeTag={tag === "all" ? undefined : tag}
           />
         )
       ) : grouping === "project" ? (

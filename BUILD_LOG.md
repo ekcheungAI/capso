@@ -487,3 +487,29 @@ Reported as "the extension doesn't seem to do anything", with the popup still re
 **Verified what can be verified without a browser:** the deployed `/api/ingest` accepts a POST carrying `Origin: chrome-extension://…` (200, `{"queued":1}`), refuses the same POST from `https://evil.example` (403 — the CORS hole from loop 18 stays closed), and returns the item to a same-origin poll carrying `x-capso-poll`. The probe was acked afterwards so it did not land in the library. So the server half of the extension path is correct on production; everything remaining is on the Chrome side.
 
 **Unchanged and still the likeliest cause of a capture vanishing:** the queue is a module-scope array on serverless, and captures are only ever collected by an open Capso tab. Capturing with every Capso tab closed puts the image somewhere nothing will read it.
+
+## Loop 23 — The library opens as a gallery
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done
+
+**Reverses the loop-12a default of project shelves,** recorded rather than quietly flipped. Shelves are the right way to show that filing happened, but they answer a question you only have once the library is full, and they pay for it by splitting the collection into rows that are mostly empty and mostly below the fold. Reported from a real library with a starter kit and no captures yet: five headings all reading "Nothing here yet", which is five statements of absence where one belongs, and a front page showing its filing cabinet instead of the screenshots — the inverse of principle 5. `Gallery` is now the first grouping and the default: everything that survives the filters, newest first, undivided. Projects / Months / Intent are unchanged and one click away.
+
+The zero-capture case now renders one empty state instead of N empty shelves, and it points at `/extension` rather than restating the drop hint.
+
+**Diagnosing a capture that never arrived, in passing:** both ingest queues — production and the dev server on :3000 that the extension still defaults to — were empty, and no `source: "extension"` row exists in any library. So the capture failed inside Chrome before the fetch, which is precisely the silent path loop 22 fixed and which the reporting build predates.
+
+**A hazard worth naming, because it was self-inflicted.** The queue is drain-once, so *any* open Capso tab collects captures into *its own* IndexedDB — including a verification tab opened by an agent against the same deployment. Two were open during this session. Nothing was actually taken (the only row in that library was a synthetic capture made locally, `source: "hotkey_region"`), but it could have been, and a user running Capso in two browsers would hit the same thing with no explanation. Another consequence of the module-scope queue that the store migration removes.
+
+## Loop 24 — Tags become an axis, and the classifier stops reinventing them
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done
+
+Owner observation: projects are not always the right shape, and categorisation should cost as close to nothing as possible. Correct, and the schema already agreed — `tags` and `userTags` are on every row, `userTags` is weighted 4 in `retrieve()` (tied with title for the strongest signal there is), the classifier emits tags on every capture, and none of it was navigable from anywhere but the detail page.
+
+**The distinction that makes this worth doing.** A project is a *destination*: one per capture, mutually exclusive, must exist before anything can go in it. That exclusivity is what creates a filing decision, and the decision is what creates the Inbox and Review backlog. A tag is a *facet*: many per capture, nothing displaced by adding one, so being wrong costs nothing and there is no queue. The friction is exclusivity, not categorisation.
+
+**Vocabulary reuse, which is the whole reason this can work.** Left alone the model writes "pricing", "pricing page" and "pricing table" for three captures of the same thing, and a filter over that is worse than no filter — every facet holds one item and none is the one you want. `lib/tags.ts` derives the library's existing vocabulary (excluding singletons — a tag seen once is not vocabulary, and offering it back would cement whatever the model said first), and it now travels with every classify call, sanitised and capped at 60, with a prompt rule to reuse verbatim and only coin a tag for a genuinely new subject. Same mechanism the correction ledger already applies to projects (06 §6), applied to the axis that had none.
+
+Verified with a real capture against the live model: five tags, including **繁體中文** reused verbatim from an existing row rather than coined as "traditional chinese". The tag cap rose 8 → 12, since eight was set when tags were decoration on a detail page rather than the way you navigate.
+
+**A fourth filter, against the tripwire in 15 §reference board** — which permits one when a real query fails without it. This is that case: a capture belongs to exactly one project but is about several things, and "the pricing screens, whichever project they landed in" could not be asked. Tags are now a filter, and the chips on each card are buttons that set it — rendered outside the card's `<Link>` for the same reason the confirm row is, and revealed on hover or focus so the resting card stays just the screenshot.
+
+**Not done and worth naming:** tags are still absent from the sidebar, so there is no way to *browse* the vocabulary without opening the filter, and existing captures keep whatever tags they were given before the vocabulary existed — a reconciliation pass over the back catalogue is the obvious follow-up and is not in this loop.
