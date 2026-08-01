@@ -16,8 +16,14 @@ apps/mac/src-tauri/target/
 apps/web/public/capso-extension.zip
 apps/web/public/extension-version.json
 
+# generated brand renders — images stay out of git
+drafts/brand/renders/
+drafts/brand/renders-v2/
+drafts/brand/renders-v3/
+
 # tooling
 .DS_Store
 *.log
 .vercel/
 coverage/
+.vercel

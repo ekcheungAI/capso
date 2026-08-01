@@ -1,0 +1,12 @@
+# The Tauri shell stays a workspace member (pnpm --frozen-lockfile needs its
+# package.json) but its Rust build output is 2.4 GB and never reaches the web
+# build. Everything else here is docs or tooling the Next.js build never reads.
+apps/mac/src-tauri/target
+apps/mac/dist
+apps/extension
+drafts
+supabase
+prompts
+specs
+scripts
+*.md
