@@ -1,0 +1,16 @@
+{
+  "name": "@capso/extension",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "description": "MV3 extension. Shipped as a plain zip — no bundler, which is why the capture spec is mirrored in by `pnpm capture:spec`.",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test *.check.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "eslint": "^9",
+    "globals": "^16"
+  }
+}

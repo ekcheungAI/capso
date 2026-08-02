@@ -2,9 +2,15 @@
 // `pnpm capture:spec` because this extension has no bundler. These used to be
 // two local constants whose only tie to the web app's was a comment saying they
 // matched — see packages/shared/src/capture.ts.
-import { FULL_QUALITY, FULL_TYPE, fitWithin } from "./capture-spec.generated.js";
+import { contentHash, FULL_QUALITY, FULL_TYPE, fitWithin } from "./capture-spec.generated.js";
 
-export { contentHash } from "./capture-spec.generated.js";
+/**
+ * Imported *and* re-exported. `export { contentHash } from "./…"` alone forwards
+ * the binding to consumers without introducing it into this module's scope, so
+ * `captureVisibleTab` below threw `ReferenceError` on every capture while the
+ * background worker's own import looked perfectly healthy.
+ */
+export { contentHash };
 
 /**
  * Shrink and re-encode before it ever reaches the wire.
