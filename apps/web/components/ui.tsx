@@ -372,9 +372,21 @@ export function DropZone({
   children: React.ReactNode;
 }) {
   const [over, setOver] = useState(false);
+  /**
+   * Set for one beat after a drop so the target's lid can seal. Cleared on a
+   * timer rather than animationend because the animation lives on a descendant
+   * this component does not own.
+   */
+  const [crimping, setCrimping] = useState(false);
 
   return (
     <div
+      // Data attributes rather than a render prop: the only consumer is CSS,
+      // and threading state through children would make every call site of
+      // DropZone aware of a detail that is purely presentational.
+      data-armed={armed || undefined}
+      data-over={over || undefined}
+      data-crimp={crimping || undefined}
       onDragOver={(e) => {
         // Ignore file drags — those belong to the global capture layer.
         if (!e.dataTransfer.types.includes("text/capso-id")) return;
@@ -386,7 +398,11 @@ export function DropZone({
         e.preventDefault();
         setOver(false);
         const ids = e.dataTransfer.getData("text/capso-id").split(",").filter(Boolean);
-        if (ids.length > 0) onDropIds(ids);
+        if (ids.length > 0) {
+          setCrimping(true);
+          window.setTimeout(() => setCrimping(false), 260);
+          onDropIds(ids);
+        }
       }}
       className={`capso-drop rounded-md ${
         over

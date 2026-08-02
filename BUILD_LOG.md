@@ -513,3 +513,42 @@ Verified with a real capture against the live model: five tags, including **繁�
 **A fourth filter, against the tripwire in 15 §reference board** — which permits one when a real query fails without it. This is that case: a capture belongs to exactly one project but is about several things, and "the pricing screens, whichever project they landed in" could not be asked. Tags are now a filter, and the chips on each card are buttons that set it — rendered outside the card's `<Link>` for the same reason the confirm row is, and revealed on hover or focus so the resting card stays just the screenshot.
 
 **Not done and worth naming:** tags are still absent from the sidebar, so there is no way to *browse* the vocabulary without opening the filter, and existing captures keep whatever tags they were given before the vocabulary existed — a reconciliation pass over the back catalogue is the obvious follow-up and is not in this loop.
+
+## Loop 25 — The extension becomes the durable store; the relay stops needing to be one
+**Date:** 2026-08-01 · **Phase:** P1 · **Outcome:** done — extension v0.3.0
+
+Owner asked whether to push the extension toward CleanShot parity and start planning a Mac app. Yes to both, but neither was next: a single capture has still never reached the library, and the transport underneath could lose or misdeliver one even with a perfect client. Loops 21–23 each produced a different confident diagnosis of the same symptom from reading code — that is a missing feedback loop, not a bug backlog, and every capture mode added on top multiplies a debugging surface that already cannot be bisected.
+
+**The plan called for Vercel Blob to make the relay durable. Inverted instead, and it needs no new infrastructure.** The durability now lives in the extension, which holds every capture in its own IndexedDB and re-sends until the web app confirms it stored it. The relay stays a module-scope array — per-instance, gone on recycle — and that is *fine*, because losing it costs a re-send rather than a capture. Three properties make it safe, all verified against production: ids come from the client so a retry is the same capture rather than a second capsule; items are addressed to a device so a poll drains only its own; and confirmation is explicit, so an instance that recycles and forgets simply causes one more upload, which the web app dedupes.
+
+Corrects the comment at `api/ingest/route.ts:5-7`, which claimed a service worker cannot write to IndexedDB. It cannot write to *the web app's*; it can write to its own — and that imprecision is what justified the in-memory design in the first place.
+
+**The cross-tab theft hazard is closed at the contract level.** An unaddressed capture is refused with 400 rather than defaulted, and a poll without a device is refused too. Previously any open Capso tab in any browser — including a verification tab an agent opened against the same deployment, which happened twice in loop 23 — silently collected everything. Pairing is a device code shown on `/extension` and pasted into the extension's options next to the origin.
+
+**Two guaranteed-loss paths removed.** A compress failure used to fall through and post the raw ~5.5 MB base64 PNG with a comment saying the app would downscale it on receipt — it cannot, that body is over Vercel's 4.5 MB limit and never lands. And 507 was terminal, destroying the capture the relay had just refused; it is backpressure now, and the item stays queued.
+
+**`sourceApp` is written for the first time.** The column has existed since loop 03 with no producer, so "the screenshot from Notion" had nothing to match against. The extension now sends the capture's hostname, and `width`/`height` too — both were null on every extension capture despite the web app using them to reserve layout.
+
+**Feedback that survives the OS, continued from loop 22.** The badge shows a pending *count* rather than a glyph: "3" says captures are waiting and roughly how badly, where "!" said only that something once went wrong. Retry is `chrome.alarms`-driven, because an MV3 worker holding a `setTimeout` is a worker that has been killed.
+
+`background.js` split into `config.js` / `capture.js` / `outbox.js` with a module service worker, before it grew a fourth capture mode into a single file.
+
+**Verified against production, not reasoned about:** unaddressed POST → 400; poll without device → 400; and against the dev server, the full convergence loop — valid POST queues, re-send while queued returns `duplicate` without requeuing, re-send while in-flight likewise, wrong device drains nothing, right device gets the item with `sourceApp` and `width`, and after ack a re-send returns `confirmed` so the outbox retires it. `pnpm typecheck && lint && test (18) && build` green.
+
+**Still the owner's, and still blocking:** loading the extension in a real Chrome. It has never been done, and P2 (area select, context menus, the in-page overlay) builds directly on code nobody has run.
+
+## Loop 26 — The popup diagnosed itself, and the answer was a preview URL
+**Date:** 2026-08-02 · **Phase:** P1 · **Outcome:** done — extension v0.3.1
+
+First report from the v0.3.0 popup, and it worked as designed: *"2 waiting to reach Capso / Sends to http://localhost:3000 / This tab capso-git-feat-memory-layer-and-library…"*. Three facts, and between them the whole diagnosis — the address was never changed off the default, and the tab in front of the owner was a **git-branch preview deployment**, which `ssoProtection` covers. Confirmed rather than assumed: the preview answers `401 {"error":{"code":"401","message":"Protected deployment"}}` to `/api/ingest`, while production answers `200`. So both candidate addresses were wrong, one silently.
+
+**The two captures were not lost**, which is the outbox earning its keep on its first real failure. They sat in the extension's IndexedDB across the misconfiguration and drain once the address is right.
+
+**A footgun worth naming: the device code is `localStorage`, and `localStorage` is origin-scoped.** The code shown on the preview URL is a different code from the one on production, so copying the address from one page and the code from another produces a pairing that cannot work. `/extension` now states which address its code belongs to and says to take both from the same page.
+
+**Three fixes so this class of failure reports itself:**
+- The options page **probes the address before saving** — 401/403 says "that address asks for a login, use your public Capso address, not a protected preview"; 404 says it does not look like Capso; unreachable says so. A wrong address used to be discoverable only by taking a capture and watching it not arrive.
+- The outbox names a 401 rather than reporting "Capso responded 401", because the fix is an address change and nothing about a 401 says so.
+- The popup shows **"Open settings to fix this"** when anything is pending, and only then — a queue that is not moving is almost always a wrong address, and the fix lives on a page most people do not know exists.
+
+Verified: all six extension files parse as ES modules under `node --check` (the module split in loop 25 was never checked this way — the earlier check regex stripped `export async function f() {` including its brace and reported three false failures). `pnpm typecheck && lint && test (18) && build` green; production `/extension-version.json` serves 0.3.1.

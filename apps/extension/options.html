@@ -59,6 +59,10 @@
 
     <label for="origin">Capso address</label>
     <input id="origin" type="url" placeholder="http://localhost:3000" spellcheck="false" />
+
+    <label for="device" style="margin-top: 16px">Device code</label>
+    <input id="device" type="text" placeholder="from Capso → Get extension" spellcheck="false" />
+
     <div class="row">
       <button id="save" type="button">Save</button>
       <span class="note" id="note"></span>
@@ -67,8 +71,18 @@
     <hr />
     <p class="hint">
       Use <code>http://localhost:3000</code> while running the app locally, or your deployed
-      Capso address. Captures are held by the app until it stores them, so they are not lost
-      if it is closed when you capture.
+      Capso address.
+    </p>
+    <p class="hint">
+      The device code pairs this extension with one browser. Copy it from the
+      <strong>Get extension</strong> page inside Capso. Without it, a capture could be
+      collected by any other browser you have Capso open in — with it, captures only ever
+      reach this one.
+    </p>
+    <p class="hint">
+      Captures are stored inside this extension the moment you take them and are re-sent
+      until Capso confirms it has them, so closing the app, going offline or restarting the
+      browser cannot lose one.
     </p>
 
     <script src="options.js"></script>

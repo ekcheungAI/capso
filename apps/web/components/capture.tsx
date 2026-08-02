@@ -7,6 +7,7 @@ import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
 import { tagVocabulary } from "@/lib/tags";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
+import { deviceToken } from "@/lib/device";
 
 /**
  * Capture layer: drop or paste an image anywhere, or press the Capture button.
@@ -21,6 +22,12 @@ export function CaptureLayer() {
   const [pending, setPending] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
+  /**
+   * Capture ids this tab has already stored. The extension re-sends until it is
+   * confirmed, so without this a lost ack would produce a second capsule of the
+   * same screenshot.
+   */
+  const seen = useRef<Set<string>>(new Set());
 
   const start = useCallback(
     async (
@@ -37,6 +44,8 @@ export function CaptureLayer() {
         /** Page context, when the capture came from a browser tab. */
         pageUrl?: string | null;
         pageTitle?: string | null;
+        /** Host or app the capture came from — the provenance badge's data. */
+        sourceApp?: string | null;
       } = {},
     ) => {
       const id = newId();
@@ -51,7 +60,7 @@ export function CaptureLayer() {
       const context = {
         pageUrl: opts.pageUrl ?? null,
         pageTitle: opts.pageTitle ?? null,
-        sourceApp: null,
+        sourceApp: opts.sourceApp ?? null,
         userTags: [],
         contentHash: null,
         originalPath: null,
@@ -197,10 +206,20 @@ export function CaptureLayer() {
     const poll = async () => {
       try {
         // Custom header the GET route now requires — see api/ingest/route.ts.
-        const res = await fetch("/api/ingest", { headers: { "x-capso-poll": "1" } });
+        // The `device` filter is what stops a second Capso tab, in a second
+        // browser, from collecting captures meant for this one.
+        const res = await fetch(`/api/ingest?device=${encodeURIComponent(deviceToken())}`, {
+          headers: { "x-capso-poll": "1" },
+        });
         if (!res.ok) return;
         const { items } = (await res.json()) as {
-          items: { id: string; imageDataUrl: string; pageUrl?: string; pageTitle?: string }[];
+          items: {
+            id: string;
+            imageDataUrl: string;
+            pageUrl?: string;
+            pageTitle?: string;
+            sourceApp?: string;
+          }[];
         };
 
         // Acknowledged one at a time, after the capture is genuinely stored.
@@ -218,10 +237,19 @@ export function CaptureLayer() {
             // The image goes through `downscale` like every other path. It used
             // to be stored exactly as it arrived — `captureVisibleTab` returns
             // an uncompressed retina PNG, so one capture cost megabytes.
-            await start(await downscale(item.imageDataUrl), "extension", {
-              pageUrl: item.pageUrl ?? null,
-              pageTitle: item.pageTitle ?? null,
-            });
+            //
+            // Skipped if already present: the extension re-sends until this app
+            // confirms storage, so a lost ack or a recycled relay instance must
+            // cost a redundant upload, never a duplicate capsule. The id comes
+            // from the extension precisely so it is stable across those retries.
+            if (!seen.current.has(item.id)) {
+              seen.current.add(item.id);
+              await start(await downscale(item.imageDataUrl), "extension", {
+                pageUrl: item.pageUrl ?? null,
+                pageTitle: item.pageTitle ?? null,
+                sourceApp: item.sourceApp ?? null,
+              });
+            }
             stored.push(item.id);
           }
         } finally {

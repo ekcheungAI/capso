@@ -1,11 +1,15 @@
 const field = document.getElementById("origin");
+const device = document.getElementById("device");
 const note = document.getElementById("note");
 const save = document.getElementById("save");
 
 const DEFAULT_ORIGIN = "http://localhost:3000";
+/** Same shape the relay validates, so a bad paste is caught here rather than at capture time. */
+const TOKEN = /^[A-Za-z0-9_-]{8,64}$/;
 
-chrome.storage.local.get("capsoOrigin").then(({ capsoOrigin }) => {
+chrome.storage.local.get(["capsoOrigin", "capsoDevice"]).then(({ capsoOrigin, capsoDevice }) => {
   field.value = capsoOrigin || DEFAULT_ORIGIN;
+  device.value = capsoDevice || "";
 });
 
 /**
@@ -19,6 +23,31 @@ async function ensurePermission(origin) {
   return chrome.permissions.request({ origins: [pattern] });
 }
 
+const fail = (message) => {
+  note.textContent = message;
+  note.className = "note";
+};
+
+/** Returns a human reason this address will not work, or null if it will. */
+async function probe(origin) {
+  let res;
+  try {
+    res = await fetch(`${origin}/api/ingest`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ check: [] }),
+    });
+  } catch {
+    return `Can't reach ${origin}. Is it running?`;
+  }
+  if (res.status === 401 || res.status === 403) {
+    return "That address asks for a login — use your public Capso address, not a protected preview.";
+  }
+  if (res.status === 404) return "That address doesn't look like Capso.";
+  if (!res.ok) return `That address answered ${res.status}.`;
+  return null;
+}
+
 save.addEventListener("click", async () => {
   let origin;
   try {
@@ -27,21 +56,34 @@ save.addEventListener("click", async () => {
     // Store the origin only — a path here would produce //api/ingest later.
     origin = url.origin;
   } catch {
-    note.textContent = "That is not a valid http(s) address.";
-    note.className = "note";
-    return;
+    return fail("That is not a valid http(s) address.");
+  }
+
+  const token = device.value.trim();
+  if (!TOKEN.test(token)) {
+    return fail("Paste the device code from Capso → Get extension.");
   }
 
   if (!(await ensurePermission(origin))) {
-    note.textContent = "Chrome needs permission for that address to send captures.";
-    note.className = "note";
-    return;
+    return fail("Chrome needs permission for that address to send captures.");
   }
 
-  await chrome.storage.local.set({ capsoOrigin: origin });
+  // Probe before saving. A wrong address used to be discoverable only by taking
+  // a capture and watching it not arrive — and the most likely wrong address is
+  // a Vercel preview deployment, which answers 401 to everything and says
+  // nothing about why.
+  const problem = await probe(origin);
+  if (problem) return fail(problem);
+
+  await chrome.storage.local.set({ capsoOrigin: origin, capsoDevice: token });
   field.value = origin;
   note.textContent = "Saved.";
   note.className = "note ok";
+
+  // Anything queued while the extension was misconfigured can go now, rather
+  // than waiting up to a minute for the next alarm.
+  void chrome.runtime.sendMessage({ type: "drain" });
+
   setTimeout(() => {
     note.textContent = "";
   }, 2000);

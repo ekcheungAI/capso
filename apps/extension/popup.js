@@ -4,32 +4,58 @@ const dest = document.getElementById("dest");
 const tabEl = document.getElementById("tab");
 
 /**
- * Report the last capture, including one made by the hotkey while this popup was
- * closed. That path used to report only through `chrome.notifications`, so with
- * macOS notifications off for Chrome it had no way to tell the user anything at
- * all — success and failure were both silence.
+ * Report the last capture, the destination, the current tab, and how many
+ * captures are still waiting to reach Capso.
+ *
+ * Every one of those was invisible at some point, and each absence produced a
+ * bug report that read "it doesn't do anything": the hotkey path reported only
+ * through notifications (which macOS silences), the destination could be a dev
+ * server that was not running, and the tab could be one Chrome refuses.
  */
-chrome.storage.local.get(["lastResult", "lastCapture"]).then(({ lastResult, lastCapture }) => {
-  if (lastResult) {
-    last.textContent = lastResult.message;
-    last.className = lastResult.ok ? "last" : "last err";
-  } else if (lastCapture) {
-    last.textContent = `Last: ${lastCapture.title}`;
-  }
-  // Opening the popup is the acknowledgement — the badge has done its job.
-  void chrome.action.setBadgeText({ text: "" });
-});
-
-/** Where captures are being sent, and what this tab actually is. */
-(async () => {
+async function refresh() {
+  let status;
   try {
-    const { origin } = await chrome.runtime.sendMessage({ type: "getOrigin" });
-    dest.textContent = origin ?? "not set";
-    dest.className = "";
+    status = await chrome.runtime.sendMessage({ type: "status" });
   } catch {
     dest.textContent = "unknown";
+    return;
   }
 
+  dest.textContent = status.origin ?? "not set";
+  dest.className = "";
+
+  if (status.pending > 0) {
+    last.textContent = `${status.pending} waiting to reach Capso${
+      status.lastResult && !status.lastResult.ok ? ` — ${status.lastResult.message}` : ""
+    }`;
+    last.className = "last";
+  } else if (status.lastResult) {
+    last.textContent = status.lastResult.message;
+    last.className = status.lastResult.ok ? "last" : "last err";
+  }
+
+  // A queue that is not moving is almost always a wrong address, and the fix
+  // lives on a page most people do not know exists. Shown only when something
+  // is genuinely stuck, so it stays a fix rather than permanent chrome.
+  document.getElementById("fix").hidden = status.pending === 0;
+
+  // Opening the popup is the acknowledgement — the badge has done its job. It
+  // comes straight back if anything is still queued.
+  await chrome.action.setBadgeText({ text: status.pending > 0 ? String(status.pending) : "" });
+}
+
+document.getElementById("openOptions").addEventListener("click", (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
+});
+
+void refresh();
+
+// A capture may have been queued while the popup was closed; nudging the outbox
+// on open means the count shown is the count after a real delivery attempt.
+void chrome.runtime.sendMessage({ type: "drain" }).then(refresh).catch(() => {});
+
+(async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url) {
     // Not a failure in itself — Chrome withholds the address until activeTab is
@@ -46,8 +72,7 @@ go.addEventListener("click", async () => {
   go.textContent = "Capturing…";
   const res = await chrome.runtime.sendMessage({ type: "capture" });
   if (res?.ok) {
-    go.textContent = "Sent to Capso";
-    void chrome.action.setBadgeText({ text: "" });
+    go.textContent = res.pending > 0 ? "Saved — sending" : "Sent to Capso";
     setTimeout(() => window.close(), 700);
   } else {
     go.disabled = false;

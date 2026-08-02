@@ -66,7 +66,7 @@ Indexes: `(user_id)`, partial unique `(user_id) WHERE is_inbox`.
 | user_id | uuid NOT NULL FK → users CASCADE | |
 | project_thread_id | uuid NULL FK → project_threads ON DELETE SET NULL | NULL ⇒ shows in Inbox |
 | capture_kind | capture_kind NOT NULL DEFAULT 'screenshot' | future-proofing (locked decision) |
-| storage_path | text NOT NULL | `user_id/screenshot_id.png` in `originals` bucket (14) |
+| storage_path | text NULL | `user_id/screenshot_id.png` in `originals` bucket (14). NULL ⇒ no bytes in Storage yet — see the loop-24 amendment |
 | thumb_path | text | `user_id/screenshot_id.webp` in `thumbs` bucket |
 | width / height | int | px |
 | bytes | bigint | for storage accounting |
@@ -88,10 +88,21 @@ Indexes: `(user_id)`, partial unique `(user_id) WHERE is_inbox`.
 | ocr_langs | text[] | Detected languages; picks the analyzer |
 | content_hash | text | Exact-duplicate detection at ingest |
 | search_text | text NOT NULL DEFAULT '' | Pre-segmented searchable text — see the tsvector note below |
+| simulated | boolean NOT NULL DEFAULT false | Metadata came from canned demo output, not the model — see the loop-24 amendment |
+| assignment_source | assignment_source NULL | How the capture reached its project: `auto \| user_corrected \| inbox_triage \| manual`. NULL ⇒ never assigned (still in Inbox) |
+
+Two columns exist in `0001_core_schema.sql` but were never listed above: `title text NOT NULL DEFAULT ''` (W1 output) and `source text` (capture origin — `hotkey_region`, `extension`, `web_upload`, `seed`, …). Recorded here so the table matches the database.
 
 Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`; GIN on `search_tsv`; GIN on `tags` and `user_tags`; **HNSW** on `embedding` (`vector_cosine_ops`) — HNSW over ivfflat: no training step, fine at MVP row counts, better recall; `(user_id, processing_status)` partial WHERE status <> 'processed' (worker + badge queries); `(user_id, content_hash)` partial WHERE not null.
 
 **Amendment (loop 12) — `search_tsv` config.** The row above specifies `to_tsvector('english', ocr_text || summary)`. That is wrong for this corpus: the `english` config treats a run of Han characters as one token, so `定價` never matches a document containing `定價頁面`, and hosted Supabase does not offer `zhparser`. Shipped instead: the client segments text with `Intl.Segmenter` (`apps/web/lib/retrieve.ts`) and writes the space-joined result to `search_text`; the generated column is `to_tsvector('simple', search_text)`. English loses stemming, which the raw text carried alongside restores adequately at personal corpus size. Revisit if English recall measurably suffers.
+
+**Amendment (loop 24) — `simulated` column, and `storage_path` becomes nullable.** Both found while porting the IndexedDB store onto this schema (migration `0003`).
+
+- **`simulated` had no column.** The client type has carried it since the demo track began. It is not cosmetic: it marks a capture whose metadata came from canned demo output rather than the model (no API key configured). Without persisting it, a demo capture becomes indistinguishable from a real one the moment it is written, and its *invented* `ocr_text` enters the search index — the exact bug the flag exists to prevent.
+- **`storage_path NOT NULL` was wrong.** It assumed a row is only written after its bytes reach Storage. Two shipped behaviours contradict that: M3's pipeline is "capture → local queue → Storage + row" and must survive offline (04 Table 1), so a queued capture is a real row whose bytes have not uploaded yet; and seeded fixtures have no image at all, drawing a deterministic placeholder instead. NULL now means "no bytes in Storage (yet)", which the UI already handles via its placeholder path.
+
+**Derived, deliberately not stored:** the client type's `hue` and `aspect` have no columns and should not gain any. `aspect` follows from `width`/`height`, and `hue` is a deterministic hash of `id` — both are display-only, and storing a value derivable from its inputs invites the two disagreeing.
 
 ### capture_events
 Append-only audit of the capture lifecycle (funnel analytics + undo trail).

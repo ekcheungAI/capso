@@ -1,122 +1,37 @@
 /**
  * Capso capture path for browser tabs.
  *
- * Captures the visible tab, compresses it here, and posts it to the Capso app,
- * which queues it for the same ingest pipeline drag/paste uses. Browser tabs
- * only — native app windows (Figma desktop, Xcode, Cursor) still need the Mac
- * app. See D11.
- */
-
-/** Where the app lives when nothing has been configured. */
-const DEFAULT_ORIGIN = "http://localhost:3000";
-
-/** Long edge of the stored original; matches the web app's own ingest cap. */
-const MAX_EDGE = 1600;
-/** JPEG quality for that original. */
-const FULL_QUALITY = 0.85;
-
-/**
- * The configured app origin. Held in `chrome.storage` rather than hardcoded so
- * one build can point at localhost or a deployment — this used to be a `const`
- * in this file *and* a second copy in popup.js, so the extension only ever
- * worked against a local dev server.
- */
-async function origin() {
-  const { capsoOrigin } = await chrome.storage.local.get("capsoOrigin");
-  return (capsoOrigin || DEFAULT_ORIGIN).replace(/\/+$/, "");
-}
-
-/**
- * Shrink and re-encode before it ever reaches the wire.
+ * Captures the visible tab, compresses it here, and hands it to the outbox,
+ * which owns delivery. Browser tabs only — native app windows (Figma desktop,
+ * Xcode, Cursor) still need the Mac app. See D11.
  *
- * `captureVisibleTab` returns an uncompressed retina PNG — measured at ~4.2 MB,
- * which is ~5.6 MB once base64-encoded and therefore over Vercel's 4.5 MB
- * request-body limit. The app used to do this downscale *after* receiving the
- * image, which is too late to help. `OffscreenCanvas` is available in an MV3
- * service worker; note `convertToBlob`, since workers have no `toDataURL`.
+ * The capture path deliberately ends at `enqueue`: once a capture is in
+ * IndexedDB it cannot be lost by a failed request, a closed tab, a recycled
+ * serverless instance or a browser restart. Everything after that is retry.
  */
-async function compress(dataUrl) {
-  const source = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  try {
-    const scale = Math.min(1, MAX_EDGE / Math.max(source.width, source.height));
-    const w = Math.max(1, Math.round(source.width * scale));
-    const h = Math.max(1, Math.round(source.height * scale));
 
-    const canvas = new OffscreenCanvas(w, h);
-    canvas.getContext("2d").drawImage(source, 0, 0, w, h);
-    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: FULL_QUALITY });
+import { origin } from "./config.js";
+import { captureVisibleTab } from "./capture.js";
+import { ALARM, count, drain, enqueue } from "./outbox.js";
 
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
-  } finally {
-    source.close();
+async function capture() {
+  const shot = await captureVisibleTab();
+  if (!shot.ok) return fail(shot.message);
+
+  await enqueue(shot.capture);
+  // Report on the capture, not on the delivery. The image is safe either way,
+  // and blocking the report on a network round-trip is what made a working
+  // capture and a failed one look identical.
+  const result = await drain();
+
+  const pending = result.pending;
+  if (pending === 0) {
+    await record(true, `Sent “${shot.label}” to Capso.`);
+    notify("Sent to Capso", shot.label);
+  } else {
+    await record(true, `Saved. ${pending} waiting to reach Capso — ${result.lastError ?? "retrying"}`);
   }
-}
-
-async function captureActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return fail("No active tab.");
-
-  // chrome:// and friends are off-limits to captureVisibleTab by policy, so
-  // there is nothing to attempt there.
-  //
-  // A tab whose URL we simply cannot read is a different thing — it means
-  // activeTab has not been granted yet, not that capture is blocked — and it
-  // used to produce this same refusal. Attempt it instead: Chrome's own error
-  // is more accurate than our guess, and it is what surfaces the real reason
-  // on the Web Store, which is https and blocked by policy rather than scheme.
-  const scheme = tab.url?.match(/^([a-z-]+):/i)?.[1]?.toLowerCase();
-  if (scheme && ["chrome", "edge", "about", "devtools", "view-source", "chrome-extension"].includes(scheme)) {
-    // Name the page. "Chrome blocks capture on this page" is true and useless:
-    // the one thing the user needs to know is that *this particular tab* is the
-    // problem and an ordinary one is not.
-    return fail(`Chrome won't allow capture on ${scheme}: pages. Switch to an ordinary tab and try again.`);
-  }
-
-  let dataUrl;
-  try {
-    dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
-  } catch (err) {
-    return fail(err?.message ?? "Capture failed.");
-  }
-
-  try {
-    dataUrl = await compress(dataUrl);
-  } catch {
-    // Better a large capture than none — the app downscales again on receipt.
-  }
-
-  const base = await origin();
-  let res;
-  try {
-    res = await fetch(`${base}/api/ingest`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        imageDataUrl: dataUrl,
-        source: "extension",
-        pageUrl: tab.url,
-        pageTitle: tab.title ?? "",
-      }),
-    });
-  } catch {
-    return fail(`Capso isn't reachable at ${base}.`);
-  }
-
-  // Distinguish the failures instead of blaming the server for all of them.
-  // Every non-OK response used to read "Capso isn't running".
-  if (res.status === 507) return fail("Capso's queue is full — open the app to take them.");
-  if (!res.ok) return fail(`Capso responded ${res.status}.`);
-
-  const stamp = new Date().toISOString();
-  await chrome.storage.local.set({ lastCapture: { title: tab.title ?? tab.url, at: stamp } });
-  await record(true, `Sent “${tab.title ?? tab.url}” to Capso.`);
-  notify("Sent to Capso", tab.title ?? tab.url);
-  return { ok: true };
+  return { ok: true, pending };
 }
 
 function fail(message) {
@@ -131,19 +46,28 @@ function fail(message) {
  * The hotkey path had exactly one way to report anything — `chrome.notifications`
  * — and macOS suppresses those entirely unless Chrome is allowed to notify in
  * System Settings. With them off, a capture that worked and a capture that
- * failed both looked like the extension doing nothing at all. The badge needs no
- * permission, cannot be silenced, and the popup shows the full sentence.
+ * failed were both silence, from a path where the popup is not open to show
+ * anything. The badge needs no permission and cannot be silenced.
  */
 async function record(ok, message) {
   await chrome.storage.local.set({
     lastResult: { ok, message, at: new Date().toISOString() },
   });
+  await badge(ok);
+}
+
+/**
+ * A count beats a glyph: "3" says captures are waiting and roughly how badly,
+ * where "!" said only that something, once, went wrong.
+ *
+ * Text only, no background colour — a service worker cannot read the CSS custom
+ * properties the rest of the extension is styled from, and hardcoding a hex here
+ * is what `pnpm brand:check` exists to stop.
+ */
+async function badge(ok = true) {
   try {
-    // Text only, no background colour: a service worker cannot read the CSS
-    // custom properties the rest of the extension is styled from, and hardcoding
-    // a hex here is exactly what `pnpm brand:check` exists to stop. The glyph
-    // already carries the distinction.
-    await chrome.action.setBadgeText({ text: ok ? "✓" : "!" });
+    const pending = await count();
+    await chrome.action.setBadgeText({ text: pending > 0 ? String(pending) : ok ? "" : "!" });
   } catch {
     // Badge is a nicety; never let it fail a capture that otherwise worked.
   }
@@ -193,20 +117,47 @@ function compare(a, b) {
   return 0;
 }
 
-chrome.runtime.onStartup.addListener(() => void checkForUpdate());
-chrome.runtime.onInstalled.addListener(() => void checkForUpdate());
+/** Retry is alarm-driven because a worker holding a `setTimeout` is a worker that has been killed. */
+async function startup() {
+  await chrome.alarms.create(ALARM, { periodInMinutes: 1 });
+  await drain();
+  await badge();
+  await checkForUpdate();
+}
+
+chrome.runtime.onStartup.addListener(() => void startup());
+chrome.runtime.onInstalled.addListener(() => void startup());
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== ALARM) return;
+  void drain().then(() => badge());
+});
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === "capture-tab") void captureActiveTab();
+  if (command === "capture-tab") void capture();
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (msg?.type === "capture") {
-    captureActiveTab().then(respond);
+    capture().then(respond);
     return true; // async response
   }
   if (msg?.type === "getOrigin") {
     origin().then((base) => respond({ origin: base }));
+    return true;
+  }
+  if (msg?.type === "status") {
+    (async () => {
+      const { lastResult } = await chrome.storage.local.get("lastResult");
+      respond({ origin: await origin(), pending: await count(), lastResult: lastResult ?? null });
+    })();
+    return true;
+  }
+  if (msg?.type === "drain") {
+    drain().then(async (r) => {
+      await badge();
+      respond(r);
+    });
     return true;
   }
   // An unhandled type used to close the port silently, so the popup's awaited

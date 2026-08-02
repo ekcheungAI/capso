@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Capso",
-  "version": "0.2.2",
+  "version": "0.3.1",
   "description": "Capture the current tab into your Capso memory.",
-  "permissions": ["activeTab", "storage", "notifications"],
+  "permissions": ["activeTab", "storage", "notifications", "alarms", "unlimitedStorage"],
   "host_permissions": ["http://localhost:3000/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "background.js" },
+  "background": { "service_worker": "background.js", "type": "module" },
   "action": {
     "default_popup": "popup.html",
     "default_title": "Capture this tab",

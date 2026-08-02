@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { deviceToken } from "@/lib/device";
 
 /** The origin never changes for the life of the page, so there is nothing to subscribe to. */
 const noSubscribe = () => () => {};
@@ -31,6 +32,12 @@ export default function ExtensionPage() {
     () => window.location.origin,
     () => "",
   );
+  /**
+   * Pairs the extension with this browser. Read the same way as the origin and
+   * for the same reason — it is client-only state on a prerendered page, and it
+   * is a constant rather than something that changes.
+   */
+  const device = useSyncExternalStore(noSubscribe, deviceToken, () => "");
 
   useEffect(() => {
     fetch("/extension-version.json")
@@ -68,6 +75,24 @@ export default function ExtensionPage() {
         </a>
       </div>
 
+      <section className="space-y-2 rounded-xl border border-line bg-surface p-4">
+        <h2 className="text-sm font-medium">This browser&apos;s device code</h2>
+        <p className="text-[11px] leading-relaxed text-muted">
+          Paste this into the extension&apos;s options. It pairs the extension with this browser,
+          so a capture can only ever be collected here — without it, another browser running
+          Capso could take it instead.
+        </p>
+        <p className="text-[11px] leading-relaxed text-muted">
+          This code belongs to{" "}
+          <code className="rounded bg-background px-1 break-all">{origin || "this address"}</code>.
+          Copy the address and the code from the same page — a different Capso address has a
+          different code, and a preview deployment will refuse the extension outright.
+        </p>
+        <code className="block rounded-lg border border-line bg-background px-3 py-2 font-mono text-xs break-all select-all">
+          {device || "…"}
+        </code>
+      </section>
+
       <section className="space-y-2">
         <h2 className="text-base font-semibold">Install or update</h2>
         <ol className="list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-muted">
@@ -88,8 +113,9 @@ export default function ExtensionPage() {
           <li>
             <strong>Point it at this Capso.</strong> Open the extension&apos;s{" "}
             <strong>Details → Extension options</strong> and set the address to{" "}
-            <code className="rounded bg-surface px-1 break-all">{origin || "this site"}</code>, then
-            Save and approve the access prompt. It ships pointing at{" "}
+            <code className="rounded bg-surface px-1 break-all">{origin || "this site"}</code> and
+            the device code to <code className="rounded bg-surface px-1 break-all">{device}</code>,
+            then Save and approve the access prompt. It ships pointing at{" "}
             <code className="rounded bg-surface px-1">http://localhost:3000</code>, so without this
             step captures are sent somewhere that is not this library.
           </li>
@@ -99,8 +125,9 @@ export default function ExtensionPage() {
             is ⌘⇧U.
           </li>
           <li>
-            Open Capso in a tab and leave it open. Captures queue on the server and are collected by
-            the open tab; nothing is stored while every Capso tab is closed.
+            Leave Capso open in a tab when you can. Captures are held inside the extension until
+            this app confirms it has stored them, so nothing is lost if every Capso tab is
+            closed — they simply arrive the next time one is open.
           </li>
         </ol>
       </section>

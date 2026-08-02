@@ -16,7 +16,7 @@ Two inputs prompted this review. Neither is strong evidence, and the difference 
 |---|---|---|
 | [r/PKMS: "Looking for a nice screenshot organizer (PicoJar alternative)"](https://www.reddit.com/r/PKMS/comments/1klkvrl/looking_for_a_nice_screenshot_organizer_picojar/) — 12 upvotes, 47 comments, posted ~1 year before this review | One real person enumerating requirements, plus ~8 substantive commenters | **Directional, not validating.** See caveats below |
 | Owner-supplied persona/interview doc (Creator / Founder / Technical Builder) | Simulated interviews, AI-generated | **Hypothesis only.** Zero evidence of demand |
-| Competitor feature/pricing research (§3) | Verified against vendor pages on 2026-08-01 | **Solid**, but perishable — re-check before any public positioning |
+| Competitor research (§3) | **CleanShot X and mymind:** read directly from the vendors' own pages, 2026-08-01. **Apple and the auto-filer category:** secondary coverage and vendor comparison-marketing only | **Solid for the first two; indicative for the rest** (§3.3 warning). All of it perishable — re-check before any public positioning |
 
 **Reddit caveats, stated plainly:**
 
@@ -157,7 +157,11 @@ three of four rows.
 | **CleanShot X** ([features](https://cleanshot.com/features)) | On-device OCR (select an area, text to clipboard), CleanShot Cloud with shareable links incl. password + self-destruct, post-capture overlay, capture history, scrolling capture, **manual tagging for organisation** | **No search over past captures.** No AI classification, no routing, no memory, no conversation | OCR that *indexes for retrieval* rather than *extracts to clipboard*; a corpus you can query, not a history you can scroll |
 | **mymind** ([pricing](https://access.mymind.com/pricing)) | AI image tagging, Image Text Recognition (search words inside images), Smart Spaces (automatic grouping), Serendipity resurfacing — all at **Student of Life, $7.99/mo**. AI Summaries + advanced AI at **Mastermind, $12.99/mo**. Entry Bookmarker tier $4.99/mo. **No free tier** | Not screenshot-native; no Mac capture tooling; no project threads; no chat *about* a saved item | Screenshot-first capture; project threads; conversational retrieval grounded in captures |
 | **Auto-filer category** (§3.3) | A real and growing category, not a strawman | Flat smart-folders; no project context; no correction-learning; no conversation | Confirm-on-overlay routing + learning loop + thread chat |
-| **Apple Screenshots + Spotlight + Visual Intelligence** | Spotlight indexes text inside images/screenshots. Visual Intelligence on a screenshot: Highlight to Search, Ask (via ChatGPT), **Add to Calendar from a detected date** | Single-screenshot only. No projects, no cross-capture synthesis, no longitudinal trail, no learning | **The corpus, not the moment** (§1) |
+| **Apple Screenshots + Spotlight + Visual Intelligence** ([iOS 26 guide](https://www.macrumors.com/guide/ios-26-visual-intelligence/), [Spotlight/OCR](https://zengo.eu/en/blog/apple-ocr-revolutionizing-text-recognition)) | Spotlight indexes text inside images/screenshots. Visual Intelligence on a screenshot: Highlight to Search, Ask (via ChatGPT), **Add to Calendar from a detected date** | Single-screenshot only. No projects, no cross-capture synthesis, no longitudinal trail, no learning | **The corpus, not the moment** (§1) |
+
+**Verification depth differs by row and this matters.** CleanShot X and mymind were read directly
+from the vendors' own pages. The Apple and auto-filer rows rest on secondary coverage (§3.3) and
+should be confirmed first-hand before any public claim is made against them.
 
 ### §3.2 Corrections against what the brief previously claimed
 
@@ -170,15 +174,21 @@ three of four rows.
 
 ### §3.3 The auto-filer category has grown
 
-The brief's single generic row understates this. Scanned 2026-08-01:
+The brief's single generic row understates this. Scanned 2026-08-01.
 
-| Product | Position | Why it matters to Capso |
+⚠️ **Source-quality warning:** much of the material here is vendor-authored comparison marketing —
+Pizazoo's page compares Pizazoo to ShotSnap, Sorti's compares Sorti to mymind. Each vendor's claims
+about *itself* are reasonably reliable; its claims about *rivals* are not. Treat the table as a map
+of who exists and how they position, **not** as verified feature facts. Confirm first-hand before
+using any of it in positioning.
+
+| Product | Position (as the vendor states it) | Why it matters to Capso |
 |---|---|---|
-| ShotSnap | GPT-4V, smart folders, Mac, ~$6/mo | The closest analogue to Capso's ingestion pipeline, cheaper |
-| Pizazoo | 100% on-device, free tier, explicitly positioned *against* ShotSnap's cloud | Competes on the exact axis §2.6 shows users react to |
-| SnapStash | iOS, on-device OCR + search | Same, on the platform Capso doesn't serve |
-| ScreenDrafter | On-device AI **filenames** | Attacks a pain the brief never names — Capso's captures have no meaningful filename either |
-| Sorti, Filex AI, MarkIt | Cross-platform organisers, semantic search, free tiers | Price and platform pressure |
+| [ShotSnap](https://www.shotsnap.ai/shotsnap-vs-screensnap-ai) | GPT-4V, smart folders, Mac, ~$6/mo | The closest analogue to Capso's ingestion pipeline, cheaper |
+| [Pizazoo](https://pizazoo.com/compare/shotsnap/) | 100% on-device, free tier, explicitly positioned *against* ShotSnap's cloud | Competes on the exact axis §2.6 shows users react to |
+| [SnapStash](https://www.snapstash.app/blog/best-screenshot-organizer-app-iphone) | iOS, on-device OCR + search | Same, on the platform Capso doesn't serve |
+| [ScreenDrafter](https://screendrafter.com/blog/shottr-alternative-mac/) | On-device AI **filenames** | Attacks a pain the brief never names — Capso's captures have no meaningful filename either |
+| [Sorti](https://letitsorti.com/journal/best-app-to-organize-screenshots-iphone-android), [Filex AI](https://filexai.com/blog/best-screenshot-organizer-iphone), [MarkIt](https://mark-it.co/screenshot-organizer-app) | Cross-platform organisers, semantic search, free tiers | Price and platform pressure |
 | Smart Screenshot Manager | Microsoft Store only | Surfaced in-thread; irrelevant to a Mac-first product |
 
 **Implication:** "organization theater" remains a defensible *argument*, but it is not a moat. What

@@ -188,6 +188,87 @@ body {
   animation: capso-crimp var(--dur-panel) var(--ease-out-strong);
 }
 
+/* ---- Loading the rack ---------------------------------------------------
+   Picking a capture up opens the rack: every project lid retracts to an open
+   ring, the one you aim at previews itself filling, and the drop crimps it.
+
+   No new visual vocabulary — empty / some / full are the three states the mark
+   already ships. Three layers are stacked and cross-faded, so the state change
+   survives `prefers-reduced-motion` (which kills the transition, not the
+   information).
+
+   Routed to CSS rather than an animation library on purpose: this is opacity
+   and transform on five small nodes, which is exactly the case where a runtime
+   dependency buys nothing. */
+.capso-rack {
+  position: relative;
+  display: block;
+}
+.capso-rack > * {
+  position: absolute;
+  inset: 0;
+  transition: opacity var(--dur-press) var(--ease-out-strong);
+}
+.capso-rack-open,
+.capso-rack-prev {
+  opacity: 0;
+}
+
+/* Armed: a capture is in hand, so every slot shows itself open. Staggered down
+   the list by 40ms so it reads as one drawer opening rather than five separate
+   flickers — 5 rows × 40ms = 200ms, inside the micro-cascade budget. */
+[data-armed] .capso-rack-real {
+  opacity: 0;
+}
+[data-armed] .capso-rack-open {
+  opacity: 1;
+}
+[data-armed] .capso-rack > * {
+  transition-delay: calc(var(--rack-i, 0) * 40ms);
+}
+
+/* Aiming at this one: it previews the level it would be at after the drop.
+   No delay — a hover response has to feel immediate. */
+[data-over] .capso-rack-open {
+  opacity: 0;
+}
+[data-over] .capso-rack-prev {
+  opacity: 1;
+}
+[data-over] .capso-rack > * {
+  transition-delay: 0ms;
+}
+/* The fill preview alone is not enough, and testing proved it: the levels are
+   banded 0 / 1-4 / 5+, so dropping one capture onto a project that already has
+   two crosses no band and the lid does not change at all. On a real library
+   that is most rows, which would have shipped a state that is usually inert.
+
+   The slot therefore also presents itself — a small, always-visible lift that
+   does not depend on the count changing. The band change is the bonus when it
+   happens; this is the signal that always fires. */
+[data-over] .capso-rack {
+  transform: scale(1.14);
+}
+.capso-rack {
+  transition: transform var(--dur-press) var(--ease-out-strong);
+}
+
+/* The seal. One tighten, no rebound — same rigid-material rule as the seat. */
+@keyframes capso-slot-crimp {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+[data-crimp] .capso-rack {
+  animation: capso-slot-crimp var(--dur-panel) var(--ease-out-strong);
+}
+
 /* ---- Drag ----------------------------------------------------------- */
 /* The dragged card tilts and lifts so it reads as picked up rather than
    duplicated, and the source position goes quiet instead of vanishing. */

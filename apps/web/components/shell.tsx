@@ -156,7 +156,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}
         </p>
         <nav onClick={dismissNav} className="space-y-0.5">
-          {threads.map((t) => (
+          {threads.map((t, i) => (
             <DropZone
               key={t.id}
               armed={dragCount > 0}
@@ -168,6 +168,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 badge={byThread(t.id).length}
                 title={t.description || undefined}
                 fill={fillFor(byThread(t.id).length)}
+                // What this slot would become if the drag landed here. Shown
+                // while aiming, so the outcome is visible before committing.
+                preview={fillFor(byThread(t.id).length + Math.max(dragCount, 1))}
+                index={i}
               />
             </DropZone>
           ))}
@@ -272,6 +276,8 @@ function Row({
   badge,
   title,
   fill,
+  preview,
+  index = 0,
 }: {
   href: string;
   label: string;
@@ -284,13 +290,29 @@ function Row({
    * flat, which was most of why the app read as dull.
    */
   fill?: "empty" | "some" | "full";
+  /** The level this slot would reach if the current drag landed on it. */
+  preview?: "empty" | "some" | "full";
+  /** Position in the rack — drives the 40ms open stagger. */
+  index?: number;
 }) {
   return (
     <Link
       href={href}
       className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface"
     >
-      {fill && <CapsoMark size={15} fill={fill} className="opacity-80" />}
+      {fill && (
+        /* Three lids stacked and cross-faded: the real fill, the open ring the
+           rack shows while a capture is in hand, and the level this slot would
+           reach if the drag landed here. */
+        <span
+          className="capso-rack h-[15px] w-[15px] shrink-0 opacity-80"
+          style={{ "--rack-i": index } as React.CSSProperties}
+        >
+          <CapsoMark size={15} fill={fill} className="capso-rack-real" />
+          <CapsoMark size={15} fill="empty" className="capso-rack-open" />
+          <CapsoMark size={15} fill={preview ?? fill} className="capso-rack-prev" />
+        </span>
+      )}
       {/* `title` sits on the label, not the link: on the anchor it would replace
           the accessible name, so the row would announce its description instead
           of the project it goes to. */}
