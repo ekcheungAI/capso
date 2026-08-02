@@ -7,6 +7,7 @@ import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
 import { tagVocabulary } from "@/lib/tags";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
+import { CapsoMark } from "@/components/mark.generated";
 import { deviceToken } from "@/lib/device";
 
 /**
@@ -388,6 +389,16 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
   const { threads, threadName, assign, remove } = useStore();
   const router = useRouter();
   const [adjusting, setAdjusting] = useState(false);
+  /**
+   * The post-capture overlay is the product's signature moment (05 §2), and it
+   * was the one place Confirm did not seat — ScreenshotCard had the motion, the
+   * surface everybody actually watches did not.
+   */
+  const [seating, setSeating] = useState(false);
+  const seat = (threadId: string | null) => {
+    setSeating(true);
+    void assign(s, threadId, "auto");
+  };
   const hovering = useRef(false);
 
   const state =
@@ -412,7 +423,12 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
     <div
       onMouseEnter={() => (hovering.current = true)}
       onMouseLeave={() => (hovering.current = false)}
-      className="capso-overlay w-64 overflow-hidden rounded-xl bg-surface shadow-xl ring-1 ring-line"
+      onAnimationEnd={(e) => {
+        if (e.animationName === "capso-seat") setSeating(false);
+      }}
+      className={`capso-overlay relative w-64 overflow-hidden rounded-xl bg-surface shadow-xl ring-1 ring-line ${
+        seating ? "capso-seat capso-crimp" : ""
+      }`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element -- data URI */}
       <img
@@ -424,7 +440,13 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
 
       <div key={state} className="capso-fade space-y-2 p-3">
         {state === "loading" && (
-          <p className="animate-pulse text-[11px] text-muted">Analysing…</p>
+          /* The Reading state, carried by the mark rather than by Tailwind's
+             default pulse — this is the provenance rule in motion: the glyph
+             is present precisely because Capso, not you, is doing something. */
+          <p className="flex items-center gap-2 text-[11px] text-muted">
+            <CapsoMark size={13} className="capso-reading" />
+            Analysing…
+          </p>
         )}
 
         {state === "suggestion" && (
@@ -435,7 +457,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
             </p>
             <div className="flex flex-wrap gap-1.5">
               <button
-                onClick={() => void assign(s, s.suggestedThreadId, "auto")}
+                onClick={() => seat(s.suggestedThreadId)}
                 className="rounded-md bg-accent px-2.5 py-1 text-[11px] text-accent-ink"
               >
                 ✓ Confirm
@@ -471,6 +493,9 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
             autoFocus
             defaultValue={s.threadId ?? ""}
             onChange={(e) => {
+              // Choosing the shelf yourself is still seating — the capsule
+              // takes a slot either way. Only the provenance differs.
+              setSeating(true);
               void assign(s, e.target.value || null, "user_corrected");
               setAdjusting(false);
             }}

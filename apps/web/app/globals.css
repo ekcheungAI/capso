@@ -70,6 +70,39 @@ body {
   animation: capso-fade-in var(--dur-pop) ease-out;
 }
 
+/* Reading — the model is looking at a capture.
+   This is the state the brand spec asks the mark to carry, and it was being
+   signalled by Tailwind's `animate-pulse`: off-system, in two different places,
+   and not the mark. One idiom now, and it is the glyph itself.
+
+   Ambient loops want sine-based ease-in-out so the seam is invisible; a strong
+   ease-out would make it tick. Never exceeds scale 1 — the same rigid-material
+   rule as the seat, so it breathes rather than throbs. */
+@keyframes capso-reading {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.capso-reading {
+  animation: capso-reading 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The global reduce rule collapses duration and pins iteration to 1, which
+     would freeze this at its 0% keyframe — a mark stuck at 38% opacity reading
+     as broken rather than working. Hold it at full instead. */
+  .capso-reading {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Skeletons: a slow sweep reads as "working", not as a spinner. */
 @keyframes capso-shimmer {
   to {
@@ -162,20 +195,25 @@ body {
   animation: capso-arrive var(--dur-panel) var(--ease-out-strong);
 }
 
-/* The crimp — the seal. The card's edge acknowledges once and settles. One
-   tighten, no rebound, and it fades out rather than snapping off so the eye
-   is not pulled back to a card it has finished with. */
+/* The crimp — the seal. The edge acknowledges once and settles. One tighten,
+   no rebound, and it fades out rather than snapping off so the eye is not
+   pulled back to something it has finished with.
+
+   The ring is INSET. An outward-spreading shadow is clipped by any ancestor
+   with overflow:hidden, which is exactly what the post-capture overlay is — so
+   the outset version rendered nothing on the single most important surface.
+   Inset also reads better here: the seal closes in rather than radiating out. */
 @keyframes capso-crimp {
   0% {
-    box-shadow: 0 0 0 0 var(--accent);
-    opacity: 0.5;
+    box-shadow: inset 0 0 0 0 var(--accent);
+    opacity: 0.55;
   }
   40% {
-    box-shadow: 0 0 0 3px var(--accent);
+    box-shadow: inset 0 0 0 2px var(--accent);
     opacity: 1;
   }
   100% {
-    box-shadow: 0 0 0 8px transparent;
+    box-shadow: inset 0 0 0 7px transparent;
     opacity: 0;
   }
 }
