@@ -6,6 +6,7 @@ import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
 import { ANSWERS_OFF, EmptyState, Masonry, SkeletonGrid, Thumb } from "@/components/ui";
 import { retrieve } from "@/lib/retrieve";
+import { plural } from "@/lib/plural";
 
 const EXAMPLES = [
   "what are some good designs I have put together for mobile UI",
@@ -140,7 +141,7 @@ export default function SearchPage() {
       {answer && (
         <div className="capso-fade rounded-xl border border-line bg-surface p-4">
           <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
-            From your memory · {answer.cited.length} captures cited
+            From your memory · {plural(answer.cited.length, "capture")} cited
           </p>
           <div className="text-sm leading-relaxed">
             <Cited text={answer.text} lookup={(id) => screenshots.find((s) => s.id === id)} />

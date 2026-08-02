@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store/provider";
 import { getImage, type Intent } from "@/lib/store";
 import { imageFor, INTENT_LABEL, INTENTS, SkeletonGrid } from "@/components/ui";
+import { useReclassify } from "@/lib/reclassify";
+import { AnnotateEditor } from "@/components/annotate";
+import { downscale } from "@/components/capture";
+import { useToast } from "@/components/toast";
 
 /**
  * Screenshot detail — the "what does this actually tell me" surface.
@@ -14,8 +18,10 @@ import { imageFor, INTENT_LABEL, INTENTS, SkeletonGrid } from "@/components/ui";
 export default function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, addTag, dropTag, remove, visit } =
+  const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, addTag, dropTag, remove, visit, patch } =
     useStore();
+  const { reread, busy } = useReclassify();
+  const toast = useToast();
   const s = get(id);
 
   // Ordered the same way the library shows them, so ←/→ match what you just scrolled.
@@ -30,6 +36,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const prev = idx > 0 ? ordered[idx - 1] : undefined;
   const next = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : undefined;
 
+  const [annotating, setAnnotating] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(true);
   const [draft, setDraft] = useState<string | null>(null);
@@ -97,6 +104,45 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="flex flex-col gap-6 lg:flex-row">
+      {annotating && fullImage && (
+        <AnnotateEditor
+          src={fullImage}
+          onCancel={() => setAnnotating(false)}
+          onSave={async (dataUrl, redacted) => {
+            // Straight back through the pipeline every other capture uses, so an
+            // annotated image gets the same cap, the same thumb and a hash of the
+            // bytes that are actually stored — rather than a second, divergent
+            // encoding path that only annotated captures take.
+            const img = await downscale(dataUrl);
+            await patch(id, {
+              imageDataUrl: img.dataUrl,
+              thumbDataUrl: img.thumbDataUrl,
+              width: img.width,
+              height: img.height,
+              aspect: img.aspect,
+              contentHash: img.contentHash,
+            });
+            setAnnotating(false);
+            setOriginal({ id, data: img.dataUrl });
+            // 05 §3 names this as a known limitation: OCR ran on the unblurred
+            // image, so the text Capso remembers still contains what was just
+            // painted over. Rather than only documenting it, offer the re-read
+            // that actually clears it.
+            if (redacted) {
+              toast(
+                "Blurred — but the text Capso already read still contains it.",
+                () => {
+                  const cur = get(id);
+                  if (cur) void reread(cur);
+                },
+                "Read again",
+              );
+            } else {
+              toast("Annotation saved");
+            }
+          }}
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex items-center gap-2 text-xs">
           <Link href="/" className="text-muted hover:text-accent">
@@ -136,7 +182,11 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             src={fullImage}
             alt={s.title}
             className={`rounded-xl border border-line bg-surface ${
-              zoom ? "w-auto max-w-none" : "w-full"
+              // At rest the whole capture fits the window, so a tall screenshot
+              // is something you look at rather than something you scroll past;
+              // zoom is what gives actual pixels. `object-contain` because this
+              // is the one place nothing may be cropped away.
+              zoom ? "w-auto max-w-none" : "max-h-[78vh] w-full object-contain"
             }`}
           />
         </button>
@@ -182,6 +232,28 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           >
             Download
           </a>
+          {/* M2. Only offered once the full-size original is in hand — annotating
+              the 800px thumb would quietly downgrade the capture on save. */}
+          {fullImage && (
+            <button
+              onClick={() => setAnnotating(true)}
+              className="rounded-md border border-line px-3 py-1.5"
+            >
+              Annotate
+            </button>
+          )}
+          {/* Quiet here, prominent in the failure banner above. Re-reading a
+              capture that read fine is still worth offering — the guess improves
+              once there are more projects and more corrections to learn from. */}
+          {s.status === "done" && (
+            <button
+              onClick={() => void reread(s)}
+              disabled={busy === s.id}
+              className="rounded-md border border-line px-3 py-1.5 disabled:opacity-40"
+            >
+              {busy === s.id ? "Reading…" : "Read again"}
+            </button>
+          )}
           <button
             onClick={async () => {
               if (!confirm("Deletes the image, OCR text and every reference to it. Cannot be undone.")) return;
@@ -212,6 +284,26 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             {Math.max(1, Math.round(fullImage.length / 1024))} KB
           </p>
         </div>
+
+        {/* A failed classification used to be a dead end here: no title, no
+            summary, no OCR text, and the only "Try again" in the product was in
+            the Inbox — which this capture leaves the moment it is filed. */}
+        {s.status === "unprocessed" && (
+          <div className="rounded-lg border border-line bg-surface p-3">
+            <p className="text-xs font-medium">Capso couldn&apos;t read this one</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted">
+              No title, summary or text was extracted, so it will not turn up in search. Nothing
+              about the image is lost — only what was read from it.
+            </p>
+            <button
+              onClick={() => void reread(s)}
+              disabled={busy === s.id}
+              className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+            >
+              {busy === s.id ? "Reading…" : "Try again"}
+            </button>
+          </div>
+        )}
 
         <Field label="Summary">
           <p className="text-xs leading-relaxed">{s.summary}</p>

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
 import { ANSWERS_OFF, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
+import { CapsoMark } from "@/components/mark.generated";
 import { retrieve } from "@/lib/retrieve";
+import { plural } from "@/lib/plural";
 
 export default function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -109,13 +111,13 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
       <div className="min-w-0 flex-1 space-y-5">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{threadName(id)}</h1>
-          <p className="mt-1 text-xs text-muted">{shots.length} captures in this project</p>
+          <p className="mt-1 text-xs text-muted">{plural(shots.length, "capture")} in this project</p>
         </div>
 
         <div className="flex gap-2 overflow-x-auto pb-1">
           {shots.map((s) => (
             <Link key={s.id} href={`/s/${s.id}`} className="w-24 shrink-0">
-              <Thumb s={s} />
+              <Thumb s={s} box="4 / 3" />
             </Link>
           ))}
         </div>
@@ -138,14 +140,20 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
             ) : (
               <div key={m.id} className="max-w-xl text-sm leading-relaxed">
                 <p className="mb-2 text-[11px] text-muted">
-                  Searched your memory · {m.citedIds.length || "no"} captures cited
+                  Searched your memory ·{" "}
+                  {m.citedIds.length === 0 ? "no captures" : plural(m.citedIds.length, "capture")} cited
                 </p>
                 <Answer text={m.text} lookup={(cid) => screenshots.find((s) => s.id === cid)} />
               </div>
             ),
           )}
 
-          {busy && <p className="animate-pulse text-xs text-muted">Reading your captures…</p>}
+          {busy && (
+            <p className="flex items-center gap-2 text-xs text-muted">
+              <CapsoMark size={14} className="capso-reading" />
+              Reading your captures…
+            </p>
+          )}
           {note && (
             <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
               {note}
@@ -183,7 +191,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
           {rail.map((s) => (
             <li key={s.id} className="w-32 shrink-0 rounded-lg bg-surface p-2 ring-1 ring-line lg:w-auto">
               <Link href={`/s/${s.id}`}>
-                <Thumb s={s} />
+                <Thumb s={s} box="4 / 3" />
               </Link>
               <p className="mt-1.5 truncate text-[11px] font-medium">{s.title}</p>
               <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted">

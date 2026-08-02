@@ -1,5 +1,6 @@
-// Type-only imports so this module runs under `node --experimental-strip-types`
+// Relative and extensionful so this module runs under `node --experimental-strip-types`
 // in map.check.ts — the same constraint retrieve.ts documents at its head.
+import { aspectOf } from "@capso/shared/capture";
 import type {
   AssignmentSource, Correction, Intent, Message, OcrSource, Revisit, Screenshot, Thread,
 } from "./types.ts";
@@ -38,15 +39,18 @@ const fromDbStatus = (s: DbStatus): Screenshot["status"] =>
 // --------------------------------------------------------- derivation ----
 
 /**
- * Same thresholds as `components/capture.tsx` uses at capture time. If these two
- * ever disagree, a capture silently changes shape when the page reloads and the
- * grid reflows for no visible reason — which is why this is tested against the
- * literal numbers rather than a shared constant either side could edit alone.
+ * The bucket a capture is rendered in, recomputed on read.
+ *
+ * Delegates to the shared spec rather than restating the thresholds: this used
+ * to be a third copy of them, alongside the web capture path and the extension,
+ * and a capture that bucketed one way when taken and another way when read back
+ * would reflow the grid for no visible reason.
+ *
+ * Only the null-handling is local — a row with no dimensions (a seeded fixture)
+ * has no ratio to bucket, and `wide` is the shape the placeholder draws.
  */
 export function aspectFor(width: number | null, height: number | null): Screenshot["aspect"] {
-  if (!width || !height) return "wide";
-  const ratio = width / height;
-  return ratio > 1.2 ? "wide" : ratio < 0.85 ? "tall" : "square";
+  return width && height ? aspectOf(width, height) : "wide";
 }
 
 /**
@@ -63,6 +67,37 @@ export function hueFor(id: string): number {
     h = Math.imul(h, 0x01000193);
   }
   return Math.abs(h) % 360;
+}
+
+/**
+ * A stable uuid for a hand-written seed id.
+ *
+ * `seed.ts` uses readable ids — `"s1"`, `"pricing-redesign"` — and screenshots
+ * reference their thread by that name. Postgres `uuid` columns reject them, but
+ * rewriting the fixtures as literal uuids would cost the readability that makes
+ * them reviewable, and every cross-reference with it.
+ *
+ * Derived rather than random so `loadSamples()` twice is idempotent instead of
+ * duplicating the library, and so a screenshot's `threadId` still resolves to
+ * the thread of the same name.
+ *
+ * Not RFC-4122 v5 (that needs SHA-1); it only has to be well-formed, stable and
+ * collision-free across ~20 fixture names.
+ */
+export function uuidFromSeed(name: string): string {
+  const bytes = new Uint8Array(16);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < 16; i++) {
+    for (let j = 0; j < name.length; j++) {
+      h ^= name.charCodeAt(j) + i;
+      h = Math.imul(h, 0x01000193);
+    }
+    bytes[i] = (h >>> 16) & 0xff;
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC-4122 variant
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // ---------------------------------------------------------- search text ----

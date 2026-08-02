@@ -1,7 +1,10 @@
-/** Long edge of the stored original; matches the web app's own ingest cap. */
-const MAX_EDGE = 1600;
-/** JPEG quality for that original. */
-const FULL_QUALITY = 0.85;
+// Geometry and encoding come from the one shared spec, mirrored here by
+// `pnpm capture:spec` because this extension has no bundler. These used to be
+// two local constants whose only tie to the web app's was a comment saying they
+// matched — see packages/shared/src/capture.ts.
+import { FULL_QUALITY, FULL_TYPE, fitWithin } from "./capture-spec.generated.js";
+
+export { contentHash } from "./capture-spec.generated.js";
 
 /**
  * Shrink and re-encode before it ever reaches the wire.
@@ -18,13 +21,11 @@ const FULL_QUALITY = 0.85;
 export async function compress(dataUrl) {
   const source = await createImageBitmap(await (await fetch(dataUrl)).blob());
   try {
-    const scale = Math.min(1, MAX_EDGE / Math.max(source.width, source.height));
-    const w = Math.max(1, Math.round(source.width * scale));
-    const h = Math.max(1, Math.round(source.height * scale));
+    const { width: w, height: h } = fitWithin(source.width, source.height);
 
     const canvas = new OffscreenCanvas(w, h);
     canvas.getContext("2d").drawImage(source, 0, 0, w, h);
-    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: FULL_QUALITY });
+    const blob = await canvas.convertToBlob({ type: FULL_TYPE, quality: FULL_QUALITY });
 
     const encoded = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -36,18 +37,6 @@ export async function compress(dataUrl) {
   } finally {
     source.close();
   }
-}
-
-/**
- * Stable fingerprint of the encoded bytes, for dedupe downstream.
- *
- * Hashed after compression on purpose: two captures of the same screen produce
- * identical compressed output, whereas raw PNGs can differ by a cursor pixel.
- */
-export async function contentHash(dataUrl) {
-  const bytes = new TextEncoder().encode(dataUrl);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Schemes `captureVisibleTab` refuses by policy — there is nothing to attempt there. */

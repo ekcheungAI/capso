@@ -1,4 +1,5 @@
-import { idb } from "./db";
+import { backend, splitsOriginal } from "./backend";
+import { uuidFromSeed } from "./map";
 import { seedScreenshots, seedThreads } from "./seed";
 import { roleById } from "@/lib/templates";
 import { routeByConfidence } from "@capso/shared";
@@ -9,11 +10,21 @@ export * from "./types";
 export { placeholder } from "./placeholder";
 
 /**
- * Data layer seam. Every function here has a one-to-one Supabase equivalent in
- * P1 (see specs/api_contracts.md) — the UI never talks to IndexedDB directly.
+ * Data layer seam. Every rule the product has about its data lives here; where
+ * the data physically goes is `./backend.ts`, which resolves to Supabase when a
+ * project is configured and reachable, and IndexedDB otherwise.
+ *
+ * The UI never talks to either backend directly, which is why swapping them
+ * touched nothing under `app/` or `components/`.
  */
 
-const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+/**
+ * Postgres `id` columns are `uuid`, so ids must be uuids on both backends — an
+ * id minted locally has to stay valid if the same library later syncs.
+ * IndexedDB does not care what the key looks like, so this is safe for existing
+ * local libraries; their older ids keep working as keys.
+ */
+const uid = () => crypto.randomUUID();
 
 /**
  * How this library came to exist. Its presence — not the DB being non-empty —
@@ -26,17 +37,39 @@ type Setup = "template" | "samples" | "empty";
 /** Threads written before descriptions existed read back without the field. */
 const withDescription = (t: Thread): Thread => ({ ...t, description: t.description ?? "" });
 
+/**
+ * Fixture ids are hand-written and readable (`"s1"`, `"pricing-redesign"`), which
+ * `uuid` columns reject. Mapped deterministically at the boundary rather than
+ * rewritten in `seed.ts`, so the fixtures stay reviewable and a screenshot's
+ * `threadId` still resolves to the thread of the same name. See `uuidFromSeed`.
+ */
+const seededThreads = (): Thread[] =>
+  seedThreads.map((t) => ({ ...t, id: uuidFromSeed(t.id) }));
+
+const seededScreenshots = (): Screenshot[] =>
+  seedScreenshots.map((s) => ({
+    ...s,
+    id: uuidFromSeed(s.id),
+    threadId: s.threadId ? uuidFromSeed(s.threadId) : null,
+  }));
+
 export async function loadAll() {
+  const b = await backend();
+
   const [rawThreads, rawScreenshots, corrections, revisits, messages] = await Promise.all([
-    idb.all<Thread>("threads"),
-    idb.all<Screenshot>("screenshots"),
-    idb.all<Correction>("corrections"),
-    idb.all<Revisit>("revisits"),
-    idb.all<Message>("messages"),
+    b.all<Thread>("threads"),
+    b.all<Screenshot>("screenshots"),
+    b.all<Correction>("corrections"),
+    b.all<Revisit>("revisits"),
+    b.all<Message>("messages"),
   ]);
 
   const threads = rawThreads.map(withDescription);
-  const screenshots = rawScreenshots.map(withScreenshotDefaults);
+  // Remote rows arrive with a storage path and no pixels; one batched signing
+  // call gives the grid something to render. Local rows already carry their
+  // thumb inline and pass through untouched.
+  const screenshots = await b.hydrateThumbs(rawScreenshots.map(withScreenshotDefaults));
+
   let setup = localStorage.getItem(SETUP) as Setup | null;
 
   // Libraries that predate the picker are already set up by definition — never
@@ -76,22 +109,28 @@ export async function applyTemplate(roleId: string) {
 
 /** The first-run fixtures, now opt-in rather than automatic. */
 export async function loadSamples() {
-  await Promise.all(seedThreads.map((t) => idb.put("threads", t)));
-  await Promise.all(seedScreenshots.map((s) => idb.put("screenshots", s)));
+  const b = await backend();
+  // Sequential rather than Promise.all: threads must exist before screenshots
+  // reference them, or the FK on project_thread_id rejects the write.
+  for (const t of seededThreads()) await b.put("threads", t);
+  for (const s of seededScreenshots()) await b.put("screenshots", s);
+
   localStorage.setItem(SETUP, "samples");
   return loadAll();
 }
 
 export async function resetAll() {
+  const b = await backend();
   localStorage.removeItem(SETUP);
-  await Promise.all([
-    idb.clear("threads"),
-    idb.clear("screenshots"),
-    idb.clear("images"),
-    idb.clear("corrections"),
-    idb.clear("revisits"),
-    idb.clear("messages"),
-  ]);
+
+  // Children before parents: corrections, revisits and messages all reference
+  // a screenshot or thread, and deleting the parent first would be rejected by
+  // the FK on the remote backend.
+  for (const c of ["corrections", "revisits", "messages", "screenshots", "threads"] as const) {
+    await b.clear(c);
+  }
+  await b.clearImages();
+
   return loadAll();
 }
 
@@ -101,53 +140,54 @@ export async function resetAll() {
  * history goes with it if it does not.
  */
 export async function clearSamples() {
+  const b = await backend();
   const [screenshots, threads, messages] = await Promise.all([
-    idb.all<Screenshot>("screenshots"),
-    idb.all<Thread>("threads"),
-    idb.all<Message>("messages"),
+    b.all<Screenshot>("screenshots"),
+    b.all<Thread>("threads"),
+    b.all<Message>("messages"),
   ]);
 
-  await Promise.all(screenshots.filter((s) => s.source === "seed").map(deleteScreenshot));
+  for (const s of screenshots.filter((s) => s.source === "seed")) await deleteScreenshot(s);
 
-  const seedIds = new Set(seedThreads.map((t) => t.id));
+  const seedIds = new Set(seededThreads().map((t) => t.id));
   const inUse = new Set(
     screenshots.filter((s) => s.source !== "seed").map((s) => s.threadId),
   );
   const dropped = threads.filter((t) => seedIds.has(t.id) && !inUse.has(t.id));
 
-  await Promise.all([
-    ...dropped.map((t) => idb.del("threads", t.id)),
-    ...messages
-      .filter((m) => dropped.some((t) => t.id === m.threadId))
-      .map((m) => idb.del("messages", m.id)),
-  ]);
+  for (const m of messages.filter((m) => dropped.some((t) => t.id === m.threadId))) {
+    await b.del("messages", m.id);
+  }
+  for (const t of dropped) await b.del("threads", t.id);
 
   localStorage.setItem(SETUP, "empty");
   return loadAll();
 }
 
 /**
- * Write a capture. The full-size original is stored separately from the row —
- * see `STORES.images` — so the row stays small enough that loading the whole
- * library is cheap. Callers keep passing whole `Screenshot` objects; the split
- * is this function's business, not theirs.
+ * Write a capture. Pixels and row are persisted separately — locally the
+ * full-size original moves to its own object store so `loadAll` does not pull
+ * every base64 original into React state; remotely the bytes go to Storage and
+ * the row keeps only their paths. Callers keep passing whole `Screenshot`
+ * objects; the split is this function's business, not theirs.
  */
 export async function putScreenshot(s: Screenshot) {
-  // Split only when a thumb exists to render in the original's place. Without
-  // one the grid would have nothing to show, so such a row keeps its image
-  // inline — the old behaviour, which is correct for it.
-  const canSplit = Boolean(s.imageDataUrl && s.thumbDataUrl);
+  const b = await backend();
+  const paths = await b.saveImages(s);
+  const stored: Screenshot = { ...s, ...paths };
 
-  if (canSplit) {
-    await idb.put("images", { id: s.id, dataUrl: s.imageDataUrl! });
-    await idb.put("screenshots", { ...s, imageDataUrl: null });
-  } else {
-    await idb.put("screenshots", s);
-  }
+  await b.put("screenshots", {
+    ...stored,
+    // Locally the original was just moved out; leaving it on the row would
+    // store it twice. Only rows that also have a thumb are split — one without
+    // has nothing else to render in the grid.
+    imageDataUrl: b.kind === "local" && splitsOriginal(s) ? null : stored.imageDataUrl,
+  });
 
   // Returned with the image still attached: the caller just handed it to us and
-  // is about to render it, so making them re-read it would be silly.
-  return s;
+  // is about to render it, so making them re-read it would be silly. The paths
+  // ride along so the detail view can fetch the original without a reload.
+  return stored;
 }
 
 /**
@@ -164,7 +204,8 @@ export async function patchScreenshot(
   id: string,
   patch: Partial<Screenshot> | ((current: Screenshot) => Partial<Screenshot>),
 ): Promise<Screenshot | null> {
-  const raw = await idb.get<Screenshot>("screenshots", id);
+  const b = await backend();
+  const raw = await b.get<Screenshot>("screenshots", id);
   if (!raw) return null;
   const current = withScreenshotDefaults(raw);
   // The functional form exists so a caller can decide *based on the current
@@ -179,12 +220,14 @@ export async function patchScreenshot(
  * download) and re-classification need it; everything else renders `thumbDataUrl`.
  */
 export async function getImage(id: string): Promise<string | null> {
-  const row = await idb.get<{ id: string; dataUrl: string }>("images", id);
-  return row?.dataUrl ?? null;
+  const b = await backend();
+  const s = await b.get<Screenshot>("screenshots", id);
+  return s ? b.loadImage(withScreenshotDefaults(s)) : null;
 }
 
 export async function putThread(t: Thread) {
-  await idb.put("threads", t);
+  const b = await backend();
+  await b.put("threads", t);
   return t;
 }
 
@@ -210,6 +253,7 @@ export async function assignThread(
   threadId: string | null,
   source: Screenshot["assignmentSource"],
 ): Promise<{ screenshot: Screenshot; correction: Correction; thread?: Thread }> {
+  const b = await backend();
   const aiValue = s.suggestedThreadId ?? null;
   const next: Screenshot = { ...s, threadId, assignmentSource: source };
 
@@ -223,17 +267,18 @@ export async function assignThread(
     createdAt: new Date().toISOString(),
   };
 
-  await Promise.all([idb.put("screenshots", next), idb.put("corrections", correction)]);
+  await b.put("screenshots", next);
+  await b.put("corrections", correction);
 
   // Returned so the caller can refresh it in memory — the library orders project
   // shelves by recency, and a drop that did not visibly move its shelf reads as
   // if nothing happened.
   let thread: Thread | undefined;
   if (threadId) {
-    const t = await idb.get<Thread>("threads", threadId);
+    const t = await b.get<Thread>("threads", threadId);
     if (t) {
       thread = withDescription({ ...t, lastActiveAt: new Date().toISOString() });
-      await idb.put("threads", thread);
+      await b.put("threads", thread);
     }
   }
 
@@ -242,6 +287,7 @@ export async function assignThread(
 
 /** Editing why_saved is a training signal too — owner decision, overrides 06 §5. */
 export async function editWhySaved(s: Screenshot, whySaved: string) {
+  const b = await backend();
   const next = { ...s, whySaved };
   const correction: Correction = {
     id: uid(),
@@ -252,7 +298,8 @@ export async function editWhySaved(s: Screenshot, whySaved: string) {
     wasAiAccepted: false,
     createdAt: new Date().toISOString(),
   };
-  await Promise.all([idb.put("screenshots", next), idb.put("corrections", correction)]);
+  await b.put("screenshots", next);
+  await b.put("corrections", correction);
   return { screenshot: next, correction };
 }
 
@@ -270,7 +317,7 @@ export async function addUserTag(s: Screenshot, raw: string) {
   if (!tag || s.userTags.includes(tag) || s.tags.includes(tag)) return { screenshot: s };
 
   const next = { ...s, userTags: [...s.userTags, tag] };
-  await idb.put("screenshots", next);
+  await (await backend()).put("screenshots", next);
   return { screenshot: next };
 }
 
@@ -280,6 +327,7 @@ export async function addUserTag(s: Screenshot, raw: string) {
  * it; dropping one of your own is just an edit.
  */
 export async function removeTag(s: Screenshot, tag: string) {
+  const b = await backend();
   const wasAi = s.tags.includes(tag);
   const next: Screenshot = {
     ...s,
@@ -288,7 +336,7 @@ export async function removeTag(s: Screenshot, tag: string) {
   };
 
   if (!wasAi) {
-    await idb.put("screenshots", next);
+    await b.put("screenshots", next);
     return { screenshot: next };
   }
 
@@ -301,11 +349,13 @@ export async function removeTag(s: Screenshot, tag: string) {
     wasAiAccepted: false,
     createdAt: new Date().toISOString(),
   };
-  await Promise.all([idb.put("screenshots", next), idb.put("corrections", correction)]);
+  await b.put("screenshots", next);
+  await b.put("corrections", correction);
   return { screenshot: next, correction };
 }
 
 export async function setIntent(s: Screenshot, intent: Screenshot["intent"]) {
+  const b = await backend();
   const next = { ...s, intent };
   const correction: Correction = {
     id: uid(),
@@ -316,32 +366,40 @@ export async function setIntent(s: Screenshot, intent: Screenshot["intent"]) {
     wasAiAccepted: s.intent === intent,
     createdAt: new Date().toISOString(),
   };
-  await Promise.all([idb.put("screenshots", next), idb.put("corrections", correction)]);
+  await b.put("screenshots", next);
+  await b.put("corrections", correction);
   return { screenshot: next, correction };
 }
 
 /** Hard delete, per F10 — image, rows and derived data all go. */
 export async function deleteScreenshot(s: Screenshot) {
-  await idb.del("screenshots", s.id);
-  // The original lives in its own store now; deleting the row alone would leave
-  // the heaviest part of the capture orphaned and unreachable.
-  await idb.del("images", s.id);
-  const [corrections, revisits] = await Promise.all([
-    idb.all<Correction>("corrections"),
-    idb.all<Revisit>("revisits"),
-  ]);
-  await Promise.all([
-    ...corrections.filter((c) => c.screenshotId === s.id).map((c) => idb.del("corrections", c.id)),
-    ...revisits.filter((r) => r.screenshotId === s.id).map((r) => idb.del("revisits", r.id)),
-  ]);
+  const b = await backend();
+
+  // Pixels first: a Storage object whose row is already gone is unreachable, and
+  // nothing would ever come back to clean it up.
+  await b.removeImages(s);
+  await b.del("screenshots", s.id);
+
+  // Remotely, `user_corrections` and `revisit_events` are `on delete cascade`
+  // against `screenshots` (migration 0001) — the row above took them with it.
+  // IndexedDB has no foreign keys, so it needs the sweep done by hand.
+  if (b.kind === "local") {
+    const [corrections, revisits] = await Promise.all([
+      b.all<Correction>("corrections"),
+      b.all<Revisit>("revisits"),
+    ]);
+    await Promise.all([
+      ...corrections.filter((c) => c.screenshotId === s.id).map((c) => b.del("corrections", c.id)),
+      ...revisits.filter((r) => r.screenshotId === s.id).map((r) => b.del("revisits", r.id)),
+    ]);
+  }
 }
 
 export async function recordRevisit(screenshotId: string, kind: Revisit["kind"]) {
   const r: Revisit = { id: uid(), screenshotId, kind, createdAt: new Date().toISOString() };
-  await idb.put("revisits", r);
+  await (await backend()).put("revisits", r);
   return r;
 }
-
 
 export function newId() {
   return uid();
@@ -357,17 +415,17 @@ export const routeConfidence = routeByConfidence;
 /** Archiving keeps the record but drops it out of the library, search and centroids. */
 export async function setArchived(s: Screenshot, archived: boolean) {
   const next = { ...s, archived };
-  await idb.put("screenshots", next);
+  await (await backend()).put("screenshots", next);
   return next;
 }
 
 /** "Forget this" — removing a correction removes it from the few-shot window. */
 export async function forgetCorrection(id: string) {
-  await idb.del("corrections", id);
+  await (await backend()).del("corrections", id);
 }
 
 export async function addMessage(m: Omit<Message, "id" | "createdAt">): Promise<Message> {
   const msg: Message = { ...m, id: uid(), createdAt: new Date().toISOString() };
-  await idb.put("messages", msg);
+  await (await backend()).put("messages", msg);
   return msg;
 }

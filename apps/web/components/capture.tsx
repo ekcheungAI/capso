@@ -9,6 +9,14 @@ import { tagVocabulary } from "@/lib/tags";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
 import { CapsoMark } from "@/components/mark.generated";
 import { deviceToken } from "@/lib/device";
+// Geometry, encoding and the aspect buckets live in one place now — the same
+// module the extension mirrors and the Mac app will import, so two surfaces
+// capturing the same screen produce the same stored artefact.
+// See packages/shared/src/capture.ts.
+import {
+  aspectOf, contentHash, FULL_QUALITY, FULL_TYPE, fitWithin, MAX_EDGE,
+  THUMB_EDGE, THUMB_QUALITY, THUMB_TYPE,
+} from "@capso/shared";
 
 /**
  * Capture layer: drop or paste an image anywhere, or press the Capture button.
@@ -51,7 +59,7 @@ export function CaptureLayer() {
     ) => {
       const id = newId();
       const now = new Date().toISOString();
-      const { dataUrl, thumbDataUrl, aspect, width, height } = image;
+      const { dataUrl, thumbDataUrl, aspect, width, height, contentHash } = image;
 
       /**
        * Fields that describe where the capture came from rather than what the
@@ -63,7 +71,7 @@ export function CaptureLayer() {
         pageTitle: opts.pageTitle ?? null,
         sourceApp: opts.sourceApp ?? null,
         userTags: [],
-        contentHash: null,
+        contentHash,
         originalPath: null,
         thumbPath: null,
         thumbDataUrl,
@@ -549,24 +557,29 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
   );
 }
 
-/** Long edge, in px, that every ingested image is capped at. */
-const MAX_EDGE = 1600;
-/** Thumb long edge — 14_BACKEND_AND_STORAGE.md §25: WebP, 800 px, quality ~80. */
-const THUMB_EDGE = 800;
-
 export type Downscaled = {
   dataUrl: string;
   thumbDataUrl: string;
   aspect: Screenshot["aspect"];
   width: number;
   height: number;
+  /**
+   * Fingerprint of the bytes actually stored, computed here because here is the
+   * only place they are final.
+   *
+   * The extension already hashes its own compressed output and sends it — but
+   * the web app then re-decodes and re-encodes that image, so the hash it sent
+   * described bytes that no longer exist. It was accepted by `/api/ingest`,
+   * carried through the queue, and then dropped on the floor by the drain.
+   * Hashing at the end of the one pipeline every capture goes through means the
+   * hash always matches what is in Storage, whichever surface took it.
+   */
+  contentHash: string;
 };
 
 /** Draw a bitmap at a given long-edge cap and encode it. */
 function encode(bitmap: ImageBitmap, maxEdge: number, type: string, quality: number) {
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const { width: w, height: h } = fitWithin(bitmap.width, bitmap.height, maxEdge);
 
   const canvas = document.createElement("canvas");
   canvas.width = w;
@@ -595,21 +608,21 @@ export async function downscale(src: Blob | string): Promise<Downscaled> {
   const bitmap = await createImageBitmap(blob);
 
   try {
-    const full = encode(bitmap, MAX_EDGE, "image/jpeg", 0.85);
-    const thumb = encode(bitmap, THUMB_EDGE, "image/webp", 0.8);
+    const full = encode(bitmap, MAX_EDGE, FULL_TYPE, FULL_QUALITY);
+    const thumb = encode(bitmap, THUMB_EDGE, THUMB_TYPE, THUMB_QUALITY);
 
-    const ratio = full.w / full.h;
     return {
       dataUrl: full.dataUrl,
       // Safari only gained canvas WebP encoding in 16; `toDataURL` silently
       // returns a PNG when the type is unsupported, which would make the
       // "thumb" larger than the original. Fall back to a small JPEG instead.
-      thumbDataUrl: thumb.dataUrl.startsWith("data:image/webp")
+      thumbDataUrl: thumb.dataUrl.startsWith(`data:${THUMB_TYPE}`)
         ? thumb.dataUrl
-        : encode(bitmap, THUMB_EDGE, "image/jpeg", 0.8).dataUrl,
-      aspect: ratio > 1.2 ? "wide" : ratio < 0.85 ? "tall" : "square",
+        : encode(bitmap, THUMB_EDGE, "image/jpeg", THUMB_QUALITY).dataUrl,
+      aspect: aspectOf(full.w, full.h),
       width: full.w,
       height: full.h,
+      contentHash: await contentHash(full.dataUrl),
     };
   } finally {
     bitmap.close();

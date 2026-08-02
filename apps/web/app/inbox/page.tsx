@@ -3,19 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
-import { getImage } from "@/lib/store";
 import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
 import { useToast } from "@/components/toast";
-import { classify, fewShotLines } from "@/lib/classify";
-import { tagVocabulary } from "@/lib/tags";
+import { useReclassify } from "@/lib/reclassify";
+import { verb } from "@/lib/plural";
 
 /**
  * Inbox triage — keyboard-first per 07: j/k navigate, ⏎ accepts the suggestion,
  * number keys pick a project. Three verbs only (Notion Mail): Confirm / Try again / Ignore.
  */
 export default function InboxPage() {
-  const { ready, inbox, threads, threadName, assign, patch, screenshots, corrections, get } = useStore();
-  const [rerunning, setRerunning] = useState<string | null>(null);
+  const { ready, inbox, threads, threadName, assign, get } = useStore();
+  const { reread, busy } = useReclassify();
   const toast = useToast();
 
   // Filing is one click, so it needs a receipt and a way back.
@@ -75,7 +74,7 @@ export default function InboxPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
         <p className="mt-1 text-xs text-muted">
-          {inbox.length} need a decision. Anything above 80% confidence was filed automatically.{" "}
+          {inbox.length} {verb(inbox.length, "needs", "need")} a decision. Anything above 80% confidence was filed automatically.{" "}
           <span className="text-[11px]">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
         </p>
       </div>
@@ -90,7 +89,7 @@ export default function InboxPage() {
             onMouseEnter={() => setCursor(i)}
           >
             <Link href={`/s/${s.id}`} className="w-28 shrink-0">
-              <Thumb s={s} />
+              <Thumb s={s} box="4 / 3" />
             </Link>
 
             <div className="min-w-0 flex-1">
@@ -152,53 +151,11 @@ export default function InboxPage() {
                 </select>
 
                 <button
-                  disabled={rerunning === s.id}
-                  onClick={async () => {
-                    setRerunning(s.id);
-                    // Originals live in their own store now, so re-reading one
-                    // is a fetch rather than a field access.
-                    const full = s.imageDataUrl ?? (await getImage(s.id));
-                    if (!full) {
-                      setRerunning(null);
-                      toast("Sample captures have no image to re-read.");
-                      return;
-                    }
-                    const r = await classify(
-                      full,
-                      threads,
-                      fewShotLines(corrections, screenshots, threads),
-                      // Re-read with the same page context the capture arrived
-                      // with, or the second guess is worse-informed than the first.
-                      { pageUrl: s.pageUrl, pageTitle: s.pageTitle },
-                      tagVocabulary(screenshots),
-                    );
-                    // A patch, so a re-read cannot clobber edits made while it
-                    // ran — and so `status` actually moves. Without it, a
-                    // capture stuck at "processing" stayed stuck: rendered as
-                    // "Analysing…" forever, undraggable, invisible to /review.
-                    await patch(s.id, {
-                      title: r.title,
-                      summary: r.summary,
-                      whySaved: r.whySaved,
-                      ocrText: r.ocrText,
-                      intent: r.intent,
-                      type: r.type,
-                      confidence: r.confidence,
-                      suggestedThreadId: r.projectSuggestion,
-                      status: r.status,
-                      simulated: r.simulated,
-                      // `userTags` is untouched — a re-read must never discard
-                      // tags the owner added by hand.
-                      tags: r.tags,
-                      ocrSource: r.ocrSource,
-                      ocrLangs: r.ocrLangs,
-                    });
-                    setRerunning(null);
-                    toast(r.simulated ? "Re-read with sample data" : "Re-read with MiniMax M3");
-                  }}
+                  disabled={busy === s.id}
+                  onClick={() => void reread(s)}
                   className="rounded-md border border-line px-3 py-1.5 text-xs disabled:opacity-40"
                 >
-                  {rerunning === s.id ? "Reading…" : "Try again"}
+                  {busy === s.id ? "Reading…" : "Try again"}
                 </button>
                 <span className="text-[11px] text-muted">Ignoring leaves it here</span>
               </div>

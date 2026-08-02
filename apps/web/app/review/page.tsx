@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import { useToast } from "@/components/toast";
 import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/components/ui";
+import { plural } from "@/lib/plural";
 
 /**
  * The review sweep.
@@ -79,7 +80,7 @@ export default function ReviewPage() {
     // and firing them together would race on the same thread rows.
     for (const s of batch) await assign(s, s.suggestedThreadId, "inbox_triage");
     setBusy(false);
-    toast(`Seated ${batch.length} captures`, () => {
+    toast(`Seated ${plural(batch.length, "capture")}`, () => {
       // One undo for the whole sweep — restoring them one toast at a time would
       // be worse than not offering undo at all. Reads each capture fresh so an
       // edit made during the undo window is not overwritten by the pre-sweep
@@ -155,7 +156,7 @@ export default function ReviewPage() {
             }`}
           >
             <Link href={`/s/${s.id}`} className="w-24 shrink-0">
-              <Thumb s={s} />
+              <Thumb s={s} box="4 / 3" />
             </Link>
 
             <div className="min-w-0 flex-1">

@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./capture": "./src/capture.ts",
     "./tokens": "./src/tokens.ts",
     "./tokens.json": "./src/tokens.json"
   },

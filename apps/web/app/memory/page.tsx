@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
 import { EmptyState, INTENT_LABEL, SkeletonGrid, Thumb } from "@/components/ui";
+import { plural } from "@/lib/plural";
 
 type Tab = "learned" | "tidy" | "review";
 
@@ -223,10 +224,10 @@ function Tidy() {
                 className="flex items-center gap-3 rounded-lg bg-surface p-2 ring-1 ring-line"
               >
                 <div className="w-16 shrink-0">
-                  <Thumb s={a} />
+                  <Thumb s={a} box="4 / 3" />
                 </div>
                 <div className="w-16 shrink-0">
-                  <Thumb s={b} />
+                  <Thumb s={b} box="4 / 3" />
                 </div>
                 <p className="min-w-0 flex-1 text-xs">
                   <span className="block truncate">{a.title}</span>
@@ -260,7 +261,7 @@ function Tidy() {
                 className="flex items-center gap-3 rounded-lg bg-surface px-3 py-2 text-xs ring-1 ring-line"
               >
                 <span className="flex-1">
-                  {t.name} <span className="text-muted">· {byThread(t.id).length} captures</span>
+                  {t.name} <span className="text-muted">· {plural(byThread(t.id).length, "capture")}</span>
                 </span>
                 <Link href={`/threads/${t.id}`} className="text-muted hover:text-accent">
                   Open
@@ -331,14 +332,14 @@ function Review() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
-        {forgotten.length} captures you saved and never opened again. Keep the useful ones, archive
+        {plural(forgotten.length, "capture")} you saved and never opened again. Keep the useful ones, archive
         the rest.
       </p>
 
       {forgotten.map((s) => (
         <div key={s.id} className="flex gap-4 rounded-xl bg-surface p-3 ring-1 ring-line">
           <Link href={`/s/${s.id}`} className="w-24 shrink-0">
-            <Thumb s={s} />
+            <Thumb s={s} box="4 / 3" />
           </Link>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{s.title}</p>

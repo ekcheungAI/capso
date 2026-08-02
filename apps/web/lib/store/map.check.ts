@@ -10,6 +10,7 @@ import {
   threadFromRow,
   threadToRow,
   toRow,
+  uuidFromSeed,
 } from "./map.ts";
 import { shot } from "../check-fixtures.ts";
 
@@ -115,6 +116,25 @@ test("hue is deterministic, stable and a legal degree", () => {
   assert.equal(a, hueFor(ID));
   assert.ok(Number.isInteger(a) && a >= 0 && a < 360);
   assert.notEqual(hueFor(ID), hueFor("44444444-4444-4444-8444-444444444444"));
+});
+
+// --------------------------------------------------------- seed uuids ----
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("seed ids become well-formed uuids", () => {
+  assert.match(uuidFromSeed("pricing-redesign"), UUID_V4);
+  assert.match(uuidFromSeed("s1"), UUID_V4);
+});
+
+test("seed uuids are stable, so loadSamples twice does not duplicate the library", () => {
+  assert.equal(uuidFromSeed("s1"), uuidFromSeed("s1"));
+});
+
+test("seed uuids do not collide across the fixture names", () => {
+  const names = ["pricing-redesign", "onboarding-teardown", "capso-bugs", "q3-launch",
+    ...Array.from({ length: 13 }, (_, i) => `s${i + 1}`)];
+  assert.equal(new Set(names.map(uuidFromSeed)).size, names.length);
 });
 
 // -------------------------------------------------------- search_text ----

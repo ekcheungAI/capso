@@ -18,6 +18,7 @@ import {
   Thumb,
   useDragCount,
 } from "@/components/ui";
+import { plural, verb } from "@/lib/plural";
 
 type DateRange = "all" | "7d" | "30d" | "90d";
 type Grouping = "gallery" | "project" | "month" | "intent";
@@ -206,7 +207,8 @@ export default function LibraryPage() {
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent" />
           <span>
-            <span className="font-medium">{inbox.length} captures</span> need a project
+            <span className="font-medium">{plural(inbox.length, "capture")}</span>{" "}
+            {verb(inbox.length, "needs", "need")} a project
           </span>
           <span className="ml-auto text-muted">{sweepable > 0 ? "Review all →" : "Triage →"}</span>
         </Link>
@@ -227,7 +229,10 @@ export default function LibraryPage() {
       <div className="flex flex-wrap items-center gap-2">
         <Segmented value={grouping} options={GROUPINGS} onChange={setGrouping} />
 
-        <span className="mx-1 h-4 w-px bg-line" />
+        {/* Divides the grouping tabs from the filters. Hidden once the row wraps:
+            on a phone the two groups already sit on separate lines, so the rule
+            stops dividing anything and just dangles at the end of the tabs. */}
+        <span className="mx-1 hidden h-4 w-px bg-line sm:block" />
 
         <Select value={intent} onChange={(v) => setIntent(v as Intent | "all")}>
           <option value="all">Any intent</option>
@@ -282,7 +287,7 @@ export default function LibraryPage() {
 
         <span className="ml-auto text-xs text-muted">
           {results.length}
-          {filtering && ` of ${filed.length}`} captures
+          {filtering ? ` of ${filed.length}` : ""} {verb(results.length, "capture", "captures")}
         </span>
       </div>
 
@@ -518,7 +523,7 @@ function ResurfaceShelf({ items }: { items: { s: Screenshot; reason: string }[] 
             className="flex gap-3 rounded-xl bg-surface p-2 ring-1 ring-line hover:ring-accent/60"
           >
             <span className="w-16 shrink-0">
-              <Thumb s={s} />
+              <Thumb s={s} box="4 / 3" />
             </span>
             <span className="min-w-0 flex-1 py-0.5">
               <span className="block truncate text-sm font-medium">{s.title}</span>

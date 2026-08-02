@@ -10,6 +10,7 @@ import { CommandPalette } from "@/components/palette";
 import { ShortcutSheet } from "@/components/shortcuts";
 import { FirstRun } from "@/components/first-run";
 import { DropZone, useDragCount } from "@/components/ui";
+import { ImportLocal } from "@/components/import-local";
 import { useMoveCaptures } from "@/lib/move";
 
 /**
@@ -96,10 +97,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return (
       <div className="min-h-screen px-6">
         <CapsoMarkDefs />
-        <p className="flex items-center gap-2 py-4 text-sm font-semibold tracking-tight">
-          <CapsoMark size={17} />
-          Capso
-        </p>
+        <p className="py-4 text-sm font-semibold tracking-tight">Capso</p>
         <FirstRun />
       </div>
     );
@@ -123,15 +121,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
           nav ? "fixed inset-y-0 left-0 z-40 overflow-y-auto bg-background" : "hidden"
         } w-56 shrink-0 border-r border-line px-3 py-4 md:static md:block md:overflow-visible`}
       >
-        {/* The mark was drawn, shipped to every icon surface, and never once
-            appeared in the product itself. It is the only thing on screen at
-            all times, so it is the cheapest possible carrier of the brand. */}
+        {/* Wordmark only. The mark was here as a logo, which is the one thing
+            `drafts/brand/GUIDELINES.html` says it can never be: "never a
+            watermark, a sidebar logo, or empty-state decoration". Not style —
+            the mark's whole job is provenance, *the mark means Capso decided*,
+            and a glyph that is also on screen when nothing was decided cannot
+            carry that. It stays on the icon surfaces (favicon, tray, extension),
+            in the rack slots below, and on the reading state; it does not stay
+            here, where it was the only place it meant nothing. */}
         <Link
           href="/"
           onClick={dismissNav}
-          className="mb-6 flex items-center gap-2 px-2 text-sm font-semibold tracking-tight"
+          className="mb-6 block px-2 text-sm font-semibold tracking-tight"
         >
-          <CapsoMark size={17} />
           Capso
         </Link>
 
@@ -238,6 +240,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             Reset demo data
           </button>
+          {/* Renders nothing unless this browser is holding captures the account
+              does not have — see components/import-local.tsx. */}
+          <ImportLocal />
         </div>
       </aside>
 

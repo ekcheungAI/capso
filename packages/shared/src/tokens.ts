@@ -42,6 +42,19 @@ export const color: Record<Scheme, Readonly<Record<string, string>>> = raw.color
  */
 export const intent: Readonly<Record<string, string>> = raw.intent;
 
+/**
+ * Annotation ink (05 §3). Deliberately a fixed five, not a colour picker —
+ * plus `ringLight`/`ringDark`, which are not ink but the two-tone dashed ring
+ * around a selected mark, drawn in both so it stays visible on any screenshot.
+ *
+ * Held a shade stronger than the `intent` hues because these are drawn *onto*
+ * screenshots rather than beside them: an arrow has to survive landing on a
+ * screenshot of somebody else's UI, which may be any colour at all. Mid-dark
+ * across the set so they read on the light backgrounds most screenshots have,
+ * and the text tool carries a white outline for the ones that do not.
+ */
+export const annotate: Readonly<Record<string, string>> = raw.annotate;
+
 /** Marketing surfaces only — landing pages, OG cards, photography. Never in-app. */
 export const marketing: Readonly<Record<string, string>> = raw.marketing;
 

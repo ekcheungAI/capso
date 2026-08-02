@@ -552,3 +552,50 @@ First report from the v0.3.0 popup, and it worked as designed: *"2 waiting to re
 - The popup shows **"Open settings to fix this"** when anything is pending, and only then — a queue that is not moving is almost always a wrong address, and the fix lives on a page most people do not know exists.
 
 Verified: all six extension files parse as ES modules under `node --check` (the module split in loop 25 was never checked this way — the earlier check regex stripped `export async function f() {` including its brace and reported three false failures). `pnpm typecheck && lint && test (18) && build` green; production `/extension-version.json` serves 0.3.1.
+
+## Loop 27 — A failed capture was a dead end, and it recovered on one click
+**Date:** 2026-08-02 · **Phase:** P1 · **Outcome:** done, not deployed — see the coordination note
+
+**The find.** A real extension capture — a dense 繁體中文 Gemini conversation — sat in the library reading "Couldn't read this one", with no summary, no tags, and "No text found" for a screenshot that is *entirely* text. The detail view, which is where anyone reading that sentence actually goes, had **no way to act on it**. The only "Try again" in the product lived in the Inbox, which a capture leaves the moment it is filed — so a failed classification that was dragged onto a project became permanently unreadable and unfixable short of deleting it and capturing again.
+
+Clicked the new button on that exact capture: `unprocessed → done`, **0 → 707 characters of OCR**, title "Threads AI content marketing tool copy options", seven tags including 繁體中文 reused verbatim from the library vocabulary, intent `marketing_hook`. **The original failure was transient.** Failed classifications are routinely recoverable and there was nowhere to recover them from.
+
+Re-read logic extracted to `lib/reclassify.ts` and shared, rather than a second copy on the detail page — it carries the invariants that matter (`patch` not `put`, `userTags` never discarded, and now `whySaved` preserved when the owner already wrote one) and those cannot drift across two implementations. Prominent as a recovery banner when `status === "unprocessed"`; quiet as "Read again" otherwise, because the guess improves as projects and corrections accumulate.
+
+**Pluralisation.** Eight call sites hardcoded the plural, so one pending capture greeted you with "1 captures need a project" on the first line of the home page. `lib/plural.ts` + `verb()` for sentences that continue past the noun. Small, but it reads as carelessness in a product whose pitch is that it is more organised than you are.
+
+**Coordination note.** A concurrent session is mid-migration to Supabase, and for part of this loop the tree did not typecheck — `lib/store/remote.ts:103` and `components/capture.tsx:530`. Both were outside anything this loop touched and were left alone rather than fixed into a moving target; that session resolved them during the loop. Final state verified green: `pnpm typecheck && lint && test (38) && build`.
+
+**Also observed, not acted on.** `.env.local` now carries the Supabase keys, so `backend()` resolves to remote — and `map.ts:234` nulls `thumbDataUrl` for remote rows because bytes are meant to live in Storage. Every thumbnail therefore renders as the SVG placeholder. That is expected mid-migration if the Storage upload is not wired yet, but it also means browser-side verification against IndexedDB is now misleading: the local store is stale relative to what the UI reads. Worth a note in the migration's own loop.
+
+**Brand tension to resolve, not for this loop.** The mark now appears as the sidebar wordmark and beside every project row. `drafts/brand/GUIDELINES.html` is explicit that it "can never be used as a watermark, a sidebar logo, or empty-state decoration" — its entire job is provenance, *the mark means Capso decided*, and it stops meaning that once it also decorates. Raised for whoever built it rather than reverted.
+
+**Deploy blocker found and fixed on the way out.** `.vercelignore` carried a bare `supabase` pattern, meant for the root migrations directory. Unanchored patterns match a path segment at *any* depth, so it also excluded `apps/web/lib/supabase/` — the build failed with `Module not found: Can't resolve '@/lib/supabase/client'` for a file that exists locally and typechecks locally, which is the worst shape a build error can take. All four directory patterns are now anchored with a leading slash; `drafts`, `specs` and `prompts` were the same trap waiting to happen inside the app.
+
+## Loop 28 — The mark stops being a logo
+**Date:** 2026-08-02 · **Phase:** P1 · **Outcome:** done
+
+Raised at the end of loop 27 as a decision rather than a fix; owner called it.
+
+`drafts/brand/GUIDELINES.html` names three things the mark can never be — "a watermark, a sidebar logo, or empty-state decoration" — and gives the reason: its entire job is provenance, *the mark means Capso decided, its absence means you did*. A glyph that is also on screen when nothing was decided cannot carry that. It was sitting next to the "Capso" wordmark in the sidebar and again in the first-run header, which is the banned case verbatim, and it was the one place in the product where it meant nothing.
+
+Removed from both. It stays on every icon surface (favicon, PWA, tray, extension), on the reading state in the capture overlay and thread chat, and in the rack slots.
+
+**The rack was left alone, deliberately.** The per-project lids look like the same violation and are not: an open ring is an empty slot and a part face is a shelf with something on it, so the glyph is doing the *rack* metaphor — which the same guidelines establish — rather than claiming Capso inferred anything. It also does real work, previewing the level a slot would reach if the drag in hand landed there. Applying the provenance rule mechanically would have deleted a just-shipped interaction for a rule it does not break.
+
+Verified: wordmark renders plain, rack slots intact and still differentiating empty from filled. `pnpm typecheck && lint && test (74) && build` green.
+
+## Loop 29 — One tall capture owned the whole screen
+**Date:** 2026-08-02 · **Phase:** P1 · **Outcome:** done
+
+Reported from a real library: a phone screenshot of a scrolling dating-app list made the Inbox "messy and not fitted nicely". It was not a styling problem. `Thumb` rendered `h-auto w-full`, so the capture set its own height everywhere — and that capture is roughly **1:5**. In a 112px-wide Inbox row that is a 560px-tall row: one capture fills the viewport, and the keyboard triage the screen exists for becomes scrolling. The same capture ran about five column-widths tall in the gallery and required a long scroll on the detail view.
+
+Three different fixes, because the three surfaces want different things:
+
+- **Rows and strips get a fixed box.** `Thumb` gained `box`, rendering into an aspect-ratio container with `object-cover object-top`. Applied to Inbox, Review, both memory lists, the thread filmstrip, the sources rail and the resurfacing shelf. Cropped from the top because the top of a screenshot is the part that identifies it, and uniform because a list of wildly different heights is not scannable.
+- **The gallery is capped, not boxed.** It is a moodboard and mixed heights are the point — but `max-h-[30rem] object-cover object-top` stops one capture pushing everything after it off-screen.
+- **The detail hero fits the window at rest.** `max-h-[78vh] object-contain`, so a tall capture is something you look at rather than scroll past. `contain`, not `cover`: this is the one place nothing may be hidden, and zoom still gives actual pixels.
+
+**One more plural, found while verifying.** The Inbox header read "1 need a decision" — missed in loop 27 because that grep looked for the noun and this sentence elides it. Now agrees.
+
+Verified against a synthetic 420×2100 capture pushed through the real drop path: Inbox row compact with the title legible in the crop, gallery card bounded, detail hero fully visible without scrolling, filmstrip uniform. `pnpm typecheck && lint && test (74) && build` green.

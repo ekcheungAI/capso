@@ -86,12 +86,24 @@ export function Thumb({
   s,
   className = "",
   size = "thumb",
+  box,
 }: {
   s: Screenshot;
   className?: string;
   size?: "thumb" | "full";
+  /**
+   * Render into a fixed-aspect box instead of at the capture's own proportions.
+   *
+   * Required wherever captures are listed in rows. `h-auto w-full` lets the
+   * image set its own height, and a phone screenshot of a long scrolling list is
+   * around 1:5 — in a 112px-wide Inbox row that is a 560px-tall row, so one
+   * capture owns the whole viewport and the keyboard triage it is built for
+   * becomes scrolling. Cropped from the top, because the top of a screenshot is
+   * the part that identifies it.
+   */
+  box?: string;
 }) {
-  return (
+  const img = (
     // eslint-disable-next-line @next/next/no-img-element -- data URIs / IndexedDB blobs, nothing to optimise
     <img
       src={imageFor(s, size)}
@@ -103,8 +115,22 @@ export function Thumb({
       height={s.height ?? undefined}
       loading="lazy"
       decoding="async"
-      className={`h-auto w-full rounded-lg border border-line ${className}`}
+      className={
+        box
+          ? "h-full w-full object-cover object-top"
+          : `h-auto w-full rounded-lg border border-line ${className}`
+      }
     />
+  );
+
+  if (!box) return img;
+  return (
+    <span
+      style={{ aspectRatio: box }}
+      className={`block overflow-hidden rounded-lg border border-line bg-surface ${className}`}
+    >
+      {img}
+    </span>
   );
 }
 
@@ -202,7 +228,11 @@ export function ScreenshotCard({
 
       <Link href={`/s/${s.id}`} className="block">
         <div className="relative">
-          <Thumb s={s} />
+          {/* Capped, not boxed. The gallery is a moodboard and mixed heights are
+              the point — but an unbounded card meant a 1:5 phone screenshot ran
+              five column-widths tall and pushed everything after it off-screen.
+              Cropped from the top, and only when the capture exceeds the cap. */}
+          <Thumb s={s} className="max-h-[30rem] object-cover object-top" />
           {/* The image is on screen the moment it is read; this rides its top
               edge while the model is still looking at it (05 §2). */}
           {processing && (
