@@ -33,6 +33,15 @@
     "content_idea": "#3e7a75",
     "ux_bug": "#a8465c"
   },
+  "annotate": {
+    "red": "#b03a48",
+    "amber": "#a8702c",
+    "green": "#4f7a45",
+    "blue": "#3f6aa3",
+    "purple": "#6a5ba8",
+    "ringLight": "#ffffff",
+    "ringDark": "#111111"
+  },
   "marketing": {
     "clay": "#ebdbcc",
     "espresso": "#311b0f",

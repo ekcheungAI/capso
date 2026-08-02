@@ -57,6 +57,89 @@ INTENT_LABEL = {"reference": "Reference", "design_inspiration": "Design inspirat
                 "content_idea": "Content idea", "ux_bug": "UX bug"}
 INTENTS = [(INTENT_LABEL[k], v) for k, v in TOKENS["intent"].items()]
 
+
+
+# The rim path, taken from the same SVG the app and the icon builders compile.
+RIM_D = " ".join(re.search(r'd="(M12 1\.6[^"]+)"', MARK.read_text(), re.S).group(1).split())
+
+
+def lid_state(size, state, uid):
+    """empty · some · full — the three fill states shipping in mark.generated.tsx.
+
+    Built explicitly rather than by slicing the source SVG: an earlier version
+    spliced strings and emitted an unclosed <g>.
+    """
+    r = {"empty": 0, "some": 3, "full": 6}[state]
+    face = f'<circle cx="12" cy="12" r="{r}"/>' if r else ""
+    return (
+        f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" aria-hidden="true" '
+        f'style="display:block;flex:none;color:var(--ink)">'
+        f'<mask id="cs{uid}"><rect width="24" height="24" fill="#fff"/>'
+        f'<rect x="12" y="10.4" width="11" height="3.2" fill="#000"/></mask>'
+        f'<g fill="currentColor" fill-rule="evenodd" mask="url(#cs{uid})">'
+        f'<path d="{RIM_D}"/>{face}</g></svg>'
+    )
+
+
+# ---------------------------------------------------------------- motion
+# Parsed from the shipping stylesheet, not retyped. A motion table in a brand
+# guideline carries the same drift risk as a hex: correct the day it is written
+# and quietly wrong a week later.
+CSS = (ROOT.parent.parent / "apps" / "web" / "app" / "globals.css").read_text()
+
+MOMENT = {
+    "capso-arrive": ("A capture lands in the grid", "the most frequent moment in the product", 1),
+    "capso-seat": ("Confirm — the capsule seats", "dips and returns; the satisfaction is the deceleration", 1),
+    "capso-crimp": ("The seal", "inset ring, one tighten, no rebound", 1),
+    "capso-slot-crimp": ("A capsule drops into a rack slot", "the slot acknowledges", 1),
+    "capso-reading": ("Capso is reading a capture", "the only looping <em>brand</em> motion", 1),
+    "capso-rack-open": ("Picking a capture up opens the rack", "every lid retracts to an open ring", 1),
+    "capso-rack-prev": ("Aiming at a slot", "that lid previews itself filling", 1),
+    "capso-rack-real": ("Letting go", "lids return to their real fill", 1),
+    "capso-overlay-in": ("The capture overlay arrives", "from the Capture button, not fading in place", 0),
+    "capso-pop-in": ("⌘K palette", "no travel — keyboard-driven, hit many times a day", 0),
+    "capso-fade-in": ("Small state swaps", "opacity only", 0),
+    "capso-toast-in": ("A toast", "an 8px rise", 0),
+    "capso-shimmer": ("Content placeholder", "functional loop — not brand", 0),
+    "capso-progress-sweep": ("In-flight capture, on the thumbnail edge", "functional loop — not brand", 0),
+}
+
+
+def motion_rows():
+    """One row per @keyframes the stylesheet declares, with the rule that uses it.
+
+    Keyed on keyframes rather than on class selectors: the rack is driven by
+    [data-armed] / [data-over] attribute selectors and transitions, so a
+    class-only scan silently missed half the system — including every rack beat
+    and the crimp, which lives on ::after.
+    """
+    names = re.findall(r"@keyframes\s+(capso-[a-z-]+)", CSS)
+    rows = ""
+    for kf in dict.fromkeys(names):
+        m = re.search(r"([^{}]*)\{[^{}]*animation:\s*([^;]*" + re.escape(kf) + r"[^;]*);", CSS)
+        sel = " ".join(m.group(1).split()).lstrip("}").strip() if m else "—"
+        decl = " ".join(m.group(2).split()) if m else "—"
+        moment, note, _ = MOMENT.get(kf, ("—", "", 0))
+        loops = "infinite" in decl
+        rows += (f'<tr><td><code>{sel}</code></td><td><b>{moment}</b></td>'
+                 f'<td><code>{decl}</code></td>'
+                 f'<td>{"<span class=\'loop\'>loops</span>" if loops else "once"}</td>'
+                 f'<td class="why">{note}</td></tr>')
+    return rows, len(dict.fromkeys(names))
+
+
+motion, motion_count = motion_rows()
+
+RACK = [("Product ideas", "some", 1), ("Marketing & hooks", "empty", 0),
+        ("Competitors", "empty", 0), ("Onboarding teardown", "full", 6)]
+rack_rows = "".join(
+    f'<div class="rr">{lid_state(15, st, f"k{i}")}<span>{n}</span><i>{c or ""}</i></div>'
+    for i, (n, st, c) in enumerate(RACK))
+states_row = "".join(
+    f'<div class="st">{lid_state(38, st, f"b{st}")}<b>{st}</b><small>{lab}</small></div>'
+    for st, lab in [("empty", "a slot waiting"), ("some", "has captures"), ("full", "filling up")])
+brand_loops = [k for k, v in MOMENT.items() if v[2] and k == "capso-reading"]
+
 CORE = [
     ("Bone", BONE, "Product ground", f"{cr(INK, BONE):.1f}:1 with ink"),
     ("Surface", SURF, "Cards, panels", f"{cr(INK, SURF):.1f}:1 with ink"),
@@ -91,6 +174,11 @@ dark_swatches = "".join(
     f'{"box-shadow:inset 0 0 0 1px rgb(0 0 0/.10)" if L(hexv) > .5 else ""}"></div>'
     f'<b>{n}</b><code>{hexv}</code><em>{use}</em><small>{note}</small></div>'
     for n, hexv, use, note in DARK)
+
+ANNOTATE = TOKENS.get("annotate", {})
+annots = "".join(
+    f'<div class="dt"><span style="background:{h}"></span><b>{n.title()}</b><code>{h}</code>'
+    f'<small>{cr(h, BONE):.1f} on bone</small></div>' for n, h in ANNOTATE.items())
 
 dots = "".join(
     f'<div class="dt"><span style="background:{h}"></span><b>{n}</b><code>{h}</code>'
@@ -156,6 +244,14 @@ th{{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--m
 .ring.h{{border-style:dashed}}
 .ring.p{{border-color:var(--muted)}}
 .change{{border-left:3px solid var(--ink);padding:6px 0 6px 20px;margin:22px 0}}
+.rr{{display:flex;align-items:center;gap:9px;padding:6px;border-radius:7px;font-size:13.5px}}
+.rr span{{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.rr i{{font-style:normal;font-size:11.5px;color:var(--muted)}}
+.st{{display:grid;justify-items:center;gap:7px;text-align:center}}
+.st b{{font-size:12.5px;font-weight:600}}
+.st small{{font-size:11px;color:var(--muted)}}
+.loop{{font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;
+  background:var(--ink);color:var(--bone);border-radius:999px;padding:2px 8px}}
 .change p{{margin:0 0 9px}}.change p:last-child{{margin:0}}
 /* mockups — the retrieval surfaces, built from the real tokens */
 .mock{{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:13px;
@@ -255,6 +351,40 @@ should not be one.</p>
 <hr/>
 
 <section>
+<h2>The rack</h2>
+<p>The single change that made the metaphor structural rather than decorative. Every project row
+carries the mark, and <strong>the foil face is sized to how full that project is</strong>. Rim and
+crimp never change, so it is always one glyph — the sidebar becomes a rack seen head-on.</p>
+
+<div class="two" style="align-items:center;margin-top:22px">
+  <div class="panel"><div class="states">{states_row}</div></div>
+  <div class="panel" style="padding:16px 12px">{rack_rows}</div>
+</div>
+
+<p class="cap"><strong>Empty is the important one.</strong> “Marketing &amp; hooks 0” was the
+flattest thing on the screen and most of the sidebar; an open ring says <em>waiting</em>. Emptiness
+became the clearest statement of the idea rather than its weakest point.</p>
+
+<h4 style="margin-top:32px">Why three states and not a continuous fill</h4>
+<p>A linear map from count to face radius was tried first and fails for the same reason the 16px
+icon needed its own grid: one capture out of eight puts the face at r0.75, which at a 15px glyph is
+under a device pixel. “Has something in it” rendered <em>identically</em> to “empty” — the single
+most important distinction in the control. Three steps are distinguishable at this size; eight are
+not, and the exact count is already on the row.</p>
+
+<h4 style="margin-top:32px">Loading the rack</h4>
+<p>Picking a capture up <strong>opens the rack</strong>: every lid retracts to an open ring,
+staggered 40ms down the list so it reads as one drawer rather than five flickers. The row you aim at
+previews itself filling — you see the outcome before you commit — and the drop crimps that slot.
+Letting go closes the rack faster than it opened, with no stagger, because people care more about
+what appears than what leaves.</p>
+<p class="cap">No new visual vocabulary anywhere in this: empty / some / full are the three states
+the mark already ships, animated.</p>
+</section>
+
+<hr/>
+
+<section>
 <h2>Typography</h2>
 <div class="two">
   <div class="panel">
@@ -281,12 +411,14 @@ should not be one.</p>
 <section>
 <h2>Colour</h2>
 <div class="change">
-  <p><strong>This changed, and it is worth being explicit.</strong> Terracotta ships today; two
-  messages ago I recommended a sorted green. Seeing four directions side by side, both were wrong —
-  green on cream read institutional, and any accent competes with the screenshots that fill every
-  screen.</p>
-  <p><strong>There is no accent hue. Buttons are ink.</strong> The only colour in the product
-  belongs to your captures.</p>
+  <p><strong>There is no accent hue. Buttons are ink.</strong> The only colour the interface asserts
+  is none; the captures carry all of it. Measured on a full grid of realistic screenshots,
+  <strong>100% of the chromatic pixels on screen belong to the captures</strong>.</p>
+  <p>How it got here, since the reasoning matters more than the value: terracotta was the placeholder
+  and failed AA twice over, needing a hand-tuned pair per scheme. A sorted green was recommended and
+  was also wrong — on cream it read institutional. Seeing four directions rendered side by side is
+  what settled it, and what removed the accent entirely rather than replacing it. Ink inverts with
+  the theme for free, so the mode-dependence went with it.</p>
 </div>
 <div class="grid" style="margin-top:22px">{swatches}</div>
 
@@ -301,6 +433,18 @@ so a single value clears 3:1 on <em>both</em> grounds with no light/dark pair. S
 <strong>never as text</strong> — they are tuned for 3:1, not 4.5.</p>
 <div class="dots">{dots}</div>
 <p class="cap">Ratios shown are on bone · on ink.</p>
+
+<h4 style="margin-top:36px">Annotation — the second exception, and why it is not a contradiction</h4>
+<p>Markup on a capture ships with five pens. On its face that breaks the rule this whole section
+rests on. It does not, and the distinction is worth stating because it is the test for anything
+future: <strong>this is colour the user authors, not colour the interface asserts.</strong></p>
+<p>A red arrow you drew on a screenshot is <em>content</em> — the same category as the screenshot
+underneath it. It is no more a brand colour than the pixels it sits on. Chrome stays bone and ink;
+the captures, the intent dots and now your own marks carry everything else.</p>
+<div class="dots" style="margin-top:14px">{annots}</div>
+<p class="cap">Five, because more becomes a colour picker and a colour picker is a decision the
+product should not be asking for. Each clears 4.5:1 on bone, so a pen is legible as a line even
+where it crosses a pale region of the screenshot.</p>
 </section>
 
 <hr/>
@@ -347,7 +491,7 @@ border. The mark is the only thing that says this was written by Capso.</p>
   <li style="margin-bottom:7px"><strong style="color:var(--ink)">Screenshots are the citation.</strong>
   Every claim carries its source capture as a thumbnail you can click. Nothing is asserted without one.</li>
   <li style="margin-bottom:7px"><strong style="color:var(--ink)">Thinking is the crimp-ring pulse</strong>
-  — <code>--dur-panel</code>, the one looping motion we allow. Not a spinner, not a shimmer, not three dots.</li>
+  — the mark breathing, <code>1.6s ease-in-out</code>. Not a spinner, not three dots, and not Tailwind's default pulse, which is what it actually was until it got fixed.</li>
   <li><strong style="color:var(--ink)">Nothing found says nothing found</strong>, in one sentence,
   and does not guess.</li>
 </ul>
@@ -377,15 +521,47 @@ inferred, the rule is broken and the signal is worth nothing.</p>
 
 <section>
 <h2>Motion</h2>
-<p>No new dependency. Everything reuses the tokens already in <code>globals.css:37-143</code>.</p>
-<table>
-<tr><th>Moment</th><th>Behaviour</th><th>Token</th></tr>
-<tr><td>Capture lands</td><td>Card settles into the grid, corners soften to a lid</td><td><code>--dur-panel</code> 220ms</td></tr>
-<tr><td>Reading</td><td>Crimp ring pulses once, slowly. The only looping motion anywhere</td><td><code>--dur-panel</code></td></tr>
-<tr><td>Filed</td><td>Centre fills. No confetti, no check-mark bounce</td><td><code>--dur-pop</code> 160ms</td></tr>
-<tr><td>Retrieval</td><td>Scattered captures resolve into the grid — chaos in, order out</td><td><code>--ease-out-strong</code></td></tr>
+<p>No animation dependency — all of it is CSS on opacity and transform. The table below is
+<strong>parsed from <code>globals.css</code> at build time</strong>, not retyped, so it cannot drift
+from what ships. {motion_count} keyframes, in declaration order.</p>
+
+<div class="change">
+  <p><strong>One rule decides most of this: the material is rigid.</strong> A coffee capsule is
+  aluminium going into a socket, so every seat, arrival and crimp decelerates hard and
+  <strong>stops dead — zero overshoot</strong>. A bounce would read as rubber. The satisfaction has
+  to come from the deceleration curve, which is the difference between this feeling expensive and
+  feeling like a toy.</p>
+</div>
+
+<table style="margin-top:20px">
+<tr><th>Selector</th><th>Moment</th><th>Declaration</th><th>Runs</th><th>Note</th></tr>
+{motion}
 </table>
-<p class="cap">Everything under 250ms. If it draws attention to itself it is wrong.</p>
+
+<h4 style="margin-top:32px">The looping rule, stated precisely</h4>
+<p>An earlier draft of this document claimed the reading pulse was “the only looping motion
+anywhere”. That was never true of the product and is worth correcting rather than quietly
+softening: <strong>three things loop</strong>, and only one of them is brand.</p>
+<table>
+<tr><th></th><th>Loop</th><th>Why it is allowed</th></tr>
+<tr><td><code>.capso-reading</code></td><td>the mark, breathing</td>
+  <td class="why"><strong>The only looping brand motion.</strong> Sine-based ease-in-out, because an
+  ambient loop needs an invisible seam — a strong ease-out would make it tick.</td></tr>
+<tr><td><code>.capso-skeleton</code></td><td>content placeholder</td>
+  <td class="why">Functional, not brand. It stands in for content that has not arrived; banning it
+  would be dogma.</td></tr>
+<tr><td><code>.capso-progress</code></td><td>in-flight capture edge</td>
+  <td class="why">Functional. Rides the thumbnail, communicates that the model is still working on
+  that specific capture.</td></tr>
+</table>
+<p class="cap">Everything that is not a loop settles inside 250ms. If it draws attention to itself
+it is wrong.</p>
+
+<h4 style="margin-top:32px">Reduced motion</h4>
+<p>A global rule collapses durations and pins iteration counts to 1. That is right for one-shots and
+<em>wrong for loops</em>: it freezes them on their first keyframe. <code>.capso-reading</code> would
+have held at 38% opacity — a mark that reads as broken rather than working — so it has an explicit
+override to full. Any future loop needs the same treatment; assume the global rule will betray it.</p>
 </section>
 
 <hr/>
@@ -486,20 +662,22 @@ the plain inverse instead of a hand-tuned second pair.</p>
 <hr/>
 <section>
 <h2>Shipped</h2>
-<p>The mark is installed everywhere it belongs, all of it generated from the one SVG:
-<code>favicon.ico</code> (with the hinted 16px master embedded verbatim), the PWA and Apple touch
-icons, the four extension sizes, the Tauri <code>.icns</code>/<code>.ico</code> set and the macOS
-menu-bar template. Plate is bone, mark is ink — an ink plate sits at almost exactly the luminance
-of Chrome's dark tab strip and disappears into it.</p>
+<p>Everything in this document is in the product or in the pipeline that builds it. The mark is in
+the sidebar and on first run, the rack carries fill state on every project, captures arrive by
+seating, the overlay crimps on confirm, and the reading state is the mark rather than a borrowed
+utility class.</p>
+<p><strong>Two things are generated rather than written.</strong> The palette compiles from
+<code>packages/shared/src/tokens.json</code>, and the mark's geometry compiles from
+<code>capso-lid.svg</code> into <code>components/mark.generated.tsx</code> — a
+<code>&lt;path d="…"&gt;</code> pasted into a component is the same drift a hard-coded hex is.
+<code>pnpm brand:check</code> fails the build on either, and on any stray colour in source.</p>
 <p><strong>Fraunces is SIL OFL 1.1</strong> — commercial use, embedding and redistribution all
-permitted. It is a Reserved Font Name, so a modified cut may not be called Fraunces; we do not
-modify it. That question is closed.</p>
-<p style="color:var(--muted);font-size:13.5px;margin:22px 0 0">Still open: the tray template's
-Rust-side wire-up, <code>NEXT_PUBLIC_SITE_URL</code> (no domain registered, so the OG image
-currently resolves against localhost), and the trademark check on the name —
-<code>MASTER_PLAN.md:61</code>. The mark survives a rename, since it is a capsule rather than the
-letters.</p>
-</section>
+permitted. Reserved Font Name, so a modified cut may not be called Fraunces; we do not modify it.</p>
+<p style="color:var(--muted);font-size:13.5px;margin:22px 0 0">Still open: the crimp texture at rest
+and the zero-state line, both polish. The tray template's Rust-side wire-up.
+<code>NEXT_PUBLIC_SITE_URL</code> is unset, so shared links resolve against the Vercel production
+host rather than a domain. And the trademark check on the name — <code>MASTER_PLAN.md:61</code>. The
+mark survives a rename, being a capsule rather than the letters.</p></section>
 </div>
 """
 
