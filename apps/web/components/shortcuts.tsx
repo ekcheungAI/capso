@@ -31,7 +31,7 @@ const GROUPS: [string, [string, string][]][] = [
     "A capture",
     [
       ["← / →", "Previous / next"],
-      ["esc", "Back to the library"],
+      ["esc", "Back to folders"],
     ],
   ],
 ];

@@ -114,15 +114,21 @@ export default function ReviewPage() {
 
   if (pending.length === 0)
     return (
-      <EmptyState
-        title="Nothing left to review"
-        body={
-          unsorted.length > 0
-            ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all — they are in Unsorted on the library.`
-            : "Every capture has been confirmed into a project. Capso learns from each one you kept or moved."
-        }
-        action={<Link href="/">Back to the library</Link>}
-      />
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Review</h1>
+          <p className="mt-1 text-xs text-muted">Confirm Capso’s suggestions here. Every decision makes the next sort easier.</p>
+        </div>
+        <EmptyState
+          title="Nothing left to review"
+          body={
+            unsorted.length > 0
+              ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all — they are in Unsorted on the library.`
+              : "Every capture has been confirmed into a project. Capso learns from each one you kept or moved."
+          }
+          action={<Link href="/library">Back to folders</Link>}
+        />
+      </div>
     );
 
   return (

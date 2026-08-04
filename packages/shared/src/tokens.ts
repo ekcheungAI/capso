@@ -32,6 +32,10 @@ export type Scheme = "light" | "dark";
  * `background` is warm on purpose. Most captures are white-ish, so the ground
  * has to separate from pure white or cards stop having edges — bone measures
  * 1.135:1 against white where a cool near-white manages only 1.073:1.
+ * `organise-surface` is the single stronger warm shelf in the app. It is
+ * reserved for the active sorting stage, so the capsule metaphor gains depth
+ * without introducing a decorative accent colour or weakening screenshot
+ * ownership of the rest of the canvas.
  */
 export const color: Record<Scheme, Readonly<Record<string, string>>> = raw.color;
 

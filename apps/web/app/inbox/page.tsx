@@ -62,17 +62,23 @@ export default function InboxPage() {
   if (!ready) return <SkeletonGrid />;
   if (inbox.length === 0)
     return (
-      <EmptyState
-        title="Inbox is clear"
-        body="Captures Capso was confident about went straight to their project. Anything uncertain waits here."
-        action="Drop a screenshot anywhere to add one"
-      />
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-[-0.04em]">Today’s tray</h1>
+          <p className="mt-1 text-xs text-muted">Anything uncertain waits here. Confident captures file themselves.</p>
+        </div>
+        <EmptyState
+          title="Tray is clear"
+          body="Every capture already has a home. New screenshots will appear here only when Capso needs your call."
+          action="Drop a screenshot anywhere to add one"
+        />
+      </div>
     );
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em]">Today’s tray</h1>
         <p className="mt-1 text-xs text-muted">
           {inbox.length} {verb(inbox.length, "needs", "need")} a decision. Anything above 80% confidence was filed automatically.{" "}
           <span className="text-[11px]">j/k move · ⏎ accept · 1–{threads.length} pick project</span>

@@ -1,5 +1,3 @@
-import { NextResponse } from "next/server";
-
 /**
  * Relay between the Chrome extension and the browser-side store.
  *
@@ -234,5 +232,5 @@ function cors(req: Request): Record<string, string> {
 }
 
 function json(body: unknown, status = 200, req?: Request) {
-  return NextResponse.json(body, { status, headers: req ? cors(req) : {} });
+  return Response.json(body, { status, headers: req ? cors(req) : {} });
 }

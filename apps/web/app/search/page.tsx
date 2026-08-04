@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { ArrowRight, MagnifyingGlass, Sparkle } from "@phosphor-icons/react";
 import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
 import { ANSWERS_OFF, EmptyState, Masonry, SkeletonGrid, Thumb } from "@/components/ui";
 import { retrieve } from "@/lib/retrieve";
 import { plural } from "@/lib/plural";
+import { citationId } from "@/lib/citations";
 
 const EXAMPLES = [
   "what are some good designs I have put together for mobile UI",
@@ -94,40 +96,59 @@ export default function SearchPage() {
   const citedSet = new Set(answer?.cited ?? []);
 
   return (
-    <div className="space-y-5">
-      <div className="flex gap-2">
+    <div className="mx-auto w-full max-w-[920px] px-5 py-10 sm:px-8 sm:py-14 lg:px-10">
+      <header className="max-w-2xl">
+        <p className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+          <Sparkle size={14} weight="fill" /> Organised around you
+        </p>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Ask your organised memory</h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
+          Describe what you remember. Capso searches the image, its context, and the way you organised it.
+        </p>
+      </header>
+
+      <div className="mt-8 space-y-6">
+      <div className="flex items-center gap-2 rounded-[22px] border border-line bg-surface p-2 shadow-sm transition focus-within:border-muted focus-within:ring-2 focus-within:ring-line">
+        <MagnifyingGlass size={20} className="ml-3 shrink-0 text-muted" />
         <input
-          autoFocus
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void ask(q)}
           placeholder="Ask your memory anything…"
-          className="flex-1 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm"
+          className="capso-search-input h-12 min-w-0 flex-1 bg-transparent px-2 text-[15px] outline-none placeholder:text-muted"
         />
         <button
           onClick={() => void ask(q)}
           disabled={busy || !q.trim()}
-          className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+          className="flex h-11 shrink-0 items-center gap-2 rounded-[15px] bg-accent px-4 text-xs font-semibold text-accent-ink transition disabled:opacity-35"
         >
-          {busy ? "Thinking…" : "Ask"}
+          {busy ? "Thinking…" : "Ask"} {!busy && <ArrowRight size={15} />}
         </button>
       </div>
 
       {!q && !asked && (
-        <div className="flex flex-wrap gap-2">
-          {EXAMPLES.map((e) => (
+        <section aria-labelledby="search-starts-heading">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="search-starts-heading" className="text-sm font-semibold">Good places to start</h2>
+            <span className="hidden text-[11px] text-muted sm:inline">Searches words, images, projects and history</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+          {EXAMPLES.map((e, index) => (
             <button
               key={e}
               onClick={() => {
                 setQ(e);
                 void ask(e);
               }}
-              className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-muted transition-colors duration-[120ms] hover:border-accent hover:text-foreground"
+              className="group flex min-h-14 items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left text-xs leading-relaxed text-muted transition-colors duration-[120ms] hover:border-accent hover:text-foreground"
             >
-              {e}
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-background text-[10px] font-semibold tabular-nums text-muted">0{index + 1}</span>
+              <span className="min-w-0 flex-1">{e}</span>
+              <ArrowRight size={15} className="shrink-0 opacity-45 transition group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
           ))}
-        </div>
+          </div>
+        </section>
       )}
 
       {busy && (
@@ -178,17 +199,18 @@ export default function SearchPage() {
           }}
         />
       )}
+      </div>
     </div>
   );
 }
 
 function Cited({ text, lookup }: { text: string; lookup: (id: string) => Screenshot | undefined }) {
-  const parts = text.split(/(\[[a-z0-9]+\])/gi);
+  const parts = text.split(/(\[[A-Za-z0-9_-]+\])/g);
   return (
     <p>
       {parts.map((part, i) => {
-        const m = /^\[([a-z0-9]+)\]$/i.exec(part);
-        const shot = m ? lookup(m[1]!) : undefined;
+        const id = citationId(part);
+        const shot = id ? lookup(id) : undefined;
         if (!shot) return <span key={i}>{part}</span>;
         return (
           <Link

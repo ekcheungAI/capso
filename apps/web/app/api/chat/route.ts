@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { complete, isConfigured } from "@/lib/ai/minimax";
+import { extractCitedIds } from "@/lib/citations";
 
 /**
  * Thread chat (07_FEATURE_SPEC_PROJECT_THREADS.md). Retrieval happens on the
@@ -71,10 +72,7 @@ export async function POST(req: Request) {
     });
 
     // Only ids we actually supplied count as citations — the model cannot invent one.
-    const supplied = new Set(captures.map((c) => c.id));
-    const cited = [...new Set([...text.matchAll(/\[([a-z0-9]+)\]/gi)].map((m) => m[1]!))].filter(
-      (id) => supplied.has(id),
-    );
+    const cited = extractCitedIds(text, captures.map((capture) => capture.id));
 
     return NextResponse.json({ configured: true, text, cited });
   } catch (err) {

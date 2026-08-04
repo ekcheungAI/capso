@@ -1,10 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { CapsoMark, CapsoMarkDefs, fillFor } from "@/components/mark.generated";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useStore } from "@/lib/store/provider";
+import {
+  Brain,
+  Checks,
+  DotsThree,
+  FolderSimple,
+  GearSix,
+  House,
+  MagnifyingGlass,
+  Plus,
+  SquaresFour,
+  Tray,
+  X,
+} from "@phosphor-icons/react";
+import { color } from "@capso/shared/tokens";
+import { CapsoMark, CapsoMarkDefs, fillFor } from "@/components/mark.generated";
 import { CaptureLayer } from "@/components/capture";
 import { CommandPalette } from "@/components/palette";
 import { ShortcutSheet } from "@/components/shortcuts";
@@ -12,262 +25,234 @@ import { FirstRun } from "@/components/first-run";
 import { DropZone, useDragCount } from "@/components/ui";
 import { ImportLocal } from "@/components/import-local";
 import { useMoveCaptures } from "@/lib/move";
+import { useStore } from "@/lib/store/provider";
 
-/**
- * Sidebar: Inbox pinned above projects, no folder tree. Project rows are drop
- * targets — dragging a card onto one files it (07: adjusting is always ≤2 steps).
- */
+const NAV_ITEMS = [
+  { href: "/", label: "Home", Icon: House },
+  { href: "/inbox", label: "Tray", Icon: Tray },
+  { href: "/library", label: "Folders", Icon: SquaresFour },
+  { href: "/search", label: "Search", Icon: MagnifyingGlass },
+  { href: "/memory", label: "Memory", Icon: Brain },
+  { href: "/review", label: "Review", Icon: Checks },
+] as const;
+
+const LIGHT_THEME = {
+  "--background": color.light.background,
+  "--surface": color.light.surface,
+  "--organise-surface": color.light["organise-surface"],
+  "--foreground": color.light.foreground,
+  "--muted": color.light.muted,
+  "--line": color.light.line,
+  "--accent": color.light.accent,
+  "--accent-ink": color.light["accent-ink"],
+  "--danger": color.light.danger,
+  colorScheme: "light",
+  backgroundColor: "var(--background)",
+  color: "var(--foreground)",
+} as React.CSSProperties;
+
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { ready, loadError, needsSetup, inbox, threads, byThread, addThread, reset, clearSamples } =
-    useStore();
-  const [adding, setAdding] = useState(false);
-  const [palette, setPalette] = useState(false);
-  const [nav, setNav] = useState(false);
-  const [keys, setKeys] = useState(false);
+  const { ready, loadError, needsSetup, threads, byThread, addThread, reset, clearSamples } = useStore();
+  const pathname = usePathname();
   const move = useMoveCaptures();
   const dragCount = useDragCount();
-  const pathname = usePathname();
+  const [palette, setPalette] = useState(false);
+  const [keys, setKeys] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [ai, setAi] = useState<{ configured: boolean; model: string } | null>(null);
-
-  /**
-   * The drawer closes when it has been used. Bound to the link groups rather
-   * than to the whole panel, because "+ New project" and the two destructive
-   * links also live in there and must survive being clicked.
-   */
-  const dismissNav = () => setNav(false);
 
   useEffect(() => {
     fetch("/api/classify")
-      .then((r) => r.json())
+      .then((response) => response.json())
       .then(setAi)
       .catch(() => setAi({ configured: false, model: "" }));
   }, []);
 
-  // ⌘K from anywhere — the fastest path from "I remember something" to the capture.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setPalette((p) => !p);
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPalette((open) => !open);
         return;
       }
-      // `?` opens the keyboard reference — but not while the user is typing one
-      // into a project name or a note.
-      const t = e.target as HTMLElement | null;
-      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-      if (e.key === "?") {
-        e.preventDefault();
-        setKeys((k) => !k);
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        setKeys((open) => !open);
       }
-      if (e.key === "Escape") setKeys(false);
+      if (event.key === "Escape") {
+        setKeys(false);
+        setProjectsOpen(false);
+        setSettingsOpen(false);
+      }
     };
+    const openPalette = () => setPalette(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("capso:open-palette", openPalette);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("capso:open-palette", openPalette);
+    };
   }, []);
 
-  /**
-   * An unreadable library is the one state that must never hide behind a
-   * skeleton — a shimmer that never resolves is indistinguishable from a slow
-   * load, and the user has no way to learn that closing another tab fixes it.
-   */
-  if (loadError)
+  if (loadError) {
     return (
       <div className="flex min-h-screen items-center justify-center px-6">
         <div className="max-w-sm space-y-3 text-center">
           <p className="text-sm font-semibold tracking-tight">Capso can’t open your library</p>
           <p className="text-xs leading-relaxed text-muted">{loadError}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs text-accent-ink"
-          >
-            Reload
-          </button>
+          <button onClick={() => window.location.reload()} className="rounded-xl bg-accent px-4 py-2 text-xs text-accent-ink">Reload</button>
         </div>
       </div>
     );
+  }
 
-  // One idea per screen (15 §onboarding): during setup there is no sidebar, no
-  // search bar and no capture button to compete with the single decision.
-  //
-  // `/extension` is exempt. It is a static download page that depends on no
-  // library state, and the takeover is route-independent — so on a fresh
-  // browser the page telling you how to install the extension was replaced by a
-  // question about which projects to create, with no way through to it.
-  if (ready && needsSetup && pathname !== "/extension")
+  if (ready && needsSetup && pathname !== "/extension") {
     return (
       <div className="min-h-screen px-6">
         <CapsoMarkDefs />
-        <p className="py-4 text-sm font-semibold tracking-tight">Capso</p>
+        <div className="flex items-center gap-2 py-5"><CapsoMark size={28} fill="full" label="Capso" /><span className="text-sm font-semibold">Capso</span></div>
         <FirstRun />
       </div>
     );
+  }
+
+  const closePanels = () => {
+    setProjectsOpen(false);
+    setSettingsOpen(false);
+  };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="min-h-screen" style={LIGHT_THEME}>
       <CapsoMarkDefs />
-      {/* Below md the sidebar was `hidden` with nothing replacing it, so Inbox,
-          Search, Memory, every project and "+ New project" were unreachable on a
-          phone. Shown as a drawer rather than duplicated into a bottom bar: one
-          source of navigation, and no collision with the capture buttons pinned
-          to the bottom-right corner. */}
-      {nav && (
-        <div
-          onClick={() => setNav(false)}
-          className="capso-fade fixed inset-0 z-30 bg-black/30 backdrop-blur-sm md:hidden"
-        />
-      )}
-      <aside
-        className={`${
-          nav ? "fixed inset-y-0 left-0 z-40 overflow-y-auto bg-background" : "hidden"
-        } w-56 shrink-0 border-r border-line px-3 py-4 md:static md:block md:overflow-visible`}
-      >
-        {/* Wordmark only. The mark was here as a logo, which is the one thing
-            `drafts/brand/GUIDELINES.html` says it can never be: "never a
-            watermark, a sidebar logo, or empty-state decoration". Not style —
-            the mark's whole job is provenance, *the mark means Capso decided*,
-            and a glyph that is also on screen when nothing was decided cannot
-            carry that. It stays on the icon surfaces (favicon, tray, extension),
-            in the rack slots below, and on the reading state; it does not stay
-            here, where it was the only place it meant nothing. */}
-        <Link
-          href="/"
-          onClick={dismissNav}
-          className="mb-6 block px-2 text-sm font-semibold tracking-tight"
-        >
-          Capso
+
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[78px] flex-col items-center border-r border-line bg-background px-3 pb-5 pt-5 md:flex">
+        <Link href="/" aria-label="Capso home" className="grid h-11 w-11 place-items-center rounded-[14px]" onClick={closePanels}>
+          <CapsoMark size={36} fill="full" label="Capso" />
         </Link>
 
-        <nav onClick={dismissNav} className="space-y-0.5">
-          <Row href="/inbox" label="Inbox" badge={ready ? inbox.length : undefined} />
-          {/* The sweep used to be reachable only from a banner gated at three
-              pending captures, so with two you could not get to it at all, and
-              once its toast was dismissed there was no way back. */}
-          <Row href="/review" label="Review" />
-          <Row href="/" label="All captures" />
-          <Row href="/search" label="Search" />
-          <Row href="/memory" label="Memory" />
-          <Row href="/extension" label="Get extension" />
-        </nav>
-
-        <p className="mt-6 mb-1 flex items-center gap-2 px-2 text-[11px] uppercase tracking-wide text-muted">
-          Projects
-          {dragCount > 0 && (
-            <span className="capso-fade rounded-full bg-accent px-1.5 py-0.5 text-[11px] text-accent-ink">
-              drop {dragCount}
-            </span>
-          )}
-        </p>
-        <nav onClick={dismissNav} className="space-y-0.5">
-          {threads.map((t, i) => (
-            <DropZone
-              key={t.id}
-              armed={dragCount > 0}
-              onDropIds={(ids) => void move(t.id, ids)}
-            >
-              <Row
-                href={`/threads/${t.id}`}
-                label={t.name}
-                badge={byThread(t.id).length}
-                title={t.description || undefined}
-                fill={fillFor(byThread(t.id).length)}
-                // What this slot would become if the drag landed here. Shown
-                // while aiming, so the outcome is visible before committing.
-                preview={fillFor(byThread(t.id).length + Math.max(dragCount, 1))}
-                index={i}
-              />
-            </DropZone>
+        <nav aria-label="Primary navigation" className="mt-10 grid w-full gap-1.5">
+          {NAV_ITEMS.map(({ href, label, Icon }) => (
+            <RailLink key={href} href={href} label={label} active={isActive(pathname, href)} onClick={closePanels}>
+              <Icon size={21} weight={isActive(pathname, href) ? "fill" : "regular"} />
+            </RailLink>
           ))}
+          <button
+            type="button"
+            onClick={() => { setProjectsOpen((open) => !open); setSettingsOpen(false); }}
+            aria-label="Projects"
+            title="Projects"
+            className={`grid h-11 w-full place-items-center rounded-[14px] text-muted transition hover:bg-surface hover:text-foreground ${projectsOpen ? "bg-surface text-foreground shadow-sm" : ""}`}
+          >
+            <FolderSimple size={19} weight={projectsOpen ? "fill" : "regular"} />
+            <span className="sr-only">Projects</span>
+          </button>
         </nav>
 
-        {adding ? (
-          <input
-            autoFocus
-            placeholder="Project name…"
-            onBlur={() => setAdding(false)}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter" && e.currentTarget.value.trim()) {
-                await addThread(e.currentTarget.value.trim());
-                setAdding(false);
-              }
-              if (e.key === "Escape") setAdding(false);
-            }}
-            className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1 text-sm"
-          />
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="mt-1 w-full rounded-md px-2 py-1.5 text-left text-sm text-muted hover:bg-surface"
-          >
-            + New project
+        <div className="mt-auto grid place-items-center gap-3">
+          <button type="button" onClick={() => { setSettingsOpen((open) => !open); setProjectsOpen(false); }} aria-label="Settings" title="Settings" className="grid h-10 w-10 place-items-center rounded-[13px] text-muted hover:bg-surface hover:text-foreground">
+            <GearSix size={19} />
           </button>
-        )}
-
-        {ai && (
-          <p
-            className="mt-8 px-2 text-[11px] text-muted"
-            title={
-              ai.configured
-                ? `Classifications come from ${ai.model}`
-                : "Set MINIMAX_TEXT_API_KEY in apps/web/.env.local for real classifications"
-            }
-          >
-            <span
-              className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
-                ai.configured ? "bg-accent" : "bg-muted"
-              }`}
-            />
-            {ai.configured ? ai.model : "AI: sample data"}
-          </p>
-        )}
-
-        <div className="mt-2 flex flex-col items-start gap-1 px-2 text-[11px] text-muted">
-          {/* `?` cannot teach itself. */}
-          <button onClick={() => setKeys(true)} className="hover:text-accent">
-            Keyboard shortcuts
-          </button>
-          <button
-            onClick={() =>
-              confirm("Delete the sample captures and keep only your own screenshots?") &&
-              void clearSamples()
-            }
-            className="hover:text-accent"
-          >
-            Use only my screenshots
-          </button>
-          <button
-            onClick={() => confirm("Reset demo data?") && void reset()}
-            className="hover:text-accent"
-          >
-            Reset demo data
-          </button>
-          {/* Renders nothing unless this browser is holding captures the account
-              does not have — see components/import-local.tsx. */}
-          <ImportLocal />
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[9px] font-semibold text-accent-ink">EK</div>
         </div>
       </aside>
 
-      <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-background px-6 py-3">
-          <button
-            onClick={() => setNav(true)}
-            aria-label="Open navigation"
-            aria-expanded={nav}
-            className="shrink-0 rounded-md border border-line px-2 py-1.5 text-sm leading-none md:hidden"
-          >
-            ☰
-          </button>
-          <button
-            onClick={() => setPalette(true)}
-            className="flex w-full max-w-2xl items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm text-muted"
-          >
-            Search your memory…
-            <kbd className="ml-auto hidden rounded border border-line px-1.5 py-0.5 text-[11px] sm:block">
-              ⌘K
-            </kbd>
-          </button>
-        </header>
-        <main className="px-6 py-6">{children}</main>
+      <nav className="fixed inset-x-3 bottom-3 z-40 grid h-[68px] grid-cols-5 items-center rounded-2xl border border-line bg-background/95 px-2 shadow-2xl backdrop-blur md:hidden">
+        {NAV_ITEMS.slice(0, 4).map(({ href, label, Icon }) => (
+          <RailLink key={href} href={href} label={label} active={isActive(pathname, href)} onClick={closePanels} compact>
+            <Icon size={21} weight={isActive(pathname, href) ? "fill" : "regular"} />
+          </RailLink>
+        ))}
+        <button type="button" aria-label="More" onClick={() => { setProjectsOpen((open) => !open); setSettingsOpen(false); }} className={`grid min-h-12 place-items-center gap-0.5 rounded-xl text-muted ${projectsOpen ? "bg-surface text-foreground" : ""}`}>
+          <DotsThree size={22} weight={projectsOpen ? "bold" : "regular"} />
+          <span className="text-[9px] font-semibold">More</span>
+        </button>
+      </nav>
+
+      {projectsOpen && (
+        <Panel title="Projects" mobileTitle="More" onClose={() => setProjectsOpen(false)}>
+          <nav aria-label="More destinations" className="mb-3 grid grid-cols-2 gap-1 border-b border-line pb-3 md:hidden">
+            <Link href="/memory" onClick={() => setProjectsOpen(false)} className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-medium hover:bg-background">
+              <Brain size={18} /> Memory
+            </Link>
+            <Link href="/review" onClick={() => setProjectsOpen(false)} className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-medium hover:bg-background">
+              <Checks size={18} /> Review
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById("capso-import-input")?.click();
+                setProjectsOpen(false);
+              }}
+              className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left text-xs font-medium hover:bg-background"
+            >
+              <Plus size={18} /> Add screenshots
+            </button>
+          </nav>
+          <div className="grid gap-1">
+            {threads.filter((thread) => !thread.archived).map((thread) => (
+              <DropZone key={thread.id} armed={dragCount > 0} onDropIds={(ids) => void move(thread.id, ids)}>
+                <Link href={`/threads/${thread.id}`} onClick={() => setProjectsOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-background">
+                  <span className="text-muted"><CapsoMark size={22} fill={fillFor(byThread(thread.id).length)} /></span>
+                  <span className="min-w-0 flex-1 truncate">{thread.name}</span>
+                  <span className="text-[11px] tabular-nums text-muted">{byThread(thread.id).length}</span>
+                </Link>
+              </DropZone>
+            ))}
+          </div>
+          {adding ? (
+            <input
+              autoFocus
+              placeholder="Project name…"
+              onBlur={() => setAdding(false)}
+              onKeyDown={async (event) => {
+                if (event.key === "Enter" && event.currentTarget.value.trim()) {
+                  await addThread(event.currentTarget.value.trim());
+                  setAdding(false);
+                }
+                if (event.key === "Escape") setAdding(false);
+              }}
+              className="mt-3 w-full rounded-xl border border-line bg-background px-3 py-2 text-sm"
+            />
+          ) : (
+            <button type="button" onClick={() => setAdding(true)} className="mt-3 w-full rounded-xl border border-dashed border-line px-3 py-2 text-left text-xs font-medium text-muted hover:text-foreground">+ New project</button>
+          )}
+        </Panel>
+      )}
+
+      {settingsOpen && (
+        <Panel title="Capso settings" onClose={() => setSettingsOpen(false)}>
+          <div className="grid gap-2 text-xs text-muted">
+            <p className="flex items-center gap-2 rounded-xl bg-background px-3 py-2.5">
+              <span className={`h-1.5 w-1.5 rounded-full ${ai?.configured ? "bg-accent" : "bg-muted"}`} />
+              {ai?.configured ? ai.model : "AI: sample data"}
+            </p>
+            <button type="button" onClick={() => setKeys(true)} className="rounded-xl px-3 py-2 text-left hover:bg-background hover:text-foreground">Keyboard shortcuts</button>
+            <Link href="/extension" onClick={() => setSettingsOpen(false)} className="rounded-xl px-3 py-2 hover:bg-background hover:text-foreground">Get the browser extension</Link>
+            <ImportLocal />
+            <button type="button" onClick={() => confirm("Delete the sample captures and keep only your own screenshots?") && void clearSamples()} className="rounded-xl px-3 py-2 text-left hover:bg-background hover:text-foreground">Use only my screenshots</button>
+            <button type="button" onClick={() => confirm("Reset demo data?") && void reset()} className="rounded-xl px-3 py-2 text-left text-danger hover:bg-background">Reset demo data</button>
+          </div>
+        </Panel>
+      )}
+
+      <div className="min-w-0 pb-28 md:ml-[78px] md:pb-24">
+        {pathname !== "/" && pathname !== "/search" && (
+          <header className="sticky top-0 z-20 border-b border-line bg-background/95 px-5 backdrop-blur sm:px-8">
+            <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center">
+            <button type="button" onClick={() => setPalette(true)} className="flex h-9 w-full max-w-sm items-center rounded-full border border-line bg-surface px-3.5 text-xs text-muted transition hover:border-accent hover:text-foreground">
+              <MagnifyingGlass size={16} className="mr-2" /> Search memory
+              <kbd className="ml-auto hidden rounded border border-line px-1.5 py-0.5 text-[10px] sm:block">⌘K</kbd>
+            </button>
+            </div>
+          </header>
+        )}
+        <main className={pathname === "/" || pathname === "/search" ? "" : "mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10"}>{children}</main>
       </div>
+
       <CaptureLayer />
       <CommandPalette open={palette} onClose={() => setPalette(false)} />
       <ShortcutSheet open={keys} onClose={() => setKeys(false)} />
@@ -275,58 +260,30 @@ export function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Row({
-  href,
-  label,
-  badge,
-  title,
-  fill,
-  preview,
-  index = 0,
-}: {
-  href: string;
-  label: string;
-  badge?: number;
-  title?: string;
-  /**
-   * Present only on project rows. An open ring is a slot waiting; a part face
-   * is a shelf with something on it. This is what turns the sidebar from a list
-   * with four zeroes into a rack — and it makes emptiness legible rather than
-   * flat, which was most of why the app read as dull.
-   */
-  fill?: "empty" | "some" | "full";
-  /** The level this slot would reach if the current drag landed on it. */
-  preview?: "empty" | "some" | "full";
-  /** Position in the rack — drives the 40ms open stagger. */
-  index?: number;
-}) {
+function RailLink({ href, label, active, onClick, children, compact = false }: { href: string; label: string; active: boolean; onClick: () => void; children: React.ReactNode; compact?: boolean }) {
   return (
-    <Link
-      href={href}
-      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface"
-    >
-      {fill && (
-        /* Three lids stacked and cross-faded: the real fill, the open ring the
-           rack shows while a capture is in hand, and the level this slot would
-           reach if the drag landed here. */
-        <span
-          className="capso-rack h-[15px] w-[15px] shrink-0 opacity-80"
-          style={{ "--rack-i": index } as React.CSSProperties}
-        >
-          <CapsoMark size={15} fill={fill} className="capso-rack-real" />
-          <CapsoMark size={15} fill="empty" className="capso-rack-open" />
-          <CapsoMark size={15} fill={preview ?? fill} className="capso-rack-prev" />
-        </span>
-      )}
-      {/* `title` sits on the label, not the link: on the anchor it would replace
-          the accessible name, so the row would announce its description instead
-          of the project it goes to. */}
-      <span className="truncate" title={title}>
-        {label}
-      </span>
-      {badge !== undefined && (
-        <span className="ml-auto text-[11px] text-muted tabular-nums">{badge}</span>
-      )}
+    <Link href={href} onClick={onClick} aria-label={label} title={compact ? undefined : label} className={`capso-rail-link grid place-items-center rounded-[14px] font-semibold ${compact ? "min-h-12 gap-0.5" : "h-11 w-full"} ${active ? "bg-surface text-foreground shadow-sm" : "text-muted hover:bg-surface hover:text-foreground"}`}>
+      {children}
+      <span className={compact ? "text-[9px]" : "sr-only"}>{label}</span>
     </Link>
   );
+}
+
+function Panel({ title, mobileTitle, onClose, children }: { title: string; mobileTitle?: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <aside className="capso-panel fixed bottom-[88px] left-3 z-50 max-h-[70vh] w-[min(340px,calc(100vw-24px))] overflow-y-auto rounded-[22px] border border-line bg-surface p-4 shadow-2xl md:bottom-auto md:left-[90px] md:top-4 md:max-h-[calc(100vh-32px)]">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold">
+          <span className={mobileTitle ? "hidden md:inline" : ""}>{title}</span>
+          {mobileTitle && <span className="md:hidden">{mobileTitle}</span>}
+        </h2>
+        <button type="button" onClick={onClose} aria-label="Close panel" className="grid h-8 w-8 place-items-center rounded-full bg-background text-muted"><X size={16} /></button>
+      </div>
+      {children}
+    </aside>
+  );
+}
+
+function isActive(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
 }

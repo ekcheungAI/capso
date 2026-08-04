@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { CheckCircle, X } from "@phosphor-icons/react";
 import { useStore } from "@/lib/store/provider";
 import { useToast } from "@/components/toast";
 import { classify, fewShotLines } from "@/lib/classify";
@@ -28,9 +29,12 @@ export function CaptureLayer() {
   const { ready, threads, screenshots, corrections, ingest, patch, get } = useStore();
   const toast = useToast();
   const router = useRouter();
+  const pathname = usePathname();
   const [pending, setPending] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
+  const [importing, setImporting] = useState<BulkImportState | null>(null);
+  const [extensionBatch, setExtensionBatch] = useState<BulkImportState | null>(null);
+  const importActive = importing?.phase === "working";
   /**
    * Capture ids this tab has already stored. The extension re-sends until it is
    * confirmed, so without this a lost ack would produce a second capsule of the
@@ -49,7 +53,11 @@ export function CaptureLayer() {
       image: Downscaled,
       source: Screenshot["source"],
       opts: {
+        /** Stable id supplied by the extension, so retries upsert one capsule. */
+        id?: string;
         overlay?: boolean;
+        /** Lets a batch report the safety milestone before AI reading finishes. */
+        onStored?: () => void;
         /** Page context, when the capture came from a browser tab. */
         pageUrl?: string | null;
         pageTitle?: string | null;
@@ -57,7 +65,7 @@ export function CaptureLayer() {
         sourceApp?: string | null;
       } = {},
     ) => {
-      const id = newId();
+      const id = opts.id ?? newId();
       const now = new Date().toISOString();
       const { dataUrl, thumbDataUrl, aspect, width, height, contentHash } = image;
 
@@ -105,6 +113,7 @@ export function CaptureLayer() {
         ocrLangs: [],
         ...context,
       });
+      opts.onStored?.();
       if (opts.overlay !== false) setPending((p) => [id, ...p]);
 
       const result = await classify(
@@ -162,6 +171,21 @@ export function CaptureLayer() {
     [ingest, patch, threads, screenshots, corrections],
   );
 
+  // The store changes after every saved capture, which necessarily gives
+  // `start` fresh classification context. The relay drain itself must not be
+  // torn down mid-batch when that happens, so it reads the latest callback
+  // through a ref instead of depending on its identity.
+  const startRef = useRef(start);
+  useEffect(() => {
+    startRef.current = start;
+  }, [start]);
+
+  // Persisted extension ids seed the in-tab dedupe set. This covers a reload
+  // after storage succeeded but before the acknowledgement reached the relay.
+  useEffect(() => {
+    for (const screenshot of screenshots) seen.current.add(screenshot.id);
+  }, [screenshots]);
+
   /**
    * One or many files, same path. A single file keeps the signature overlay; a
    * bulk import (a folder of real screenshots) reports progress instead, since
@@ -173,46 +197,91 @@ export function CaptureLayer() {
       const images = files.filter((f) => f.type.startsWith("image/"));
       if (images.length === 0) return;
 
+      if (importActive) {
+        toast("Another screenshot import is still running");
+        return;
+      }
+
       const overlay = images.length === 1;
       let failed = 0;
-      if (!overlay) setImporting({ done: 0, total: images.length });
+      let stored = 0;
+      let done = 0;
+      if (!overlay) {
+        setImporting({
+          kind: "import",
+          phase: "working",
+          total: images.length,
+          stored: 0,
+          done: 0,
+          failed: 0,
+          currentName: images[0]!.name,
+        });
+      }
 
       for (const [i, file] of images.entries()) {
+        if (!overlay) {
+          setImporting((current) => current && {
+            ...current,
+            currentName: file.name,
+          });
+        }
         try {
-          await start(await downscale(file), source, { overlay });
+          await start(await downscale(file), source, {
+            overlay,
+            onStored: overlay
+              ? undefined
+              : () => {
+                  stored += 1;
+                  setImporting((current) => current && { ...current, stored });
+                },
+          });
+          done += 1;
         } catch {
           failed++; // an unreadable file must not abort the rest of the import
         }
-        if (!overlay) setImporting({ done: i + 1, total: images.length });
+        if (!overlay) {
+          setImporting((current) => current && {
+            ...current,
+            done,
+            failed,
+            currentName: images[i + 1]?.name ?? file.name,
+          });
+        }
       }
 
-      setImporting(null);
       if (!overlay) {
-        const landed = images.length - failed;
-        toast(
-          failed
-            ? `Imported ${landed} of ${images.length} — ${failed} could not be read`
-            : `Imported ${images.length} screenshots`,
-          // A bulk import is exactly when the classifier has the least to go on,
-          // so it is exactly when the sweep is worth offering. Offered for any
-          // landed capture: /review is in the sidebar now, so this is a shortcut
-          // rather than the only door to it.
-          landed > 0 ? () => router.push("/review") : undefined,
-          "Review",
-        );
+        const landed = stored;
+        setImporting({
+          kind: "import",
+          phase: "complete",
+          total: images.length,
+          stored,
+          done,
+          failed,
+          currentName: null,
+        });
+        if (failed) {
+          toast(`Imported ${landed} of ${images.length} — ${failed} could not be fully read`);
+        }
       } else if (failed) {
         toast("That file could not be read as an image");
       }
     },
-    [start, toast, router],
+    [start, toast, importActive],
   );
 
   // Drain anything the Chrome extension queued while this tab was open.
   useEffect(() => {
     if (!ready) return;
     let stop = false;
+    let polling = false;
 
     const poll = async () => {
+      // Focus, visibility and the interval can all fire together. Only one
+      // drain may own a relay batch at a time, otherwise the same in-flight ids
+      // can be classified twice before either call reaches the acknowledgement.
+      if (polling) return;
+      polling = true;
       try {
         // Custom header the GET route now requires — see api/ingest/route.ts.
         // The `device` filter is what stops a second Capso tab, in a second
@@ -236,8 +305,21 @@ export function CaptureLayer() {
         // partway through this loop — or the tab closing — no longer destroys
         // the captures that had already been handed out.
         const stored: string[] = [];
+        let failed = 0;
+        let completed = 0;
+        if (items.length > 0) {
+          setExtensionBatch({
+            kind: "extension",
+            phase: "working",
+            total: items.length,
+            stored: 0,
+            done: 0,
+            failed: 0,
+            currentName: items[0]?.pageTitle || items[0]?.sourceApp || "Browser capture",
+          });
+        }
         try {
-          for (const item of items) {
+          for (const [index, item] of items.entries()) {
             if (stop) break;
             // The extension has always sent the tab's URL and title; until now
             // they were read off the wire and dropped. They are the strongest
@@ -251,15 +333,49 @@ export function CaptureLayer() {
             // confirms storage, so a lost ack or a recycled relay instance must
             // cost a redundant upload, never a duplicate capsule. The id comes
             // from the extension precisely so it is stable across those retries.
-            if (!seen.current.has(item.id)) {
+            if (seen.current.has(item.id)) {
               seen.current.add(item.id);
-              await start(await downscale(item.imageDataUrl), "extension", {
-                pageUrl: item.pageUrl ?? null,
-                pageTitle: item.pageTitle ?? null,
-                sourceApp: item.sourceApp ?? null,
-              });
+              stored.push(item.id);
+              completed += 1;
+            } else {
+              try {
+                await startRef.current(await downscale(item.imageDataUrl), "extension", {
+                  id: item.id,
+                  overlay: false,
+                  pageUrl: item.pageUrl ?? null,
+                  pageTitle: item.pageTitle ?? null,
+                  sourceApp: item.sourceApp ?? null,
+                  onStored: () => {
+                    // Do not mark an id as seen before IndexedDB/Supabase has
+                    // accepted it. If storage throws, the relay must re-offer it.
+                    seen.current.add(item.id);
+                    stored.push(item.id);
+                    setExtensionBatch((current) =>
+                      current ? { ...current, stored: stored.length } : current,
+                    );
+                  },
+                });
+                completed += 1;
+              } catch {
+                failed += 1;
+              }
             }
-            stored.push(item.id);
+            setExtensionBatch((current) =>
+              current
+                ? {
+                    ...current,
+                    stored: stored.length,
+                    done: completed,
+                    failed,
+                    currentName:
+                      items[index + 1]?.pageTitle ||
+                      items[index + 1]?.sourceApp ||
+                      item.pageTitle ||
+                      item.sourceApp ||
+                      "Browser capture",
+                  }
+                : current,
+            );
           }
         } finally {
           if (stored.length > 0) {
@@ -272,9 +388,22 @@ export function CaptureLayer() {
               // failed ack costs a duplicate at worst, never a loss.
             });
           }
+          if (items.length > 0) {
+            setExtensionBatch({
+              kind: "extension",
+              phase: "complete",
+              total: items.length,
+              stored: stored.length,
+              done: completed,
+              failed,
+              currentName: null,
+            });
+          }
         }
       } catch {
         // app runs fine without the extension; a failed poll is not an error
+      } finally {
+        polling = false;
       }
     };
 
@@ -293,7 +422,7 @@ export function CaptureLayer() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [ready, start]);
+  }, [ready]);
 
   useEffect(() => {
     const onDrop = (e: DragEvent) => {
@@ -301,12 +430,16 @@ export function CaptureLayer() {
       if (files.length === 0) return;
       e.preventDefault();
       setDragging(false);
+      if (importActive) {
+        toast("Finish the current import before adding another batch");
+        return;
+      }
       void ingestFiles(files, "drag");
     };
     const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("Files")) {
         e.preventDefault();
-        setDragging(true);
+        if (!importActive) setDragging(true);
       }
     };
     const onDragLeave = (e: DragEvent) => {
@@ -315,7 +448,8 @@ export function CaptureLayer() {
     const onPaste = (e: ClipboardEvent) => {
       const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
       const file = item?.getAsFile();
-      if (file) void ingestFiles([file], "clipboard");
+      if (file && importActive) toast("Finish the current import before adding another screenshot");
+      else if (file) void ingestFiles([file], "clipboard");
     };
 
     window.addEventListener("drop", onDrop);
@@ -328,28 +462,27 @@ export function CaptureLayer() {
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("paste", onPaste);
     };
-  }, [ingestFiles]);
+  }, [ingestFiles, importActive, toast]);
 
   if (!ready) return null;
 
   return (
     <>
-      <div className="fixed right-6 bottom-6 z-30 flex items-center gap-2">
-        {importing && (
-          <span className="rounded-full bg-surface px-3 py-2 text-xs text-muted shadow-lg ring-1 ring-line">
-            Importing {importing.done}/{importing.total}…
-          </span>
-        )}
-
+      {pathname !== "/extension" && <div className="fixed right-6 bottom-6 z-30 hidden items-center gap-1 rounded-full bg-surface p-1 shadow-lg ring-1 ring-line md:flex">
         <label
-          title="Pick real screenshots from your Mac — they are classified like any capture"
-          className="cursor-pointer rounded-full bg-surface px-4 py-2.5 text-xs font-medium shadow-lg ring-1 ring-line"
+          title={importActive ? "A screenshot batch is already being imported" : "Pick real screenshots from your Mac — they are classified like any capture"}
+          aria-disabled={importActive}
+          className={`rounded-full px-3 py-2 text-[11px] font-medium transition ${
+            importActive ? "cursor-not-allowed text-muted opacity-45" : "cursor-pointer text-muted hover:bg-background hover:text-foreground"
+          }`}
         >
           Import…
           <input
+            id="capso-import-input"
             type="file"
             multiple
             accept="image/*"
+            disabled={importActive}
             className="sr-only"
             onChange={(e) => {
               const files = [...(e.target.files ?? [])];
@@ -362,11 +495,30 @@ export function CaptureLayer() {
         <button
           onClick={async () => void start(await downscale(sampleCapture()), "hotkey_region")}
           title="Stands in for ⌃⇧C until the Mac app is wired up"
-          className="rounded-full bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink shadow-lg"
+          className="rounded-full bg-accent px-3.5 py-2 text-[11px] font-semibold text-accent-ink"
         >
           Capture
         </button>
-      </div>
+      </div>}
+
+      {importing && (
+        <BulkImportStatus
+          value={importing}
+          onDismiss={() => setImporting(null)}
+          onOpenLibrary={() => router.push("/library")}
+          onReview={() => router.push("/review")}
+        />
+      )}
+
+      {extensionBatch && (
+        <BulkImportStatus
+          value={extensionBatch}
+          onDismiss={() => setExtensionBatch(null)}
+          onOpenLibrary={() => router.push("/library")}
+          onReview={() => router.push("/review")}
+          raised={Boolean(importing)}
+        />
+      )}
 
       {dragging && (
         <div className="capso-fade pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-sm">
@@ -376,7 +528,7 @@ export function CaptureLayer() {
         </div>
       )}
 
-      <div className="fixed right-6 bottom-20 z-40 flex flex-col-reverse gap-3">
+      <div className="fixed right-6 bottom-[140px] z-40 flex flex-col-reverse gap-3 md:bottom-20">
         {pending.map((id) => {
           const s = get(id);
           return s ? (
@@ -389,6 +541,136 @@ export function CaptureLayer() {
         })}
       </div>
     </>
+  );
+}
+
+type BulkImportState = {
+  kind: "import" | "extension";
+  phase: "working" | "complete";
+  total: number;
+  stored: number;
+  done: number;
+  failed: number;
+  currentName: string | null;
+};
+
+function BulkImportStatus({
+  value,
+  onDismiss,
+  onOpenLibrary,
+  onReview,
+  raised = false,
+}: {
+  value: BulkImportState;
+  onDismiss: () => void;
+  onOpenLibrary: () => void;
+  onReview: () => void;
+  raised?: boolean;
+}) {
+  const processed = value.done + value.failed;
+  const percent = Math.round((processed / value.total) * 100);
+  const working = value.phase === "working";
+  const landed = value.stored;
+
+  return (
+    <section
+      role="region"
+      aria-label="Screenshot import status"
+      className={`capso-overlay fixed right-4 z-40 w-[min(350px,calc(100vw-32px))] rounded-[20px] border border-line bg-surface p-4 shadow-xl md:right-6 ${
+        raised ? "bottom-[360px] md:bottom-[276px]" : "bottom-[148px] md:bottom-20"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-background text-muted">
+          {working ? (
+            <CapsoMark size={22} className="capso-reading" />
+          ) : (
+            <CheckCircle size={22} weight="fill" className="text-foreground" />
+          )}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold">
+                {working
+                  ? value.kind === "extension"
+                    ? `Receiving ${value.total} browser captures`
+                    : `Importing ${value.total} screenshots`
+                  : value.kind === "extension"
+                    ? "Browser captures received"
+                    : "Import complete"}
+              </h2>
+              <p aria-live="polite" aria-atomic="true" className="mt-0.5 text-[11px] leading-relaxed text-muted">
+                {working
+                  ? `${value.kind === "extension" ? "Organising" : "Reading"} ${Math.min(processed + 1, value.total)} of ${value.total}`
+                  : `${landed} screenshot${landed === 1 ? "" : "s"} added to your memory`}
+              </p>
+            </div>
+            {!working && (
+              <button
+                type="button"
+                onClick={onDismiss}
+                aria-label="Dismiss import status"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted hover:bg-background hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {working && value.currentName && (
+            <p className="mt-2 truncate text-xs" title={value.currentName}>{value.currentName}</p>
+          )}
+        </div>
+      </div>
+
+      <div
+        role="progressbar"
+        aria-label="Screenshot import progress"
+        aria-valuemin={0}
+        aria-valuemax={value.total}
+        aria-valuenow={processed}
+        className="mt-4 h-1.5 overflow-hidden rounded-full bg-line"
+      >
+        <span
+          className="block h-full rounded-full bg-accent transition-[width] duration-200 ease-out"
+          style={{ width: `${working ? percent : 100}%` }}
+        />
+      </div>
+
+      <div className="mt-2 flex items-center gap-2 text-[11px] tabular-nums text-muted">
+        <span>{value.stored} saved</span>
+        <span aria-hidden="true">·</span>
+        <span>{value.done} read</span>
+        {value.failed > 0 && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="text-danger">{value.failed} failed</span>
+          </>
+        )}
+        <span className="ml-auto">{working ? `${percent}%` : "Done"}</span>
+      </div>
+
+      {working ? (
+        <p className="mt-3 border-t border-line pt-3 text-[11px] leading-relaxed text-muted">
+          {value.kind === "extension"
+            ? "The extension keeps every capture until Capso confirms it is safely stored."
+            : "Images are safe as soon as they are saved. You can keep using Capso while it reads the rest."}
+        </p>
+      ) : (
+        <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
+          <button type="button" onClick={onOpenLibrary} className="rounded-full bg-accent px-3 py-2 text-[11px] font-semibold text-accent-ink">
+            View folders
+          </button>
+          {landed > 0 && (
+            <button type="button" onClick={onReview} className="rounded-full border border-line px-3 py-2 text-[11px] font-medium text-muted hover:text-foreground">
+              Review suggestions
+            </button>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

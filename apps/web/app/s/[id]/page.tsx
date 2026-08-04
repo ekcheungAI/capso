@@ -91,8 +91,8 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
     return (
       <div className="text-sm">
         <p>That capture is gone.</p>
-        <Link href="/" className="mt-2 inline-block text-xs underline underline-offset-2">
-          Back to library
+        <Link href="/library" className="mt-2 inline-block text-xs underline underline-offset-2">
+          Back to folders
         </Link>
       </div>
     );
@@ -145,8 +145,8 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
       )}
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex items-center gap-2 text-xs">
-          <Link href="/" className="text-muted hover:text-accent">
-            ← Library
+          <Link href="/library" className="text-muted hover:text-accent">
+            ← Folders
           </Link>
           <span className="ml-auto text-muted">
             {idx + 1} of {ordered.length}

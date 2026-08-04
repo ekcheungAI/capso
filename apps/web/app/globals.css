@@ -7,6 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-organise-surface: var(--organise-surface);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-line: var(--line);
@@ -33,6 +34,13 @@ body {
   outline-offset: 2px;
 }
 
+/* The search composer owns its focus treatment at the container level. Keeping
+   a second rectangular ring around the borderless input makes the rounded
+   capsule look broken, especially at retina scale. */
+.capso-search-input:focus-visible {
+  outline: none;
+}
+
 /* Motion tokens are generated too: entrances use --ease-out-strong, state
    morphs use --ease-in-out-strong, and every duration stays under 250ms
    because each of these surfaces is hit daily. */
@@ -47,6 +55,19 @@ body {
 }
 .capso-overlay {
   animation: capso-overlay-in var(--dur-panel) var(--ease-out-strong);
+}
+
+/* Sidebar-owned panels emerge from the rail that triggered them. Reusing the
+   capture overlay made these left-side surfaces travel from the wrong corner. */
+@keyframes capso-panel-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 6px, 0) scale(0.97);
+  }
+}
+.capso-panel {
+  transform-origin: left top;
+  animation: capso-panel-in var(--dur-panel) var(--ease-out-strong);
 }
 
 /* ⌘K is keyboard-driven and hit many times a day: no travel, just a fast
@@ -305,6 +326,81 @@ body {
 }
 [data-crimp] .capso-rack {
   animation: capso-slot-crimp var(--dur-panel) var(--ease-out-strong);
+}
+
+/* The sorting decision belongs to the screenshot that needs the decision.
+   It rises a few pixels over the image instead of opening a second workspace. */
+@keyframes capso-tile-decision-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+.capso-tile-decision {
+  animation: capso-tile-decision-in var(--dur-pop) var(--ease-out-strong) both;
+}
+
+/* Frequent controls stay crisp: immediate press feedback, targeted properties,
+   and pointer-only lift. Static rack capsules no longer pretend to be clickable. */
+.capso-press {
+  transition:
+    transform var(--dur-press) var(--ease-out-strong),
+    background-color var(--dur-press) ease-out;
+}
+.capso-press:active,
+.capso-rail-link:active {
+  transform: scale(0.97);
+}
+.capso-rail-link {
+  transition:
+    color var(--dur-press) ease-out,
+    background-color var(--dur-press) ease-out,
+    box-shadow var(--dur-press) ease-out,
+    transform var(--dur-press) var(--ease-out-strong);
+}
+.capso-capture-tile {
+  transition:
+    border-color var(--dur-press) ease-out,
+    box-shadow var(--dur-panel) var(--ease-out-strong),
+    transform var(--dur-press) var(--ease-out-strong);
+}
+@keyframes capso-selected-seal {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+.capso-selected-seal {
+  animation: capso-selected-seal var(--dur-pop) var(--ease-out-strong);
+}
+.capso-memory-capsule {
+  transition:
+    transform var(--dur-press) var(--ease-out-strong),
+    box-shadow var(--dur-press) ease-out;
+}
+.capso-memory-capsule:active {
+  transform: scale(0.96);
+}
+.capso-evidence-drawer {
+  will-change: transform, opacity;
+  transition:
+    transform var(--dur-panel) var(--ease-out-strong),
+    opacity var(--dur-pop) ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .capso-capture-tile:hover {
+    transform: translate3d(0, -2px, 0);
+    box-shadow: 0 16px 34px color-mix(in srgb, var(--foreground) 10%, transparent);
+  }
+  .capso-memory-capsule:hover {
+    transform: translate3d(0, -2px, 0) rotate(2deg);
+    box-shadow: 0 9px 20px color-mix(in srgb, var(--foreground) 12%, transparent);
+  }
 }
 
 /* ---- Drag ----------------------------------------------------------- */
