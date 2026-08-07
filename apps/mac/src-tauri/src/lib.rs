@@ -1,3 +1,5 @@
+mod capture;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -18,6 +20,7 @@ fn toggle_popover(window: &WebviewWindow) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![capture::capture_screen])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
