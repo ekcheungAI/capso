@@ -3,6 +3,7 @@ mod clipboard;
 mod dragout;
 mod history;
 mod overlay;
+mod queue;
 mod shortcuts;
 mod system;
 
@@ -46,6 +47,7 @@ enum CaptureEvent<'a> {
         path: &'a str,
         clipboard: &'a clipboard::ClipboardStatus,
         overlay: &'a overlay::OverlayStatus,
+        queue: &'a queue::CaptureQueueStatus,
     },
     Cancelled,
     Failed {
@@ -62,10 +64,12 @@ fn capture_event(
             path,
             clipboard,
             overlay,
+            queue,
         }) => CaptureEvent::Captured {
             path,
             clipboard,
             overlay,
+            queue,
         },
         Ok(capture::CaptureOutcome::Cancelled) => CaptureEvent::Cancelled,
         Err(error) => CaptureEvent::Failed {
@@ -102,6 +106,14 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
                     ..
                 }) => {
                     let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+                }
+                Ok(capture::CaptureOutcome::Captured {
+                    queue: queue::CaptureQueueStatus::Failed { message, .. },
+                    ..
+                }) => {
+                    let _ = tray.set_tooltip(Some(format!(
+                        "Capso — capture saved locally; queue needs attention: {message}"
+                    )));
                 }
                 Ok(_) => {}
             }
@@ -144,22 +156,52 @@ fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Str
 fn tray_tooltip(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
+    queue_status: &queue::QueueRuntimeStatus,
 ) -> &'static str {
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
         "Capso — Screen Recording needed for Window and Fullscreen"
+    } else if queue_status.warning.is_some() || queue_status.summary.failed > 0 {
+        "Capso — uploads need attention; captures remain saved locally"
     } else if !shortcut_status.conflicts.is_empty() {
         "Capso — shortcut conflict; Capture menu remains available"
     } else if shortcut_status.storage_warning.is_some() {
         "Capso — shortcut settings warning; defaults are active"
+    } else if queue_status.summary.queued() > 0 {
+        "Capso — captures saved locally and waiting to sync"
     } else {
         "Capso"
     }
+}
+
+fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
+    if status.warning.is_some() {
+        return Some("Uploads need attention — captures remain local".into());
+    }
+    if status.summary.failed > 0 {
+        return Some(format!(
+            "{} {} need manual retry",
+            status.summary.failed,
+            if status.summary.failed == 1 {
+                "capture"
+            } else {
+                "captures"
+            }
+        ));
+    }
+    let queued = status.summary.queued();
+    (queued > 0).then(|| {
+        format!(
+            "{queued} {} saved locally — sync pending",
+            if queued == 1 { "capture" } else { "captures" }
+        )
+    })
 }
 
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
+    queue_status: &queue::QueueRuntimeStatus,
 ) -> tauri::Result<Menu<R>> {
     let mut menu_builder = MenuBuilder::new(app);
     for definition in shortcuts::definitions() {
@@ -210,6 +252,11 @@ fn build_tray_menu<R: Runtime>(
     let recent_submenu = recent_builder.build()?;
     menu_builder = menu_builder.separator().item(&recent_submenu);
 
+    if let Some(label) = queue_menu_label(queue_status) {
+        let queue_item = MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
+        menu_builder = menu_builder.item(&queue_item);
+    }
+
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
         let permission_warning = MenuItem::with_id(
             app,
@@ -249,17 +296,26 @@ fn current_shortcut_status(app: &AppHandle) -> Result<shortcuts::ShortcutStatus,
         .map_err(|_| "Shortcut settings are temporarily unavailable".into())
 }
 
+fn current_queue_status(app: &AppHandle) -> Result<queue::QueueRuntimeStatus, String> {
+    queue::current_status(app)
+}
+
 fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
     let shortcut_status = current_shortcut_status(app)?;
     let system_status = current_system_status(app)?;
+    let queue_status = current_queue_status(app)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(
-            build_tray_menu(app, &shortcut_status, &system_status)
+            build_tray_menu(app, &shortcut_status, &system_status, &queue_status)
                 .map_err(|error| error.to_string())?,
         ))
         .map_err(|error| error.to_string())?;
-        tray.set_tooltip(Some(tray_tooltip(&shortcut_status, &system_status)))
-            .map_err(|error| error.to_string())?;
+        tray.set_tooltip(Some(tray_tooltip(
+            &shortcut_status,
+            &system_status,
+            &queue_status,
+        )))
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -388,6 +444,7 @@ pub fn run() {
         .manage(Mutex::new(system::PermissionRuntime::default()))
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
+        .manage(Mutex::new(queue::QueueRuntime::default()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -437,6 +494,9 @@ pub fn run() {
                 let _ = dragout::cleanup_drag_exports(&cache_directory.join("drag-exports"));
             }
 
+            let queue_status = queue::initialize_for_app(app.handle())
+                .map_err(|error| format!("Could not initialize upload queue state: {error}"))?;
+
             // The panel remains non-focusable but accepts deliberate Quick
             // Access clicks without activating Capso or blocking outside it.
             if let Some(overlay_window) = app.get_webview_window(overlay::OVERLAY_LABEL) {
@@ -474,11 +534,11 @@ pub fn run() {
 
             let system_status = current_system_status(app.handle())
                 .map_err(|error| format!("Could not initialize system status: {error}"))?;
-            let menu = build_tray_menu(app.handle(), &status, &system_status)?;
+            let menu = build_tray_menu(app.handle(), &status, &system_status, &queue_status)?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip(tray_tooltip(&status, &system_status))
+                .tooltip(tray_tooltip(&status, &system_status, &queue_status))
                 .menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
@@ -534,7 +594,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture, clipboard, overlay};
+    use super::{capture, clipboard, overlay, queue};
 
     fn event_json(
         result: Result<capture::CaptureOutcome, capture::CaptureFailure>,
@@ -549,12 +609,21 @@ mod tests {
                 path: "/tmp/capso/captured.png".into(),
                 clipboard: clipboard::ClipboardStatus::Copied { bytes: 42 },
                 overlay: overlay::OverlayStatus::Prepared { x: 1440, y: 900 },
+                queue: queue::CaptureQueueStatus::Enqueued {
+                    id: "018f22c4-cada-7c6b-9d5b-fc35f7f9227a".into(),
+                    queued: 1,
+                },
             })),
             serde_json::json!({
                 "status": "captured",
                 "path": "/tmp/capso/captured.png",
                 "clipboard": { "status": "copied", "bytes": 42 },
-                "overlay": { "status": "prepared", "x": 1440, "y": 900 }
+                "overlay": { "status": "prepared", "x": 1440, "y": 900 },
+                "queue": {
+                    "status": "enqueued",
+                    "id": "018f22c4-cada-7c6b-9d5b-fc35f7f9227a",
+                    "queued": 1
+                }
             })
         );
     }
@@ -572,6 +641,10 @@ mod tests {
                     code: "overlay_unavailable",
                     message: "The capture overlay window is unavailable.".into(),
                 },
+                queue: queue::CaptureQueueStatus::Failed {
+                    code: "queue_persist_failed",
+                    message: "Could not commit queue".into(),
+                },
             })),
             serde_json::json!({
                 "status": "captured",
@@ -585,8 +658,42 @@ mod tests {
                     "status": "failed",
                     "code": "overlay_unavailable",
                     "message": "The capture overlay window is unavailable."
+                },
+                "queue": {
+                    "status": "failed",
+                    "code": "queue_persist_failed",
+                    "message": "Could not commit queue"
                 }
             })
+        );
+    }
+
+    #[test]
+    fn queue_status_labels_are_explicit_and_pluralized() {
+        let one = queue::QueueRuntimeStatus {
+            summary: queue::QueueSummary {
+                pending: 1,
+                total: 1,
+                ..queue::QueueSummary::default()
+            },
+            warning: None,
+        };
+        assert_eq!(
+            super::queue_menu_label(&one).as_deref(),
+            Some("1 capture saved locally — sync pending")
+        );
+
+        let failed = queue::QueueRuntimeStatus {
+            summary: queue::QueueSummary {
+                failed: 2,
+                total: 2,
+                ..queue::QueueSummary::default()
+            },
+            warning: None,
+        };
+        assert_eq!(
+            super::queue_menu_label(&failed).as_deref(),
+            Some("2 captures need manual retry")
         );
     }
 

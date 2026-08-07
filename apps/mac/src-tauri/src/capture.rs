@@ -31,6 +31,7 @@ pub(crate) enum CaptureOutcome {
         path: String,
         clipboard: crate::clipboard::ClipboardStatus,
         overlay: crate::overlay::OverlayStatus,
+        queue: crate::queue::CaptureQueueStatus,
     },
     Cancelled,
 }
@@ -77,7 +78,13 @@ trait CaptureRunner {
     fn run(&self, args: &[OsString]) -> io::Result<ProcessResult>;
 }
 
+trait CaptureDurability {
+    fn sync_file(&self, path: &Path) -> io::Result<()>;
+    fn sync_directory(&self, path: &Path) -> io::Result<()>;
+}
+
 struct SystemCaptureRunner;
+struct SystemCaptureDurability;
 
 impl CaptureRunner for SystemCaptureRunner {
     fn run(&self, args: &[OsString]) -> io::Result<ProcessResult> {
@@ -91,11 +98,35 @@ impl CaptureRunner for SystemCaptureRunner {
     }
 }
 
+impl CaptureDurability for SystemCaptureDurability {
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)?
+            .sync_all()
+    }
+
+    fn sync_directory(&self, path: &Path) -> io::Result<()> {
+        fs::File::open(path)?.sync_all()
+    }
+}
+
 fn run_capture<R: CaptureRunner>(
     app_data: &Path,
     mode: CaptureMode,
     capture_id: &str,
     runner: &R,
+) -> Result<StoredCaptureOutcome, CaptureFailure> {
+    run_capture_with_durability(app_data, mode, capture_id, runner, &SystemCaptureDurability)
+}
+
+fn run_capture_with_durability<R: CaptureRunner, D: CaptureDurability>(
+    app_data: &Path,
+    mode: CaptureMode,
+    capture_id: &str,
+    runner: &R,
+    durability: &D,
 ) -> Result<StoredCaptureOutcome, CaptureFailure> {
     let output = capture_path(app_data, capture_id);
     let directory = output.parent().expect("capture path always has a parent");
@@ -122,13 +153,28 @@ fn run_capture<R: CaptureRunner>(
         }
     };
 
-    classify_capture(
+    let outcome = classify_capture(
         &output,
         CaptureEvidence {
             output_bytes,
             stderr: &process.stderr,
         },
-    )
+    )?;
+    if matches!(outcome, StoredCaptureOutcome::Captured { .. }) {
+        durability
+            .sync_file(&output)
+            .map_err(|error| CaptureFailure {
+                code: "storage_failed",
+                message: format!("Could not sync the captured image: {error}"),
+            })?;
+        durability
+            .sync_directory(directory)
+            .map_err(|error| CaptureFailure {
+                code: "storage_failed",
+                message: format!("Could not sync the capture directory: {error}"),
+            })?;
+    }
+    Ok(outcome)
 }
 
 fn classify_capture(
@@ -226,17 +272,19 @@ pub(crate) async fn capture_screen(
     match stored {
         StoredCaptureOutcome::Cancelled => Ok(CaptureOutcome::Cancelled),
         StoredCaptureOutcome::Captured { path } => {
+            let queue = crate::queue::enqueue_capture(app.clone(), path.clone(), mode.into()).await;
             let clipboard =
                 crate::clipboard::copy_new_capture_to_general_pasteboard(app.clone(), path.clone())
                     .await;
             let overlay = crate::overlay::prepare_capture_overlay(&app, mode, &path, &clipboard);
             if let Err(error) = crate::refresh_tray_status(&app) {
-                eprintln!("Could not refresh Capso's recent captures: {error}");
+                eprintln!("Could not refresh Capso after capture: {error}");
             }
             Ok(CaptureOutcome::Captured {
                 path: path.to_string_lossy().into_owned(),
                 clipboard,
                 overlay,
+                queue,
             })
         }
     }
@@ -245,12 +293,14 @@ pub(crate) async fn capture_screen(
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_path, classify_capture, screencapture_args, CaptureEvidence, CaptureMode,
-        CaptureOutcome, CaptureRunner, ProcessResult, StoredCaptureOutcome,
+        capture_path, classify_capture, screencapture_args, CaptureDurability, CaptureEvidence,
+        CaptureMode, CaptureOutcome, CaptureRunner, ProcessResult, StoredCaptureOutcome,
     };
     use crate::clipboard::ClipboardStatus;
     use crate::overlay::OverlayStatus;
+    use crate::queue::CaptureQueueStatus;
     use std::{
+        cell::RefCell,
         ffi::OsString,
         fs, io,
         path::Path,
@@ -277,6 +327,37 @@ mod tests {
                 io::ErrorKind::PermissionDenied,
                 "runner denied",
             ))
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum DurabilityStage {
+        File,
+        Directory,
+    }
+
+    struct FaultDurability {
+        fail_at: DurabilityStage,
+        calls: RefCell<Vec<DurabilityStage>>,
+    }
+
+    impl CaptureDurability for FaultDurability {
+        fn sync_file(&self, _path: &Path) -> io::Result<()> {
+            self.calls.borrow_mut().push(DurabilityStage::File);
+            if self.fail_at == DurabilityStage::File {
+                Err(io::Error::other("injected file sync failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn sync_directory(&self, _path: &Path) -> io::Result<()> {
+            self.calls.borrow_mut().push(DurabilityStage::Directory);
+            if self.fail_at == DurabilityStage::Directory {
+                Err(io::Error::other("injected directory sync failure"))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -385,6 +466,10 @@ mod tests {
             path: "/tmp/capso/captured.png".into(),
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             overlay: OverlayStatus::Prepared { x: 1440, y: 900 },
+            queue: CaptureQueueStatus::Enqueued {
+                id: "018f22c4-cada-7c6b-9d5b-fc35f7f9227a".into(),
+                queued: 1,
+            },
         };
 
         assert_eq!(
@@ -400,6 +485,11 @@ mod tests {
                     "status": "prepared",
                     "x": 1440,
                     "y": 900
+                },
+                "queue": {
+                    "status": "enqueued",
+                    "id": "018f22c4-cada-7c6b-9d5b-fc35f7f9227a",
+                    "queued": 1
                 }
             })
         );
@@ -417,6 +507,10 @@ mod tests {
                 code: "overlay_unavailable",
                 message: "The capture overlay window is unavailable.".into(),
             },
+            queue: CaptureQueueStatus::Failed {
+                code: "queue_persist_failed",
+                message: "Could not commit queue".into(),
+            },
         };
 
         assert_eq!(
@@ -433,6 +527,11 @@ mod tests {
                     "status": "failed",
                     "code": "overlay_unavailable",
                     "message": "The capture overlay window is unavailable."
+                },
+                "queue": {
+                    "status": "failed",
+                    "code": "queue_persist_failed",
+                    "message": "Could not commit queue"
                 }
             })
         );
@@ -506,6 +605,39 @@ mod tests {
         );
 
         fs::remove_dir_all(app_data).expect("clean test capture directory");
+    }
+
+    #[test]
+    fn capture_success_requires_both_file_and_directory_sync() {
+        for (failure, expected_calls) in [
+            (DurabilityStage::File, vec![DurabilityStage::File]),
+            (
+                DurabilityStage::Directory,
+                vec![DurabilityStage::File, DurabilityStage::Directory],
+            ),
+        ] {
+            let app_data = tempfile::tempdir().expect("temporary app data");
+            let durability = FaultDurability {
+                fail_at: failure,
+                calls: RefCell::new(Vec::new()),
+            };
+
+            let error = super::run_capture_with_durability(
+                app_data.path(),
+                CaptureMode::Region,
+                "018f22c4-cada-7c6b-9d5b-fc35f7f9227a",
+                &WritingRunner,
+                &durability,
+            )
+            .expect_err("unsynced pixels cannot be reported as durable");
+
+            assert_eq!(error.code, "storage_failed");
+            assert_eq!(*durability.calls.borrow(), expected_calls);
+            assert!(
+                capture_path(app_data.path(), "018f22c4-cada-7c6b-9d5b-fc35f7f9227a").exists(),
+                "sync failure reporting must not delete captured pixels"
+            );
+        }
     }
 
     #[test]
