@@ -26,3 +26,6 @@ serde_json = "1"
 # Already present transitively through Tauri; declared directly so capture ids
 # are real UUIDs at the filesystem and ingest boundary.
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
