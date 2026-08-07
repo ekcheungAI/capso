@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 01:49 HKT | CAP-01b approved and committed | CAP-01c |
+| capso-cleanshot-replacement | hourly | 2026-08-08 02:22 HKT | CAP-01c approved after 1 repair and committed | UX-01a |
 
 ## Gate scoreboard
 
@@ -43,7 +43,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | Gate | Status | Current evidence | Next proof |
 |---|---|---|---|
 | UX-01 menu-bar availability | IN_PROGRESS | Tauri tray shell builds; visual behavior unverified | Launch/quit/focus/login-item QA |
-| CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` default global shortcuts, conflict report, tray fallbacks; 14 Rust tests | Editable persisted bindings plus manual from-any-app and conflict QA |
+| CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` defaults/tray fallbacks + `d4d2bff` persisted editable bindings with reconciled rollback; 23 Rust tests | Manual physical recording, relaunch, from-any-app, real conflict, rollback-message, and picker QA |
 | CAP-02 clipboard + <1s overlay | NOT_STARTED | Web simulation only | Native clipboard and timed overlay |
 | OVL-01 overlay experience | NOT_STARTED | Web overlay exists; no native window | Non-activating multi-display panel |
 | ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
@@ -64,7 +64,7 @@ outcome that fits the run budget.
 |---|---|---|---|
 | 1 | ✅ CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests (`01c05d1`) | schema/buckets live | none |
 | 2 | ✅ CAP-01b — default global shortcuts, conflict reporting, and tray actions (`056801e`) | CAP-01a | manual shortcut QA |
-| 3 | CAP-01c — persisted editable bindings and safe shortcut re-registration | CAP-01b | manual shortcut/conflict QA |
+| 3 | ✅ CAP-01c — persisted editable bindings and safe shortcut re-registration (`d4d2bff`) | CAP-01b | manual shortcut/conflict QA |
 | 4 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
 | 5 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
 | 6 | OVL-01a — non-activating overlay on the capture display | CAP-02a | focus + multi-display QA |
@@ -96,6 +96,7 @@ is PASS; a skipped or unverified gate is not PASS.
 |---|---|---|---|---|---|
 | 2026-08-08 01:34 | capso-cleanshot-replacement | CAP-01a native command seam | APPROVED after 1 repair | `01c05d1` | 10/10 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01b. |
 | 2026-08-08 01:49 | capso-cleanshot-replacement | CAP-01b global shortcuts and tray fallbacks | APPROVED | `056801e` | 14/14 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01c. |
+| 2026-08-08 02:22 | capso-cleanshot-replacement | CAP-01c persisted editable shortcuts and safe re-registration | APPROVED after 1 repair | `d4d2bff` | 23/23 Rust tests; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, Mac and Tauri app builds, 360×480 visual QA, loop validator, and diff/scope checks pass. Manual native QA remains; next: UX-01a. |
 
 ## Discovered technical debt
 
