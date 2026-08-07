@@ -83,12 +83,15 @@ Run `loops/capso-cleanshot-replacement-loop.md` on
 Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions. `a5c5e80`
 adds synced capture pixels and an atomic restart-safe local queue, while `b3b9641` adds the
 production-compiled single-flight drain coordinator with exact-ID acknowledgement and
-error-safe wake handoff proofs. The next independent implementation objective is AI-01a:
-define and implement the Mac identity/auth handoff plus authenticated ingest contract,
-stopping for an owner decision before changing production auth. CAP-02b's 20-capture
-latency proof remains a foreground manual gate. A real upload transport, connectivity and
-retry wake sources, the reconnect drill, and server-side processing remain hard
-prerequisites before a native capture can learn with every browser closed.
+error-safe wake handoff proofs. `c3278ba` now adds a strict native PKCE callback seam and
+shared authenticated-ingest request/ack/error contract without caller-supplied ownership.
+Production identity/linking, deep-link registration, Supabase exchange, Keychain storage,
+and real upload remain owner-gated/unwired. The next independent implementation objective
+is ANN-01a, reusing the four-tool editor from the native overlay and flattening before the
+eventual upload. CAP-02b's 20-capture latency proof remains a foreground manual gate. A
+real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
+server-side processing remain hard prerequisites before a native capture can learn with
+every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
@@ -115,7 +118,10 @@ retry/poison/idempotency state without deleting local pixels. Annotate and the a
 drain transport/authenticated upload remain unwired. A production-compiled coordinator now
 proves exact-ID completion, no-attempt offline/auth holds, FIFO healthy-work isolation,
 single-flight overlap, restart idempotency, and error-safe wake handoff against a fake
-transport. P2 native capture remains the active risk track under D15's sequencing exception.
+transport. A compiled PKCE/ingest boundary now rejects forged/replayed callbacks, keeps
+tokens out of URLs and payloads, derives future ownership from authentication, and shares
+strict payload fixtures across Rust and Zod. It deliberately has no production session or
+network adapter. P2 native capture remains the active risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
@@ -123,14 +129,15 @@ Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
    display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
-   recent restore, native drag-out, durable local queue, and fake-transport drain coordinator
-   are tested, but Annotate and the authenticated transport/connectivity wake path do not
-   exist. Physical shortcut, recent-menu
+   recent restore, native drag-out, durable local queue, fake-transport drain coordinator,
+   and strict auth/ingest contract are tested, but Annotate and the production authenticated
+   transport/connectivity wake path do not exist. Physical shortcut, recent-menu
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
-2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
-   the Mac app, and classification is still called by a browser tab rather than a server
-   worker. Native captures cannot learn with the web app closed.
+2. **Mac identity + background worker** — the PKCE/ingest boundary is compiled but browser
+   anonymous auth still cannot be silently transferred to the Mac app; no deep-link,
+   exchange, Keychain, or HTTP adapter is wired, and classification is still called by a
+   browser tab rather than a server worker. Native captures cannot learn with the web app closed.
 3. **Native permission evidence** — Screen Recording and multi-display behavior have not
    passed end-to-end QA from the bundled app.
 4. **Distribution** — the local DMG is ad-hoc signed, not notarized, and its current bundle
@@ -141,10 +148,10 @@ Known blockers:
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
+| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; strict Mac auth contract is compiled, but production session wiring, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, durable local queue, and fake-transport drain coordinator; annotation, authenticated transport/wake wiring, offline drill, and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, durable local queue, fake-transport drain coordinator, and authenticated-ingest contract; annotation, production auth/transport/wake wiring, offline drill, and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |

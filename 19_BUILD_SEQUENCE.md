@@ -35,9 +35,10 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 **Owner-approved sequencing exception (D15, 2026-08-08):** P1 schema, owner-only RLS,
 private Storage buckets, and the web remote-store path are live. P2 native local capture
 primitives may therefore proceed now to retire the highest platform risk, even though P0
-Mac auth/CI/telemetry and P1 jobs/worker work remain incomplete. This exception does not
-permit claiming AC-CAP-03, AI-01, P2 done, or dogfood readiness until authenticated native
-ingest and browser-independent processing are complete.
+production Mac auth/CI/telemetry and P1 jobs/worker work remain incomplete. A strict native
+PKCE/ingest contract is compiled (`c3278ba`) but has no session or network adapter. This
+exception does not permit claiming AC-CAP-03, AI-01, P2 done, or dogfood readiness until
+authenticated native ingest and browser-independent processing are complete.
 
 ---
 
@@ -50,7 +51,7 @@ ingest and browser-independent processing are complete.
 **Tasks:**
 - [x] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas) <!-- loop 01; Next 16.2.12 shipped by create-next-app, see BUILD_LOG deviation -->
 - [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed <!-- partial: .env.example done (loop 01); project creation BLOCKED on owner, STOP rules 3+4 -->
-- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- blocked by Supabase project -->
+- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves a strict native-origin PKCE callback and shared authenticated-ingest contract; deep-link registration, Supabase exchange, Keychain session, anonymous-library linking, and endpoint call remain owner-gated/unwired -->
 - [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
 
 - [x] Vercel deploy of `apps/web` <!-- production deployed in BUILD_LOG loop 20; real app, not empty shell -->
@@ -101,8 +102,8 @@ loop.
 - [ ] Global hotkey (default ⌘⇧5-alternative) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: command seam 01c05d1, conflict-safe defaults/tray fallbacks 056801e, persisted rollback-safe editable bindings d4d2bff, and persist-first exact-byte AppKit clipboard 3496c82 are Checker-approved; physical shortcut/picker/general-pasteboard QA remains -->
 - [x] Screen Recording permission detection + guidance UI; Accessibility is neither needed nor requested (`b507eec`; native grant/revoke QA remains) (specs/permission_model.md)
 - [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer <!-- partial: hidden-until-decode display-correct overlay 91e6643; generation-safe Copy, atomic Save As, Close, and hover/action-paused auto-dismiss 8923e90; five-item durable recent restore 8bd0888; and copy-only native drag-out db0ab1e are Checker-approved; Annotate and native focus/relaunch/multi-display/drag QA remain -->
-- [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01) <!-- partial: a5c5e80 syncs capture pixels before atomic JSON handoff and proves restart FIFO/orphan recovery, exact 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt-store preservation, and zero capture deletion; b3b9641 adds the production-compiled single-flight coordinator with exact-ID fake transport acknowledgements, no-attempt holds, healthy-work isolation, and error-safe wake handoff; native auth/transport, real connectivity/retry wake sources, and the offline drill remain -->
-- [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job
+- [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01) <!-- partial: a5c5e80 syncs capture pixels before atomic JSON handoff and proves restart FIFO/orphan recovery, exact 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt-store preservation, and zero capture deletion; b3b9641 adds the production-compiled single-flight coordinator with exact-ID fake transport acknowledgements, no-attempt holds, healthy-work isolation, and error-safe wake handoff; c3278ba adds the strict authenticated request/ack/error contract; production auth/HTTP transport, real connectivity/retry wake sources, and the offline drill remain -->
+- [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job <!-- partial: c3278ba fixes the client-generated id, owner-derived path, exact acknowledgement, and error-disposition contract; no Storage/HTTP/job adapter exists -->
 - [ ] Web: drag-drop / paste ingest on `apps/web` hitting the same upload path
 - [ ] Library grid on web listing captured screenshots (newest first, thumbnail + timestamp)
 
