@@ -620,3 +620,20 @@ Implemented a Tauri `capture_screen` command backed by `/usr/sbin/screencapture`
 Verification: Rust tests **10/10 passed**; `RUSTFLAGS='-D warnings' cargo check --all-targets` passed; Mac TypeScript check and Vite production build passed; root typecheck, lint, and web/extension tests (**78 + 4**) passed; `git diff --check` passed; the project loop validator passed its 67 checks and 7 malformed fixtures. `rustfmt` and `clippy` were unavailable in the installed toolchain, so no global component install was attempted. Native picker/manual Screen Recording QA remains unverified because it would interrupt the foreground user.
 
 Checker: initial REJECT found missing deterministic coverage for storage-directory and runner-launch failures. Repair attempt 1 added both proofs; the independent Checker then APPROVED the complete allowlisted diff. Native implementation commit: `01c05d1`. This does not pass CAP-01 overall; shortcuts, interactive capture QA, permissions, clipboard, and overlay remain. Next loop: CAP-01b global shortcut registration, conflict reporting, and tray actions.
+
+## Loop 31 — Global shortcuts and tray fallbacks
+**Date:** 2026-08-08 · **Phase:** P2 / CAP-01b · **Outcome:** done; partial CAP-01 evidence
+
+Objective: Register native region, window, and main-display fullscreen shortcuts independently, report conflicts without aborting Capso, and keep each capture mode available from the tray.
+
+Phase/tasks: P2 global capture entry points; `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` CAP-01b; partial CAP-01 evidence.
+
+In-scope files: `apps/mac/src-tauri/src/shortcuts.rs`, `apps/mac/src-tauri/src/lib.rs`, `apps/mac/src-tauri/src/capture.rs`, `apps/mac/src-tauri/Cargo.toml`, `apps/mac/src-tauri/Cargo.lock`, `apps/mac/README.md`, and loop status docs after approval.
+
+Out of scope: shortcut settings UI, clipboard, overlay, permission onboarding, queue/history, auth/upload/AI, annotation, signing, deployment, and interactive CleanShot comparison.
+
+Done-when: ⌃⇧C/⌃⇧W/⌃⇧F register independently through the official Tauri v2 plugin; known key-down events launch the matching persisted capture once; key-up/unrelated input does nothing; one conflict cannot block other shortcuts; the unavailable key is named in the tray while all three tray capture actions remain; overlapping shortcut/tray pickers are guarded.
+
+Verification: the failing-first run produced three expected shortcut-test failures before implementation. Final Rust suite **14/14 passed**; `RUSTFLAGS='-D warnings' cargo check --all-targets`, root typecheck/lint, web/extension tests (**78 + 4**), Mac production build, loop validator (**67 checks + 7 malformed fixtures**), and `git diff --check` passed. The installed toolchain still lacks rustfmt/Clippy, so no global component install was attempted. No shortcut or picker was invoked unattended.
+
+Checker: APPROVED with no P0–P2 findings. It independently confirmed isolated registration, pressed-only event handling, shared shortcut/tray overlap guard, visible conflict fallback, and no global-shortcut webview capability exposure. Native implementation commit: `056801e`. CAP-01 remains IN_PROGRESS until bindings are editable/persisted and explicit any-foreground-app/conflict QA passes. Next loop: CAP-01c.

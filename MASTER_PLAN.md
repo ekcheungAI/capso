@@ -79,9 +79,9 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 ## 7. Recommended next action
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
-`codex/capso-cleanshot-replacement`. The next implementation objective is global shortcut
-registration, conflict reporting, and tray actions on top of the tested native
-region/window/fullscreen command seam. Mac identity and server-side processing remain hard
+`codex/capso-cleanshot-replacement`. The next implementation objective is persisted,
+editable shortcut bindings and safe re-registration on top of the tested default global
+shortcuts and tray fallbacks. Mac identity and server-side processing remain hard
 prerequisites before a native capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
@@ -90,16 +90,17 @@ prerequisites before a native capture can learn with every browser closed.
 ledger's original 2026-07-31 snapshot. Web capture/import, Storage-backed persistence,
 real MiniMax classification, correction few-shot context, projects, review, memory,
 thread chat, lexical retrieval, annotation, and the Chrome extension are implemented.
-The native app now has a tested Tauri command seam for region, window, and main-display
-fullscreen capture, but it is not yet wired to shortcuts, clipboard, overlay, or the
-durable queue. P2 native capture remains the active risk track under D15's sequencing
-exception.
+The native app now has a tested Tauri command seam plus default global shortcuts and tray
+fallbacks for region, window, and main-display fullscreen capture. Bindings are not yet
+editable, and clipboard, overlay, permissions, and the durable queue remain unwired. P2
+native capture remains the active risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers:
-1. **Native capture path** — the native command seam is tested, but global shortcuts,
-   clipboard, non-activating overlay, permissions flow, and durable Mac queue do not exist.
+1. **Native capture path** — the native command seam, default shortcuts, conflict report,
+   and tray fallbacks are tested, but editable bindings, clipboard, non-activating overlay,
+   permissions flow, and durable Mac queue do not exist.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.
@@ -116,7 +117,7 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest and native capture command seam work; shortcuts/clipboard/overlay/queue remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/default-shortcut/tray seams work; editable bindings/clipboard/overlay/queue remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay integration remains |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |

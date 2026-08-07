@@ -98,7 +98,7 @@ unfinished auth/worker work remains a downstream blocker explicitly tracked by t
 loop.
 
 **Tasks:**
-- [ ] Global hotkey (default ⌘⇧5-alternative, configurable later) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: Checker-approved native command seam in 01c05d1, shortcuts and clipboard remain -->
+- [ ] Global hotkey (default ⌘⇧5-alternative, configurable later) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: command seam 01c05d1 and conflict-safe default shortcuts/tray fallbacks 056801e are Checker-approved; editable bindings, manual QA, and clipboard remain -->
 - [ ] Screen Recording / accessibility permission detection + guidance UI (specs/permission_model.md)
 - [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer
 - [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01)

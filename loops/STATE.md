@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | CAP-01b: register global capture shortcuts with conflict reporting and matching tray actions |
+| Next objective | CAP-01c: persist editable shortcut bindings and re-register safely without losing tray fallbacks |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 01:34 HKT | CAP-01a approved and committed | CAP-01b |
+| capso-cleanshot-replacement | hourly | 2026-08-08 01:49 HKT | CAP-01b approved and committed | CAP-01c |
 
 ## Gate scoreboard
 
@@ -43,7 +43,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | Gate | Status | Current evidence | Next proof |
 |---|---|---|---|
 | UX-01 menu-bar availability | IN_PROGRESS | Tauri tray shell builds; visual behavior unverified | Launch/quit/focus/login-item QA |
-| CAP-01 native capture modes | IN_PROGRESS | `01c05d1`: tested region/window/main-display fullscreen command seam; 10 Rust tests | Global shortcuts, conflict handling, tray actions, and manual capture QA |
+| CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` default global shortcuts, conflict report, tray fallbacks; 14 Rust tests | Editable persisted bindings plus manual from-any-app and conflict QA |
 | CAP-02 clipboard + <1s overlay | NOT_STARTED | Web simulation only | Native clipboard and timed overlay |
 | OVL-01 overlay experience | NOT_STARTED | Web overlay exists; no native window | Non-activating multi-display panel |
 | ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
@@ -63,27 +63,28 @@ outcome that fits the run budget.
 | Order | Objective | Depends on | Human action |
 |---|---|---|---|
 | 1 | ✅ CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests (`01c05d1`) | schema/buckets live | none |
-| 2 | CAP-01b — global shortcut registration, conflict reporting, and tray actions | CAP-01a | manual shortcut QA |
-| 3 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
-| 4 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
-| 5 | OVL-01a — non-activating overlay on the capture display | CAP-02a | focus + multi-display QA |
-| 6 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions | OVL-01a | interaction QA |
-| 7 | CAP-02b — 20-capture overlay latency proof | OVL-01a | foreground test window |
-| 8 | DUR-01a — durable local queue state machine, written test-first | CAP-01a | none |
-| 9 | DUR-01b — three-capture offline/restart/reconnect drill with no duplicates | DUR-01a | network toggle QA |
-| 10 | AI-01a — Mac identity/auth handoff and authenticated ingest contract | DUR-01a | auth decision if required |
-| 11 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
-| 12 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
-| 13 | ANN-01a — reuse the four-tool editor from the overlay and flatten before final upload | OVL-01b, DUR-01a | annotation QA |
-| 14 | ANN-01b — irreversible blur and flattened-pixel proof | ANN-01a | none |
-| 15 | HIS-01a — recent captures menu and full library deep links | DUR-01a | history QA |
-| 16 | LRN-01a — scripted three-corrections-to-fourth-capture evaluation | AI-01b | model calls approved under existing config |
-| 17 | RET-01a — pgvector + keyword retrieval implementation | AI-01b | embedding-provider decision if unresolved |
-| 18 | RET-01b — exact OCR and vague-memory golden query evaluation | RET-01a | real dogfood corpus |
-| 19 | PKG-01a — correct bundle identity and entitlement manifest | UX-01a | none |
-| 20 | PKG-01b — Developer ID signing and notarization | PKG-01a | explicit credentials/distribution approval |
-| 21 | PKG-01c — fresh-user install and onboarding proof | PKG-01b | fresh macOS user QA |
-| 22 | DOG-01 — five-day, 50-capture replacement period | every scoreboard gate PASS | Elvin daily use |
+| 2 | ✅ CAP-01b — default global shortcuts, conflict reporting, and tray actions (`056801e`) | CAP-01a | manual shortcut QA |
+| 3 | CAP-01c — persisted editable bindings and safe shortcut re-registration | CAP-01b | manual shortcut/conflict QA |
+| 4 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
+| 5 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
+| 6 | OVL-01a — non-activating overlay on the capture display | CAP-02a | focus + multi-display QA |
+| 7 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions | OVL-01a | interaction QA |
+| 8 | CAP-02b — 20-capture overlay latency proof | OVL-01a | foreground test window |
+| 9 | DUR-01a — durable local queue state machine, written test-first | CAP-01a | none |
+| 10 | DUR-01b — three-capture offline/restart/reconnect drill with no duplicates | DUR-01a | network toggle QA |
+| 11 | AI-01a — Mac identity/auth handoff and authenticated ingest contract | DUR-01a | auth decision if required |
+| 12 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
+| 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
+| 14 | ANN-01a — reuse the four-tool editor from the overlay and flatten before final upload | OVL-01b, DUR-01a | annotation QA |
+| 15 | ANN-01b — irreversible blur and flattened-pixel proof | ANN-01a | none |
+| 16 | HIS-01a — recent captures menu and full library deep links | DUR-01a | history QA |
+| 17 | LRN-01a — scripted three-corrections-to-fourth-capture evaluation | AI-01b | model calls approved under existing config |
+| 18 | RET-01a — pgvector + keyword retrieval implementation | AI-01b | embedding-provider decision if unresolved |
+| 19 | RET-01b — exact OCR and vague-memory golden query evaluation | RET-01a | real dogfood corpus |
+| 20 | PKG-01a — correct bundle identity and entitlement manifest | UX-01a | none |
+| 21 | PKG-01b — Developer ID signing and notarization | PKG-01a | explicit credentials/distribution approval |
+| 22 | PKG-01c — fresh-user install and onboarding proof | PKG-01b | fresh macOS user QA |
+| 23 | DOG-01 — five-day, 50-capture replacement period | every scoreboard gate PASS | Elvin daily use |
 
 Manual objectives are allowed to remain BLOCKED while independent code objectives whose
 dependencies pass continue. DOG-01 is never eligible until every preceding scoreboard gate
@@ -94,6 +95,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | Timestamp (HKT) | Loop | Objective | Result | Commit | Evidence / next action |
 |---|---|---|---|---|---|
 | 2026-08-08 01:34 | capso-cleanshot-replacement | CAP-01a native command seam | APPROVED after 1 repair | `01c05d1` | 10/10 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01b. |
+| 2026-08-08 01:49 | capso-cleanshot-replacement | CAP-01b global shortcuts and tray fallbacks | APPROVED | `056801e` | 14/14 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01c. |
 
 ## Discovered technical debt
 
