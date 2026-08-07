@@ -1,22 +1,16 @@
 mod capture;
+mod clipboard;
 mod shortcuts;
 mod system;
 
-use std::{
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex,
-    },
-};
+use serde::Serialize;
+use std::{path::PathBuf, sync::Mutex};
 use tauri::{
     menu::{Menu, MenuBuilder, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-
-static CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 struct TauriShortcutRegistry<'a> {
     app: &'a AppHandle,
@@ -42,6 +36,35 @@ impl shortcuts::ShortcutRegistry for TauriShortcutRegistry<'_> {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum CaptureEvent<'a> {
+    Captured {
+        path: &'a str,
+        clipboard: &'a clipboard::ClipboardStatus,
+    },
+    Cancelled,
+    Failed {
+        code: &'static str,
+        message: &'a str,
+    },
+}
+
+fn capture_event(
+    result: &Result<capture::CaptureOutcome, capture::CaptureFailure>,
+) -> CaptureEvent<'_> {
+    match result {
+        Ok(capture::CaptureOutcome::Captured { path, clipboard }) => {
+            CaptureEvent::Captured { path, clipboard }
+        }
+        Ok(capture::CaptureOutcome::Cancelled) => CaptureEvent::Cancelled,
+        Err(error) => CaptureEvent::Failed {
+            code: error.code,
+            message: &error.message,
+        },
+    }
+}
+
 fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
     if system::permission_for_capture(action.mode(), system::screen_recording_granted())
         == system::CapturePermission::RequiresScreenRecording
@@ -50,21 +73,27 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
         return;
     }
 
-    if CAPTURE_IN_PROGRESS.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
     let _capture_task = tauri::async_runtime::spawn(async move {
         let result = capture::capture_screen(app.clone(), action.mode()).await;
-        CAPTURE_IN_PROGRESS.store(false, Ordering::Release);
 
-        if let Err(error) = &result {
-            if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_tooltip(Some(format!("Capso — {}", error.message)));
+        if let Some(tray) = app.tray_by_id("main") {
+            match &result {
+                Err(error) => {
+                    let _ = tray.set_tooltip(Some(format!("Capso — {}", error.message)));
+                }
+                Ok(capture::CaptureOutcome::Captured {
+                    clipboard: clipboard::ClipboardStatus::Failed { message, .. },
+                    ..
+                }) => {
+                    let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+                }
+                Ok(_) => {
+                    let _ = refresh_tray_status(&app);
+                }
             }
         }
 
-        let _ = app.emit("capture-finished", result);
+        let _ = app.emit("capture-finished", capture_event(&result));
     });
 }
 
@@ -416,4 +445,75 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{capture, clipboard};
+
+    fn event_json(
+        result: Result<capture::CaptureOutcome, capture::CaptureFailure>,
+    ) -> serde_json::Value {
+        serde_json::to_value(super::capture_event(&result)).expect("serialize capture event")
+    }
+
+    #[test]
+    fn copied_capture_event_has_a_top_level_captured_status() {
+        assert_eq!(
+            event_json(Ok(capture::CaptureOutcome::Captured {
+                path: "/tmp/capso/captured.png".into(),
+                clipboard: clipboard::ClipboardStatus::Copied { bytes: 42 },
+            })),
+            serde_json::json!({
+                "status": "captured",
+                "path": "/tmp/capso/captured.png",
+                "clipboard": { "status": "copied", "bytes": 42 }
+            })
+        );
+    }
+
+    #[test]
+    fn clipboard_failure_event_still_has_a_top_level_captured_status() {
+        assert_eq!(
+            event_json(Ok(capture::CaptureOutcome::Captured {
+                path: "/tmp/capso/captured.png".into(),
+                clipboard: clipboard::ClipboardStatus::Failed {
+                    code: "clipboard_write_failed",
+                    message: "Could not copy the capture".into(),
+                },
+            })),
+            serde_json::json!({
+                "status": "captured",
+                "path": "/tmp/capso/captured.png",
+                "clipboard": {
+                    "status": "failed",
+                    "code": "clipboard_write_failed",
+                    "message": "Could not copy the capture"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn cancelled_capture_event_is_explicit() {
+        assert_eq!(
+            event_json(Ok(capture::CaptureOutcome::Cancelled)),
+            serde_json::json!({ "status": "cancelled" })
+        );
+    }
+
+    #[test]
+    fn failed_capture_event_is_explicit_and_actionable() {
+        assert_eq!(
+            event_json(Err(capture::CaptureFailure {
+                code: "capture_failed",
+                message: "Screen capture permission denied".into(),
+            })),
+            serde_json::json!({
+                "status": "failed",
+                "code": "capture_failed",
+                "message": "Screen capture permission denied"
+            })
+        );
+    }
 }

@@ -13,10 +13,14 @@ type CaptureMode = "region" | "window" | "fullscreen";
 Successful captures return:
 
 ```json
-{ "status": "captured", "path": "…/com.capso.app/captures/<uuid>.png" }
+{
+  "status": "captured",
+  "path": "…/com.capso.app/captures/<uuid>.png",
+  "clipboard": { "status": "copied", "bytes": 123456 }
+}
 ```
 
-Pressing Escape in an interactive picker returns `{ "status": "cancelled" }` and is not an error. Storage, launch, empty-output, and diagnostic failures reject with `{ "code", "message" }`.
+The PNG is durable before Capso attempts the clipboard write. If AppKit rejects that post-capture step, the command remains a successful capture and returns `"clipboard": { "status": "failed", "code", "message" }`; the stored pixels are not deleted or downgraded. Pressing Escape in an interactive picker returns `{ "status": "cancelled" }`, never schedules a clipboard mutation, and is not an error. Storage, launch, empty-output, permission, concurrent-capture, and diagnostic failures reject with `{ "code", "message" }`.
 
 Mode mapping:
 
@@ -24,7 +28,7 @@ Mode mapping:
 - `window`: macOS interactive window selection only.
 - `fullscreen`: main display capture. Multi-display selection is a later CAP-01 objective.
 
-The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. Global shortcuts, clipboard output, overlay, upload queue, and background AI are deliberately separate objectives.
+The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. It then reads and validates that persisted PNG off the UI thread and writes the exact bytes to macOS `NSPasteboard` on the main thread. This slice copies every completed capture; the user-facing default-on copy toggle, overlay, upload queue, and background AI remain separate objectives. Native general-pasteboard copy/paste still requires manual QA.
 
 ## Global capture entry points
 
@@ -36,11 +40,11 @@ Capso registers the three capture shortcuts from Rust at startup:
 | Window | ⌃⇧W | Capture Window |
 | Main-display fullscreen | ⌃⇧F | Capture Fullscreen |
 
-Shortcut registration is isolated per action. If another app already owns one default, Capso keeps the other shortcuts active, identifies the unavailable shortcut in the tray menu and tooltip, and leaves every capture mode available from the menu. Shortcut presses trigger only once on the key-down event; a small process guard prevents overlapping native pickers.
+Shortcut registration is isolated per action. If another app already owns one default, Capso keeps the other shortcuts active, identifies the unavailable shortcut in the tray menu and tooltip, and leaves every capture mode available from the menu. Shortcut presses trigger only once on the key-down event. Direct commands, tray actions, and global shortcuts converge on the same RAII single-flight lease, so overlapping native pickers and out-of-order clipboard writes are rejected consistently.
 
 Left-click the Capso menu-bar icon to edit all three bindings. Each recorder accepts a real modified key combination, validates that bindings are unique, and saves them to `~/Library/Application Support/com.capso.app/shortcut-settings.json`. A save first registers the complete candidate set and only then atomically replaces the JSON. Registration or storage failure rolls back to the previously active set; Capso reconciles partial OS rollback failures, keeps the tray capture actions available, and offers an unchanged retry. Global capture dispatch is suspended while the settings popover has focus so recording a binding cannot launch a picker.
 
-The plugin is used entirely from Rust, so no global-shortcut commands are exposed to the webview and no frontend capability permission is enabled. The native result is emitted as `capture-finished` for the upcoming clipboard/overlay objective. Physical recording, relaunch persistence, any-foreground-app dispatch, real cross-app conflicts, rollback messaging, and picker behavior still require manual QA before CAP-01 can pass.
+The plugin is used entirely from Rust, so no global-shortcut commands are exposed to the webview and no frontend capability permission is enabled. The native result is emitted as an explicitly tagged `capture-finished` payload: top-level `captured`, `cancelled`, or `failed`. A clipboard failure remains top-level `captured` and carries its recoverable status under `clipboard`. Physical recording, relaunch persistence, any-foreground-app dispatch, real cross-app conflicts, rollback messaging, picker behavior, and general-pasteboard copy/paste still require manual QA before CAP-01 can pass.
 
 ## Menu lifecycle and macOS permissions
 

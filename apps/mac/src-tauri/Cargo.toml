@@ -32,6 +32,8 @@ uuid = { version = "1", features = ["v4"] }
 # APIs. They are already in the native Tauri dependency family and do not run
 # install scripts or background helpers.
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
 objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "objc2", "objc2-foundation", "SMAppService"] }
 
 [dev-dependencies]

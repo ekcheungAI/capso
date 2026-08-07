@@ -4,28 +4,61 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use tauri::{AppHandle, Manager};
 
+static CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CaptureMode {
+pub(crate) enum CaptureMode {
     Region,
     Window,
     Fullscreen,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum CaptureOutcome {
-    Captured { path: String },
+#[derive(Clone, Debug, PartialEq)]
+enum StoredCaptureOutcome {
+    Captured { path: PathBuf },
     Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct CaptureFailure {
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum CaptureOutcome {
+    Captured {
+        path: String,
+        clipboard: crate::clipboard::ClipboardStatus,
+    },
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct CaptureFailure {
     pub code: &'static str,
     pub message: String,
+}
+
+struct CaptureLease<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> CaptureLease<'a> {
+    fn try_acquire(flag: &'a AtomicBool) -> Result<Self, CaptureFailure> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self { flag })
+            .map_err(|_| CaptureFailure {
+                code: "capture_in_progress",
+                message: "Another screen capture is already in progress.".into(),
+            })
+    }
+}
+
+impl Drop for CaptureLease<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Debug)]
@@ -62,7 +95,7 @@ fn run_capture<R: CaptureRunner>(
     mode: CaptureMode,
     capture_id: &str,
     runner: &R,
-) -> Result<CaptureOutcome, CaptureFailure> {
+) -> Result<StoredCaptureOutcome, CaptureFailure> {
     let output = capture_path(app_data, capture_id);
     let directory = output.parent().expect("capture path always has a parent");
     fs::create_dir_all(directory).map_err(|error| CaptureFailure {
@@ -100,15 +133,15 @@ fn run_capture<R: CaptureRunner>(
 fn classify_capture(
     output: &Path,
     evidence: CaptureEvidence<'_>,
-) -> Result<CaptureOutcome, CaptureFailure> {
+) -> Result<StoredCaptureOutcome, CaptureFailure> {
     if evidence.output_bytes.is_some_and(|bytes| bytes > 0) {
-        return Ok(CaptureOutcome::Captured {
-            path: output.to_string_lossy().into_owned(),
+        return Ok(StoredCaptureOutcome::Captured {
+            path: output.to_path_buf(),
         });
     }
 
     if evidence.output_bytes.is_none() && evidence.stderr.trim().is_empty() {
-        return Ok(CaptureOutcome::Cancelled);
+        return Ok(StoredCaptureOutcome::Cancelled);
     }
 
     if !evidence.stderr.trim().is_empty() {
@@ -159,10 +192,12 @@ fn new_capture_id() -> String {
 /// must not surface as an error toast. A completed result points at pixels that
 /// have already been durably written inside the app data directory.
 #[tauri::command]
-pub async fn capture_screen(
+pub(crate) async fn capture_screen(
     app: AppHandle,
     mode: CaptureMode,
 ) -> Result<CaptureOutcome, CaptureFailure> {
+    let _capture_lease = CaptureLease::try_acquire(&CAPTURE_IN_PROGRESS)?;
+
     if crate::system::permission_for_capture(mode, crate::system::screen_recording_granted())
         == crate::system::CapturePermission::RequiresScreenRecording
     {
@@ -178,23 +213,41 @@ pub async fn capture_screen(
     })?;
     let capture_id = new_capture_id();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let stored = tauri::async_runtime::spawn_blocking(move || {
         run_capture(&app_data, mode, &capture_id, &SystemCaptureRunner)
     })
     .await
     .map_err(|error| CaptureFailure {
         code: "capture_task_failed",
         message: format!("The native capture task stopped unexpectedly: {error}"),
-    })?
+    })??;
+
+    match stored {
+        StoredCaptureOutcome::Cancelled => Ok(CaptureOutcome::Cancelled),
+        StoredCaptureOutcome::Captured { path } => {
+            let clipboard =
+                crate::clipboard::copy_png_file_to_general_pasteboard(app, path.clone()).await;
+            Ok(CaptureOutcome::Captured {
+                path: path.to_string_lossy().into_owned(),
+                clipboard,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         capture_path, classify_capture, screencapture_args, CaptureEvidence, CaptureMode,
-        CaptureOutcome, CaptureRunner, ProcessResult,
+        CaptureOutcome, CaptureRunner, ProcessResult, StoredCaptureOutcome,
     };
-    use std::{ffi::OsString, fs, io, path::Path};
+    use crate::clipboard::ClipboardStatus;
+    use std::{
+        ffi::OsString,
+        fs, io,
+        path::Path,
+        sync::atomic::{AtomicBool, Ordering},
+    };
 
     struct WritingRunner;
 
@@ -241,6 +294,38 @@ mod tests {
     }
 
     #[test]
+    fn capture_lease_blocks_overlap_and_releases_after_scope_exit() {
+        let flag = AtomicBool::new(false);
+        let first = super::CaptureLease::try_acquire(&flag).expect("first capture starts");
+
+        let overlap = super::CaptureLease::try_acquire(&flag)
+            .err()
+            .expect("overlapping capture is rejected");
+        assert_eq!(overlap.code, "capture_in_progress");
+
+        drop(first);
+        assert!(!flag.load(Ordering::Acquire));
+        let next = super::CaptureLease::try_acquire(&flag).expect("next capture starts");
+        drop(next);
+        assert!(!flag.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn capture_lease_releases_on_an_early_error() {
+        let flag = AtomicBool::new(false);
+        let result = (|| -> Result<(), super::CaptureFailure> {
+            let _lease = super::CaptureLease::try_acquire(&flag)?;
+            Err(super::CaptureFailure {
+                code: "test_failure",
+                message: "simulated early return".into(),
+            })
+        })();
+
+        assert_eq!(result.expect_err("simulated error").code, "test_failure");
+        assert!(!flag.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn capture_path_is_stable_under_the_app_data_capture_directory() {
         let app_data = Path::new("/tmp/Library/Application Support/com.capso.app");
 
@@ -264,7 +349,7 @@ mod tests {
                     stderr: "",
                 },
             ),
-            Ok(CaptureOutcome::Cancelled)
+            Ok(StoredCaptureOutcome::Cancelled)
         );
     }
 
@@ -280,8 +365,52 @@ mod tests {
                     stderr: "",
                 },
             ),
-            Ok(CaptureOutcome::Captured {
-                path: output.to_string_lossy().into_owned(),
+            Ok(StoredCaptureOutcome::Captured {
+                path: output.to_path_buf(),
+            })
+        );
+    }
+
+    #[test]
+    fn completed_capture_serializes_the_saved_path_and_clipboard_proof() {
+        let outcome = CaptureOutcome::Captured {
+            path: "/tmp/capso/captured.png".into(),
+            clipboard: ClipboardStatus::Copied { bytes: 42 },
+        };
+
+        assert_eq!(
+            serde_json::to_value(outcome).expect("serialize capture outcome"),
+            serde_json::json!({
+                "status": "captured",
+                "path": "/tmp/capso/captured.png",
+                "clipboard": {
+                    "status": "copied",
+                    "bytes": 42
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn clipboard_failure_keeps_the_command_result_captured() {
+        let outcome = CaptureOutcome::Captured {
+            path: "/tmp/capso/captured.png".into(),
+            clipboard: ClipboardStatus::Failed {
+                code: "clipboard_write_failed",
+                message: "Could not copy the capture: pasteboard unavailable".into(),
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(outcome).expect("serialize capture outcome"),
+            serde_json::json!({
+                "status": "captured",
+                "path": "/tmp/capso/captured.png",
+                "clipboard": {
+                    "status": "failed",
+                    "code": "clipboard_write_failed",
+                    "message": "Could not copy the capture: pasteboard unavailable"
+                }
             })
         );
     }
@@ -344,8 +473,8 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok(CaptureOutcome::Captured {
-                path: expected.to_string_lossy().into_owned(),
+            Ok(StoredCaptureOutcome::Captured {
+                path: expected.clone(),
             })
         );
         assert_eq!(
