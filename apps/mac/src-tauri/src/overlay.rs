@@ -61,13 +61,23 @@ impl From<&tauri::Monitor> for DisplayGeometry {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OverlayCapture {
     path: String,
+    presentation_id: u64,
     clipboard: ClipboardStatus,
+    source: OverlaySource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlaySource {
+    Capture,
+    History,
 }
 
 #[derive(Default)]
 pub(crate) struct OverlayRuntime {
     current: Option<OverlayCapture>,
     last_failure: Option<OverlayFailureRecord>,
+    presentation_generation: u64,
 }
 
 impl OverlayRuntime {
@@ -81,14 +91,34 @@ impl OverlayRuntime {
         self.last_failure = None;
     }
 
+    fn next_capture(
+        &mut self,
+        path: String,
+        clipboard: ClipboardStatus,
+        source: OverlaySource,
+    ) -> OverlayCapture {
+        self.presentation_generation = self
+            .presentation_generation
+            .checked_add(1)
+            .expect("overlay presentation generation cannot exhaust u64");
+        OverlayCapture {
+            path,
+            presentation_id: self.presentation_generation,
+            clipboard,
+            source,
+        }
+    }
+
     fn record_failure(
         &mut self,
         path: &str,
+        presentation_id: u64,
         code: &'static str,
         message: impl Into<String>,
     ) -> OverlayFailureRecord {
         let failure = OverlayFailureRecord {
             path: path.into(),
+            presentation_id,
             code,
             message: message.into(),
         };
@@ -99,15 +129,16 @@ impl OverlayRuntime {
     fn fail_if_current(
         &mut self,
         path: &str,
+        presentation_id: u64,
         code: &'static str,
         message: impl Into<String>,
     ) -> Option<OverlayFailureRecord> {
-        if !capture_matches_path(self.current.as_ref(), path) {
+        if !capture_matches(self.current.as_ref(), path, presentation_id) {
             return None;
         }
 
         self.current = None;
-        Some(self.record_failure(path, code, message))
+        Some(self.record_failure(path, presentation_id, code, message))
     }
 }
 
@@ -115,6 +146,7 @@ impl OverlayRuntime {
 #[serde(rename_all = "camelCase")]
 struct OverlayFailureRecord {
     path: String,
+    presentation_id: u64,
     code: &'static str,
     message: String,
 }
@@ -172,6 +204,7 @@ pub(crate) struct OverlaySaveResult {
 #[serde(rename_all = "camelCase")]
 struct OverlayDismissed<'a> {
     path: &'a str,
+    presentation_id: u64,
     reason: DismissReason,
 }
 
@@ -217,8 +250,9 @@ fn overlay_failure(code: &'static str, message: impl Into<String>) -> OverlaySta
     }
 }
 
-fn capture_matches_path(current: Option<&OverlayCapture>, path: &str) -> bool {
-    current.is_some_and(|capture| capture.path == path)
+fn capture_matches(current: Option<&OverlayCapture>, path: &str, presentation_id: u64) -> bool {
+    current
+        .is_some_and(|capture| capture.path == path && capture.presentation_id == presentation_id)
 }
 
 fn prepare_transition(
@@ -229,6 +263,7 @@ fn prepare_transition(
     y: i32,
 ) -> Result<(), OverlayFailureRecord> {
     let path = capture.path.clone();
+    let presentation_id = capture.presentation_id;
 
     // Reset, hide, position and replace are one serialized transition. A ready
     // or failed callback cannot interleave and mutate visibility for an older
@@ -237,6 +272,7 @@ fn prepare_transition(
     if let Err(error) = window.hide_overlay() {
         return Err(runtime.record_failure(
             &path,
+            presentation_id,
             "overlay_hide_failed",
             format!("Could not reset the capture overlay: {error}"),
         ));
@@ -244,6 +280,7 @@ fn prepare_transition(
     if let Err(error) = window.position_overlay(x, y) {
         return Err(runtime.record_failure(
             &path,
+            presentation_id,
             "overlay_position_failed",
             format!("Could not position the capture overlay: {error}"),
         ));
@@ -257,8 +294,9 @@ fn reveal_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
+    presentation_id: u64,
 ) -> RevealTransition {
-    if !capture_matches_path(runtime.current.as_ref(), path) {
+    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return RevealTransition::Stale;
     }
 
@@ -268,6 +306,7 @@ fn reveal_transition(
             let failure = runtime
                 .fail_if_current(
                     path,
+                    presentation_id,
                     "overlay_show_failed",
                     format!("Could not show the capture overlay: {error}"),
                 )
@@ -282,10 +321,11 @@ fn fail_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
+    presentation_id: u64,
     code: &'static str,
     message: impl Into<String>,
 ) -> Option<OverlayFailureRecord> {
-    let failure = runtime.fail_if_current(path, code, message);
+    let failure = runtime.fail_if_current(path, presentation_id, code, message);
     if failure.is_some() {
         let _ = window.hide_overlay();
     }
@@ -296,8 +336,9 @@ fn dismiss_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
+    presentation_id: u64,
 ) -> DismissTransition {
-    if !capture_matches_path(runtime.current.as_ref(), path) {
+    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return DismissTransition::Stale;
     }
 
@@ -308,17 +349,22 @@ fn dismiss_transition(
         }
         Err(error) => DismissTransition::Failed(runtime.record_failure(
             path,
+            presentation_id,
             "overlay_dismiss_failed",
             format!("Could not dismiss the capture overlay: {error}"),
         )),
     }
 }
 
-fn current_capture_path(runtime: &OverlayRuntime, path: &str) -> Result<PathBuf, String> {
+fn current_capture_path(
+    runtime: &OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+) -> Result<PathBuf, String> {
     runtime
         .current
         .as_ref()
-        .filter(|capture| capture.path == path)
+        .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
         .map(|capture| PathBuf::from(&capture.path))
         .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
 }
@@ -415,22 +461,81 @@ pub(crate) fn prepare_capture_overlay(
     path: &Path,
     clipboard: &ClipboardStatus,
 ) -> OverlayStatus {
-    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
-        return overlay_failure(
-            "overlay_unavailable",
-            "The capture overlay window is unavailable.",
-        );
-    };
-    let display = match target_display(app, mode) {
-        Ok(display) => display,
+    let status = prepare_capture_overlay_transaction(app, mode, path, clipboard);
+    crate::clipboard::complete_new_capture_transaction(app, path);
+    status
+}
+
+fn prepare_capture_overlay_transaction(
+    app: &AppHandle,
+    mode: CaptureMode,
+    path: &Path,
+    clipboard: &ClipboardStatus,
+) -> OverlayStatus {
+    let (window, display) = match overlay_window_and_display(app, mode) {
+        Ok(target) => target,
         Err(status) => return status,
     };
-    let (x, y) = bottom_right_position(display);
-    let payload = OverlayCapture {
-        path: path.to_string_lossy().into_owned(),
-        clipboard: clipboard.clone(),
-    };
+    prepare_overlay(
+        app,
+        &window,
+        display,
+        path,
+        clipboard,
+        OverlaySource::Capture,
+    )
+}
 
+/// Restores a validated local original on the display containing the cursor.
+/// The clipboard status is deliberately `unchanged`: selecting history only
+/// presents the original and Copy remains an explicit user action.
+pub(crate) fn prepare_history_overlay(app: &AppHandle, path: &Path) -> OverlayStatus {
+    let (window, display) = match overlay_window_and_display(app, CaptureMode::Region) {
+        Ok(target) => target,
+        Err(status) => return status,
+    };
+    match crate::clipboard::publish_restored_capture(app, path.to_path_buf(), |clipboard| {
+        prepare_overlay(
+            app,
+            &window,
+            display,
+            path,
+            &clipboard,
+            OverlaySource::History,
+        )
+    }) {
+        Ok(status) => status,
+        Err(ClipboardStatus::Failed { code, message }) => overlay_failure(code, message),
+        Err(_) => overlay_failure(
+            "clipboard_restore_failed",
+            "Could not prepare that recent capture for copying.",
+        ),
+    }
+}
+
+fn overlay_window_and_display(
+    app: &AppHandle,
+    mode: CaptureMode,
+) -> Result<(WebviewWindow, DisplayGeometry), OverlayStatus> {
+    let window = app.get_webview_window(OVERLAY_LABEL).ok_or_else(|| {
+        overlay_failure(
+            "overlay_unavailable",
+            "The capture overlay window is unavailable.",
+        )
+    })?;
+    let display = target_display(app, mode)?;
+    Ok((window, display))
+}
+
+fn prepare_overlay(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    display: DisplayGeometry,
+    path: &Path,
+    clipboard: &ClipboardStatus,
+    source: OverlaySource,
+) -> OverlayStatus {
+    let (x, y) = bottom_right_position(display);
     let state = app.state::<Mutex<OverlayRuntime>>();
     let mut runtime = match state.lock() {
         Ok(runtime) => runtime,
@@ -441,18 +546,24 @@ pub(crate) fn prepare_capture_overlay(
             )
         }
     };
+    let payload = runtime.next_capture(
+        path.to_string_lossy().into_owned(),
+        clipboard.clone(),
+        source,
+    );
 
-    if let Err(failure) = prepare_transition(&mut runtime, &window, payload.clone(), x, y) {
+    if let Err(failure) = prepare_transition(&mut runtime, window, payload.clone(), x, y) {
         return overlay_failure(failure.code, failure.message);
     }
 
     // Keep the transition lock through delivery: a ready callback can run only
     // after the matching payload is committed, and failed delivery is cleared
     // before another capture can replace it.
-    if let Err(error) = app.emit_to(OVERLAY_LABEL, "overlay-capture", payload) {
+    if let Err(error) = app.emit_to(OVERLAY_LABEL, "overlay-capture", payload.clone()) {
         let message = format!("Could not update the capture overlay: {error}");
         let _ = runtime.fail_if_current(
             path.to_string_lossy().as_ref(),
+            payload.presentation_id,
             "overlay_event_failed",
             &message,
         );
@@ -477,6 +588,7 @@ pub(crate) fn overlay_image_ready(
     app: AppHandle,
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
+    presentation_id: u64,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
@@ -485,7 +597,7 @@ pub(crate) fn overlay_image_ready(
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        reveal_transition(&mut runtime, &window, &path)
+        reveal_transition(&mut runtime, &window, &path, presentation_id)
     };
 
     match transition {
@@ -503,6 +615,7 @@ pub(crate) fn overlay_image_failed(
     app: AppHandle,
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
+    presentation_id: u64,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
@@ -515,6 +628,7 @@ pub(crate) fn overlay_image_failed(
             &mut runtime,
             &window,
             &path,
+            presentation_id,
             "overlay_decode_failed",
             "The saved capture could not be decoded for the overlay preview.",
         )
@@ -532,12 +646,13 @@ pub(crate) async fn overlay_copy_capture(
     app: AppHandle,
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
+    presentation_id: u64,
 ) -> Result<ClipboardStatus, String> {
     let source = {
         let runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        current_capture_path(&runtime, &path)?
+        current_capture_path(&runtime, &path, presentation_id)?
     };
 
     let status = crate::clipboard::recopy_current_capture_to_general_pasteboard(app, source).await;
@@ -545,7 +660,7 @@ pub(crate) async fn overlay_copy_capture(
         if let Some(capture) = runtime
             .current
             .as_mut()
-            .filter(|capture| capture.path == path)
+            .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
         {
             capture.clipboard = status.clone();
         }
@@ -557,6 +672,7 @@ pub(crate) async fn overlay_copy_capture(
 pub(crate) async fn overlay_save_capture(
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
+    presentation_id: u64,
     destination: String,
 ) -> Result<OverlaySaveResult, String> {
     if destination.trim().is_empty() {
@@ -567,7 +683,7 @@ pub(crate) async fn overlay_save_capture(
         let runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        current_capture_path(&runtime, &path)?
+        current_capture_path(&runtime, &path, presentation_id)?
     };
     let destination_path = PathBuf::from(&destination);
     if source == destination_path {
@@ -588,6 +704,7 @@ pub(crate) fn overlay_dismiss(
     app: AppHandle,
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
+    presentation_id: u64,
     reason: DismissReason,
 ) -> Result<bool, String> {
     let window = app
@@ -597,7 +714,7 @@ pub(crate) fn overlay_dismiss(
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        dismiss_transition(&mut runtime, &window, &path)
+        dismiss_transition(&mut runtime, &window, &path, presentation_id)
     };
 
     match transition {
@@ -607,6 +724,7 @@ pub(crate) fn overlay_dismiss(
                 "capture-overlay-dismissed",
                 OverlayDismissed {
                     path: &path,
+                    presentation_id,
                     reason,
                 },
             );
@@ -622,11 +740,11 @@ pub(crate) fn overlay_dismiss(
 #[cfg(test)]
 mod tests {
     use super::{
-        bottom_right_position, capture_display, capture_matches_path, current_capture_path,
+        bottom_right_position, capture_display, capture_matches, current_capture_path,
         dismiss_transition, display_at_cursor, export_capture, fail_transition, prepare_transition,
         reveal_transition, DismissTransition, DisplayGeometry, OverlayCapture, OverlayRuntime,
-        OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect, OVERLAY_HEIGHT_LOGICAL,
-        OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        OverlaySource, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
+        OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
@@ -668,9 +786,15 @@ mod tests {
     }
 
     fn capture(path: &str) -> OverlayCapture {
+        capture_with_id(path, 1)
+    }
+
+    fn capture_with_id(path: &str, presentation_id: u64) -> OverlayCapture {
         OverlayCapture {
             path: path.into(),
+            presentation_id,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
+            source: OverlaySource::Capture,
         }
     }
 
@@ -799,12 +923,87 @@ mod tests {
     fn stale_image_decode_cannot_reveal_a_newer_capture() {
         let current = OverlayCapture {
             path: "/tmp/capso/new.png".into(),
+            presentation_id: 2,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
+            source: OverlaySource::Capture,
         };
 
-        assert!(!capture_matches_path(Some(&current), "/tmp/capso/old.png"));
-        assert!(capture_matches_path(Some(&current), "/tmp/capso/new.png"));
-        assert!(!capture_matches_path(None, "/tmp/capso/new.png"));
+        assert!(!capture_matches(Some(&current), "/tmp/capso/old.png", 2));
+        assert!(capture_matches(Some(&current), "/tmp/capso/new.png", 2));
+        assert!(!capture_matches(Some(&current), "/tmp/capso/new.png", 1));
+        assert!(!capture_matches(None, "/tmp/capso/new.png", 2));
+    }
+
+    #[test]
+    fn native_presentations_increase_even_when_the_capture_path_repeats() {
+        let mut runtime = OverlayRuntime::default();
+        let first = runtime.next_capture(
+            "/tmp/capso/recent.png".into(),
+            ClipboardStatus::Unchanged,
+            OverlaySource::History,
+        );
+        let second = runtime.next_capture(
+            "/tmp/capso/recent.png".into(),
+            ClipboardStatus::Unchanged,
+            OverlaySource::History,
+        );
+
+        assert_eq!(first.presentation_id, 1);
+        assert_eq!(second.presentation_id, 2);
+    }
+
+    #[test]
+    fn old_same_path_callbacks_cannot_mutate_a_newer_restore() {
+        let path = "/tmp/capso/recent.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(path, 2));
+
+        assert_eq!(
+            reveal_transition(&mut runtime, &window, path, 1),
+            RevealTransition::Stale
+        );
+        assert!(fail_transition(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            "overlay_decode_failed",
+            "old decode failed",
+        )
+        .is_none());
+        assert_eq!(
+            dismiss_transition(&mut runtime, &window, path, 1),
+            DismissTransition::Stale
+        );
+        assert!(current_capture_path(&runtime, path, 1).is_err());
+        assert_eq!(
+            current_capture_path(&runtime, path, 2).expect("new restore remains current"),
+            std::path::PathBuf::from(path)
+        );
+        assert!(window.visible.get());
+        assert_eq!(runtime.current, Some(capture_with_id(path, 2)));
+    }
+
+    #[test]
+    fn restored_overlay_payload_is_explicit_and_does_not_claim_clipboard_copy() {
+        let restored = OverlayCapture {
+            path: "/tmp/capso/history.png".into(),
+            presentation_id: 7,
+            clipboard: ClipboardStatus::Unchanged,
+            source: OverlaySource::History,
+        };
+
+        assert_eq!(
+            serde_json::to_value(restored).expect("serialize restored overlay"),
+            serde_json::json!({
+                "path": "/tmp/capso/history.png",
+                "presentationId": 7,
+                "clipboard": { "status": "unchanged" },
+                "source": "history"
+            })
+        );
     }
 
     #[test]
@@ -813,7 +1012,12 @@ mod tests {
         runtime.replace(capture("/tmp/capso/new.png"));
 
         assert!(runtime
-            .fail_if_current("/tmp/capso/old.png", "overlay_event_failed", "old failure")
+            .fail_if_current(
+                "/tmp/capso/old.png",
+                1,
+                "overlay_event_failed",
+                "old failure"
+            )
             .is_none());
         assert_eq!(
             runtime
@@ -824,7 +1028,12 @@ mod tests {
         );
 
         let failure = runtime
-            .fail_if_current("/tmp/capso/new.png", "overlay_decode_failed", "new failure")
+            .fail_if_current(
+                "/tmp/capso/new.png",
+                1,
+                "overlay_decode_failed",
+                "new failure",
+            )
             .expect("current capture rolls back");
         assert_eq!(failure.path, "/tmp/capso/new.png");
         assert_eq!(failure.code, "overlay_decode_failed");
@@ -843,7 +1052,7 @@ mod tests {
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(old_path));
         assert_eq!(
-            reveal_transition(&mut runtime, &window, old_path),
+            reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Shown
         );
         prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
@@ -859,7 +1068,7 @@ mod tests {
         prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
             .expect("new capture prepares");
         assert_eq!(
-            reveal_transition(&mut runtime, &window, old_path),
+            reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Stale
         );
         assert!(!window.visible.get());
@@ -880,6 +1089,7 @@ mod tests {
             &mut runtime,
             &window,
             old_path,
+            1,
             "overlay_decode_failed",
             "old failed",
         )
@@ -887,7 +1097,7 @@ mod tests {
         prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
             .expect("new capture prepares");
         assert_eq!(
-            reveal_transition(&mut runtime, &window, new_path),
+            reveal_transition(&mut runtime, &window, new_path, 1),
             RevealTransition::Shown
         );
         assert!(window.visible.get());
@@ -898,13 +1108,14 @@ mod tests {
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(new_path));
         assert_eq!(
-            reveal_transition(&mut runtime, &window, new_path),
+            reveal_transition(&mut runtime, &window, new_path, 1),
             RevealTransition::Shown
         );
         assert!(fail_transition(
             &mut runtime,
             &window,
             old_path,
+            1,
             "overlay_decode_failed",
             "old failed",
         )
@@ -921,7 +1132,7 @@ mod tests {
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(path));
 
-        let RevealTransition::Failed(failure) = reveal_transition(&mut runtime, &window, path)
+        let RevealTransition::Failed(failure) = reveal_transition(&mut runtime, &window, path, 1)
         else {
             panic!("native show failure must be reported");
         };
@@ -944,14 +1155,14 @@ mod tests {
         runtime.replace(capture(new_path));
 
         assert_eq!(
-            dismiss_transition(&mut runtime, &window, old_path),
+            dismiss_transition(&mut runtime, &window, old_path, 1),
             DismissTransition::Stale
         );
         assert!(window.visible.get());
         assert_eq!(runtime.current, Some(capture(new_path)));
 
         assert_eq!(
-            dismiss_transition(&mut runtime, &window, new_path),
+            dismiss_transition(&mut runtime, &window, new_path, 1),
             DismissTransition::Dismissed
         );
         assert!(!window.visible.get());
@@ -968,7 +1179,7 @@ mod tests {
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(path));
 
-        let DismissTransition::Failed(failure) = dismiss_transition(&mut runtime, &window, path)
+        let DismissTransition::Failed(failure) = dismiss_transition(&mut runtime, &window, path, 1)
         else {
             panic!("native hide failure must be reported");
         };
@@ -978,7 +1189,7 @@ mod tests {
 
         window.fail_hide.set(false);
         assert_eq!(
-            dismiss_transition(&mut runtime, &window, path),
+            dismiss_transition(&mut runtime, &window, path, 1),
             DismissTransition::Dismissed
         );
         assert!(runtime.current.is_none());
@@ -990,9 +1201,9 @@ mod tests {
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture("/tmp/capso/new.png"));
 
-        assert!(current_capture_path(&runtime, "/tmp/capso/old.png").is_err());
+        assert!(current_capture_path(&runtime, "/tmp/capso/old.png", 1).is_err());
         assert_eq!(
-            current_capture_path(&runtime, "/tmp/capso/new.png").expect("current capture"),
+            current_capture_path(&runtime, "/tmp/capso/new.png", 1).expect("current capture"),
             std::path::PathBuf::from("/tmp/capso/new.png")
         );
     }

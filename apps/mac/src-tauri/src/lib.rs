@@ -1,5 +1,6 @@
 mod capture;
 mod clipboard;
+mod history;
 mod overlay;
 mod shortcuts;
 mod system;
@@ -7,7 +8,7 @@ mod system;
 use serde::Serialize;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{
-    menu::{Menu, MenuBuilder, MenuItem},
+    menu::{Menu, MenuBuilder, MenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
 };
@@ -101,9 +102,7 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
                 }) => {
                     let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
                 }
-                Ok(_) => {
-                    let _ = refresh_tray_status(&app);
-                }
+                Ok(_) => {}
             }
         }
 
@@ -175,6 +174,41 @@ fn build_tray_menu<R: Runtime>(
         menu_builder = menu_builder.text(definition.menu_id, label);
     }
 
+    let mut recent_builder = SubmenuBuilder::with_id(app, "recent-captures", "Recent Captures");
+    match history::recent_captures_for_app(app) {
+        Ok(captures) if captures.is_empty() => {
+            let empty = MenuItem::with_id(
+                app,
+                "recent-captures-empty",
+                "No captures yet",
+                false,
+                None::<&str>,
+            )?;
+            recent_builder = recent_builder.item(&empty);
+        }
+        Ok(captures) => {
+            let now = std::time::SystemTime::now();
+            for capture in captures {
+                recent_builder = recent_builder.text(
+                    history::recent_menu_id(&capture.id),
+                    history::recent_capture_label(&capture, now),
+                );
+            }
+        }
+        Err(_) => {
+            let unavailable = MenuItem::with_id(
+                app,
+                "recent-captures-unavailable",
+                "Recent captures unavailable",
+                false,
+                None::<&str>,
+            )?;
+            recent_builder = recent_builder.item(&unavailable);
+        }
+    }
+    let recent_submenu = recent_builder.build()?;
+    menu_builder = menu_builder.separator().item(&recent_submenu);
+
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
         let permission_warning = MenuItem::with_id(
             app,
@@ -227,6 +261,14 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn restore_recent_capture(app: &AppHandle, id: &str) -> Result<overlay::OverlayStatus, String> {
+    let capture = history::resolve_recent_capture_for_app(app, id)?;
+    match overlay::prepare_history_overlay(app, &capture.path) {
+        status @ overlay::OverlayStatus::Prepared { .. } => Ok(status),
+        overlay::OverlayStatus::Failed { message, .. } => Err(message),
+    }
 }
 
 #[tauri::command]
@@ -437,6 +479,14 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     if let Some(action) = shortcuts::action_for_menu_id(event.id().as_ref()) {
                         launch_capture(app.clone(), action);
+                    } else if let Some(id) = history::parse_recent_menu_id(event.id().as_ref()) {
+                        if let Err(error) = restore_recent_capture(app, &id) {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not restore capture; {error}"
+                                )));
+                            }
+                        }
                     } else if event.id() == "quit" {
                         app.exit(0);
                     }

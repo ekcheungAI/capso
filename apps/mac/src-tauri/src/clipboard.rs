@@ -13,6 +13,7 @@ const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum ClipboardStatus {
     Copied { bytes: usize },
+    Unchanged,
     Failed { code: &'static str, message: String },
 }
 
@@ -30,10 +31,11 @@ struct ClipboardTicket {
 pub(crate) struct ClipboardRuntime {
     generation: u64,
     latest: Option<ClipboardTicket>,
+    new_capture_transaction: Option<u64>,
 }
 
 impl ClipboardRuntime {
-    fn register_capture(&mut self, path: PathBuf) -> ClipboardTicket {
+    fn next_ticket(&mut self, path: PathBuf) -> ClipboardTicket {
         self.generation = self
             .generation
             .checked_add(1)
@@ -44,6 +46,44 @@ impl ClipboardRuntime {
         };
         self.latest = Some(ticket.clone());
         ticket
+    }
+
+    fn register_capture(&mut self, path: PathBuf) -> ClipboardTicket {
+        let ticket = self.next_ticket(path);
+        self.new_capture_transaction = Some(ticket.generation);
+        ticket
+    }
+
+    fn complete_new_capture_transaction(&mut self, path: &Path) -> bool {
+        let completes_current = self.latest.as_ref().is_some_and(|ticket| {
+            ticket.path == path && self.new_capture_transaction == Some(ticket.generation)
+        });
+        if completes_current {
+            self.new_capture_transaction = None;
+        }
+        completes_current
+    }
+
+    fn activate_restored_capture(
+        &mut self,
+        path: PathBuf,
+    ) -> Result<ClipboardTicket, ClipboardStatus> {
+        if self.new_capture_transaction.is_some() {
+            return Err(clipboard_failure(
+                "clipboard_capture_in_flight",
+                "Wait for the new capture to finish copying before restoring history.",
+            ));
+        }
+        Ok(self.next_ticket(path))
+    }
+
+    fn publish_restored_capture<T>(
+        &mut self,
+        path: PathBuf,
+        publish: impl FnOnce(ClipboardStatus) -> T,
+    ) -> Result<T, ClipboardStatus> {
+        self.activate_restored_capture(path)?;
+        Ok(publish(ClipboardStatus::Unchanged))
     }
 
     fn ticket_for_current(&self, path: &Path) -> Result<ClipboardTicket, ClipboardStatus> {
@@ -238,6 +278,33 @@ pub(crate) async fn copy_new_capture_to_general_pasteboard(
     copy_registered_png_to_general_pasteboard(app, ticket).await
 }
 
+/// Releases the fresh-capture ownership only after its overlay payload has
+/// either been published or failed. Until this point a history selection is
+/// rejected, keeping clipboard identity and visible overlay identity aligned.
+pub(crate) fn complete_new_capture_transaction(app: &AppHandle, path: &Path) {
+    if let Ok(mut runtime) = app.state::<Mutex<ClipboardRuntime>>().lock() {
+        let _ = runtime.complete_new_capture_transaction(path);
+    }
+}
+
+/// Makes history clipboard identity and overlay publication one lock-held
+/// transaction. A fresh capture either registers first and rejects history, or
+/// waits until history is visible before superseding both clipboard and overlay.
+pub(crate) fn publish_restored_capture<T>(
+    app: &AppHandle,
+    path: PathBuf,
+    publish: impl FnOnce(ClipboardStatus) -> T,
+) -> Result<T, ClipboardStatus> {
+    let state = app.state::<Mutex<ClipboardRuntime>>();
+    let mut runtime = state.lock().map_err(|_| {
+        clipboard_failure(
+            "clipboard_state_failed",
+            "The clipboard state is temporarily unavailable.",
+        )
+    })?;
+    runtime.publish_restored_capture(path, publish)
+}
+
 pub(crate) async fn recopy_current_capture_to_general_pasteboard(
     app: AppHandle,
     path: PathBuf,
@@ -263,7 +330,14 @@ mod tests {
         commit_registered_payload, copy_png_file, ClipboardRuntime, ClipboardStatus,
         ClipboardWriter, PNG_SIGNATURE,
     };
-    use std::{fs, path::Path, path::PathBuf};
+    use std::{
+        fs,
+        path::Path,
+        path::PathBuf,
+        sync::{mpsc, Arc, Mutex, TryLockError},
+        thread,
+        time::Duration,
+    };
 
     const PNG_FIXTURE: &[u8] = b"\x89PNG\r\n\x1a\nexact-pixel-payload";
 
@@ -413,6 +487,190 @@ mod tests {
 
         assert_eq!(writer.attempts, 2);
         assert_eq!(writer.payload, b"\x89PNG\r\n\x1a\nnew");
+    }
+
+    #[test]
+    fn restored_capture_cannot_supersede_an_automatic_copy_in_flight() {
+        let mut runtime = ClipboardRuntime::default();
+        let automatic = runtime.register_capture(PathBuf::from("/tmp/capso/new.png"));
+
+        let rejected = runtime
+            .activate_restored_capture(PathBuf::from("/tmp/capso/history.png"))
+            .expect_err("history restore waits for the automatic copy");
+
+        assert!(matches!(
+            rejected,
+            ClipboardStatus::Failed {
+                code: "clipboard_capture_in_flight",
+                ..
+            }
+        ));
+        assert_eq!(
+            runtime
+                .ticket_for_current(Path::new("/tmp/capso/new.png"))
+                .expect("automatic capture remains current"),
+            automatic
+        );
+    }
+
+    #[test]
+    fn completed_clipboard_write_keeps_fresh_capture_owned_until_overlay_publication() {
+        let mut runtime = ClipboardRuntime::default();
+        let automatic = runtime.register_capture(PathBuf::from("/tmp/capso/new.png"));
+        let mut writer = RecordingWriter::default();
+
+        assert!(matches!(
+            commit_registered_payload(&runtime, &automatic, b"\x89PNG\r\n\x1a\nnew", &mut writer,),
+            ClipboardStatus::Copied { .. }
+        ));
+        assert!(!runtime.complete_new_capture_transaction(Path::new("/tmp/capso/other.png")));
+        assert!(matches!(
+            runtime.activate_restored_capture(PathBuf::from("/tmp/capso/history.png")),
+            Err(ClipboardStatus::Failed {
+                code: "clipboard_capture_in_flight",
+                ..
+            })
+        ));
+
+        assert!(runtime.complete_new_capture_transaction(Path::new("/tmp/capso/new.png")));
+        assert!(runtime
+            .ticket_for_current(Path::new("/tmp/capso/new.png"))
+            .is_ok());
+    }
+
+    #[test]
+    fn restored_capture_becomes_copyable_after_automatic_copy_finishes() {
+        let mut runtime = ClipboardRuntime::default();
+        let automatic = runtime.register_capture(PathBuf::from("/tmp/capso/new.png"));
+        assert!(runtime.complete_new_capture_transaction(&automatic.path));
+
+        let restored = runtime
+            .activate_restored_capture(PathBuf::from("/tmp/capso/history.png"))
+            .expect("history restore becomes current");
+
+        assert_eq!(
+            runtime
+                .ticket_for_current(Path::new("/tmp/capso/history.png"))
+                .expect("restored capture can be copied"),
+            restored
+        );
+    }
+
+    #[test]
+    fn newer_automatic_capture_invalidates_a_delayed_history_copy() {
+        let mut runtime = ClipboardRuntime::default();
+        let restored = runtime
+            .activate_restored_capture(PathBuf::from("/tmp/capso/history.png"))
+            .expect("history restore becomes current");
+        let newest = runtime.register_capture(PathBuf::from("/tmp/capso/new.png"));
+        let mut writer = RecordingWriter::default();
+
+        let stale = commit_registered_payload(
+            &runtime,
+            &restored,
+            b"\x89PNG\r\n\x1a\nhistory",
+            &mut writer,
+        );
+        assert!(matches!(
+            stale,
+            ClipboardStatus::Failed {
+                code: "clipboard_stale_capture",
+                ..
+            }
+        ));
+        assert_eq!(writer.attempts, 0);
+        assert_eq!(
+            commit_registered_payload(&runtime, &newest, b"\x89PNG\r\n\x1a\nnew", &mut writer,),
+            ClipboardStatus::Copied { bytes: 11 }
+        );
+    }
+
+    #[test]
+    fn history_activation_and_publication_are_atomic_against_fresh_registration() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum PublicationEvent {
+            HistoryPublished,
+            FreshRegistered(PathBuf),
+        }
+
+        let runtime = Arc::new(Mutex::new(ClipboardRuntime::default()));
+        let history_path = PathBuf::from("/tmp/capso/history.png");
+        let fresh_path = PathBuf::from("/tmp/capso/new.png");
+        let (history_entered_sender, history_entered_receiver) = mpsc::sync_channel(1);
+        let (release_history_sender, release_history_receiver) = mpsc::sync_channel(1);
+        let (fresh_attempt_sender, fresh_attempt_receiver) = mpsc::sync_channel(1);
+        let (event_sender, event_receiver) = mpsc::channel();
+
+        let history_runtime = Arc::clone(&runtime);
+        let history_events = event_sender.clone();
+        let history = thread::spawn(move || {
+            let mut runtime = history_runtime.lock().expect("lock history runtime");
+            runtime
+                .publish_restored_capture(history_path, |status| {
+                    history_entered_sender
+                        .send(())
+                        .expect("report history publication entered");
+                    release_history_receiver
+                        .recv()
+                        .expect("release history publication");
+                    history_events
+                        .send(PublicationEvent::HistoryPublished)
+                        .expect("report history publication");
+                    status
+                })
+                .expect("history restore publishes")
+        });
+
+        history_entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("history publication starts");
+
+        let fresh_runtime = Arc::clone(&runtime);
+        let fresh_events = event_sender;
+        let expected_fresh_path = fresh_path.clone();
+        let fresh = thread::spawn(move || {
+            fresh_attempt_sender
+                .send(())
+                .expect("report fresh registration attempt");
+            let mut runtime = fresh_runtime.lock().expect("lock fresh runtime");
+            let ticket = runtime.register_capture(expected_fresh_path);
+            fresh_events
+                .send(PublicationEvent::FreshRegistered(ticket.path))
+                .expect("report fresh registration");
+        });
+
+        fresh_attempt_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("fresh registration is attempted");
+        assert!(matches!(runtime.try_lock(), Err(TryLockError::WouldBlock)));
+        assert!(matches!(
+            event_receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        release_history_sender
+            .send(())
+            .expect("finish history publication");
+        assert_eq!(
+            event_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("first publication event"),
+            PublicationEvent::HistoryPublished
+        );
+        assert_eq!(
+            event_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("fresh registration follows history publication"),
+            PublicationEvent::FreshRegistered(fresh_path.clone())
+        );
+        assert_eq!(
+            history.join().expect("history publication worker"),
+            ClipboardStatus::Unchanged
+        );
+        fresh.join().expect("fresh registration worker");
+
+        let runtime = runtime.lock().expect("inspect final runtime");
+        assert!(runtime.ticket_for_current(&fresh_path).is_ok());
     }
 
     #[cfg(target_os = "macos")]

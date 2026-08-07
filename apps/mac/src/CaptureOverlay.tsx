@@ -10,11 +10,14 @@ import { PausableOverlayTimer } from "./overlay-timing";
 
 type ClipboardStatus =
   | { status: "copied"; bytes: number }
+  | { status: "unchanged" }
   | { status: "failed"; code: string; message: string };
 
 type OverlayCapture = {
   path: string;
+  presentationId: number;
   clipboard: ClipboardStatus;
+  source: "capture" | "history";
 };
 
 type PresentedCapture = OverlayCapture & {
@@ -30,9 +33,15 @@ type BusyAction = OverlayActionKind | null;
 type DismissReason = "close" | "timeout";
 
 const AUTO_DISMISS_MS = 8_000;
+const PREVIEW_IS_HISTORY =
+  new URLSearchParams(window.location.search).get("preview") === "history";
 const PREVIEW_CAPTURE: PresentedCapture = {
   path: "",
-  clipboard: { status: "copied", bytes: 248_320 },
+  presentationId: 0,
+  clipboard: PREVIEW_IS_HISTORY
+    ? { status: "unchanged" }
+    : { status: "copied", bytes: 248_320 },
+  source: PREVIEW_IS_HISTORY ? "history" : "capture",
   presentation: 0,
 };
 
@@ -158,9 +167,9 @@ export default function CaptureOverlay() {
     ) {
       return;
     }
-    const { path, presentation } = capture;
+    const { path, presentation, presentationId } = capture;
     revealedPresentation.current = presentation;
-    void invoke<boolean>("overlay_image_ready", { path }).catch(() => {
+    void invoke<boolean>("overlay_image_ready", { path, presentationId }).catch(() => {
       if (
         actionCoordinator.current?.generation() === presentation &&
         revealedPresentation.current === presentation
@@ -174,11 +183,16 @@ export default function CaptureOverlay() {
     async (reason: DismissReason) => {
       if (!nativeRuntime || !capture?.path) return;
       const path = capture.path;
+      const presentationId = capture.presentationId;
       const action = actionCoordinator.current?.begin(path, "dismiss");
       if (!action) return;
       setBusyAction("dismiss");
       try {
-        const dismissed = await invoke<boolean>("overlay_dismiss", { path, reason });
+        const dismissed = await invoke<boolean>("overlay_dismiss", {
+          path,
+          presentationId,
+          reason,
+        });
         if (dismissed && actionCoordinator.current?.dismiss(action)) {
           setBusyAction(null);
           setCapture((current) =>
@@ -194,7 +208,7 @@ export default function CaptureOverlay() {
         if (actionCoordinator.current?.finish(action)) setBusyAction(null);
       }
     },
-    [capture?.path, nativeRuntime],
+    [capture?.path, capture?.presentationId, nativeRuntime],
   );
 
   useEffect(() => {
@@ -222,12 +236,16 @@ export default function CaptureOverlay() {
   async function copyCapture() {
     if (!nativeRuntime || !capture?.path) return;
     const path = capture.path;
+    const presentationId = capture.presentationId;
     const action = actionCoordinator.current?.begin(path, "copy");
     if (!action) return;
     setBusyAction("copy");
     setNoticeIsWarning(false);
     try {
-      const status = await invoke<ClipboardStatus>("overlay_copy_capture", { path });
+      const status = await invoke<ClipboardStatus>("overlay_copy_capture", {
+        path,
+        presentationId,
+      });
       if (actionCoordinator.current?.isCurrent(action)) {
         if (status.status === "copied") {
           setCapture((current) =>
@@ -236,9 +254,11 @@ export default function CaptureOverlay() {
               : current,
           );
           setNotice("Copied again");
-        } else {
+        } else if (status.status === "failed") {
           setNotice(status.message);
           setNoticeIsWarning(true);
+        } else {
+          setNotice("Ready to copy");
         }
       }
     } catch (error) {
@@ -254,6 +274,7 @@ export default function CaptureOverlay() {
   async function saveCapture() {
     if (!nativeRuntime || !capture?.path) return;
     const path = capture.path;
+    const presentationId = capture.presentationId;
     const action = actionCoordinator.current?.begin(path, "save");
     if (!action) return;
     setBusyAction("save");
@@ -269,6 +290,7 @@ export default function CaptureOverlay() {
 
       const result = await invoke<OverlaySaveResult>("overlay_save_capture", {
         path,
+        presentationId,
         destination,
       });
       if (actionCoordinator.current?.isCurrent(action)) {
@@ -290,24 +312,29 @@ export default function CaptureOverlay() {
 
   const source = nativeRuntime && capture.path ? convertFileSrc(capture.path) : null;
   const clipboardCopy =
-    capture.clipboard.status === "copied" ? "Copied to clipboard" : "Copy unavailable";
+    capture.clipboard.status === "copied"
+      ? "Copied to clipboard"
+      : capture.clipboard.status === "unchanged"
+        ? "Ready to copy"
+        : "Copy unavailable";
   const statusCopy = notice ?? clipboardCopy;
+  const isHistory = capture.source === "history";
 
   return (
     <main
-      key={capture.path || "preview"}
+      key={capture.path ? `${capture.path}:${capture.presentationId}` : "preview"}
       className="capture-overlay"
       role="region"
-      aria-label="Latest Capso capture"
+      aria-label={isHistory ? "Restored Capso capture" : "Latest Capso capture"}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
     >
       <div className="capture-overlay__preview">
         {source && !imageFailed ? (
           <img
-            key={capture.path}
+            key={`${capture.path}:${capture.presentationId}`}
             src={source}
-            alt="Latest screenshot"
+            alt={isHistory ? "Restored screenshot" : "Latest screenshot"}
             draggable={false}
             onLoad={() => {
               setImageReady(true);
@@ -318,6 +345,7 @@ export default function CaptureOverlay() {
               if (nativeRuntime && capture.path) {
                 void invoke<boolean>("overlay_image_failed", {
                   path: capture.path,
+                  presentationId: capture.presentationId,
                 }).catch(() => undefined);
               }
             }}
@@ -355,7 +383,7 @@ export default function CaptureOverlay() {
       <footer className="capture-overlay__footer">
         <span className="capture-overlay__mark" aria-hidden="true" />
         <span className="capture-overlay__message">
-          <strong>Capture saved</strong>
+          <strong>{isHistory ? "Recent capture" : "Capture saved"}</strong>
           <small data-warning={noticeIsWarning} aria-live="polite">
             {statusCopy}
           </small>

@@ -230,6 +230,9 @@ pub(crate) async fn capture_screen(
                 crate::clipboard::copy_new_capture_to_general_pasteboard(app.clone(), path.clone())
                     .await;
             let overlay = crate::overlay::prepare_capture_overlay(&app, mode, &path, &clipboard);
+            if let Err(error) = crate::refresh_tray_status(&app) {
+                eprintln!("Could not refresh Capso's recent captures: {error}");
+            }
             Ok(CaptureOutcome::Captured {
                 path: path.to_string_lossy().into_owned(),
                 clipboard,
