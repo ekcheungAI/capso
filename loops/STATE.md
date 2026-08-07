@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | LOOP-01: expose a tested native capture command seam for region/window/fullscreen with silent cancellation and deterministic file placement |
+| Next objective | CAP-01b: register global capture shortcuts with conflict reporting and matching tray actions |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | — | not started | CAP-01 |
+| capso-cleanshot-replacement | hourly | 2026-08-08 01:34 HKT | CAP-01a approved and committed | CAP-01b |
 
 ## Gate scoreboard
 
@@ -43,7 +43,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | Gate | Status | Current evidence | Next proof |
 |---|---|---|---|
 | UX-01 menu-bar availability | IN_PROGRESS | Tauri tray shell builds; visual behavior unverified | Launch/quit/focus/login-item QA |
-| CAP-01 native capture modes | NOT_STARTED | No native command or shortcut plugin | Region/window/fullscreen command seam |
+| CAP-01 native capture modes | IN_PROGRESS | `01c05d1`: tested region/window/main-display fullscreen command seam; 10 Rust tests | Global shortcuts, conflict handling, tray actions, and manual capture QA |
 | CAP-02 clipboard + <1s overlay | NOT_STARTED | Web simulation only | Native clipboard and timed overlay |
 | OVL-01 overlay experience | NOT_STARTED | Web overlay exists; no native window | Non-activating multi-display panel |
 | ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
@@ -62,7 +62,7 @@ outcome that fits the run budget.
 
 | Order | Objective | Depends on | Human action |
 |---|---|---|---|
-| 1 | CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests | schema/buckets live | none |
+| 1 | ✅ CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests (`01c05d1`) | schema/buckets live | none |
 | 2 | CAP-01b — global shortcut registration, conflict reporting, and tray actions | CAP-01a | manual shortcut QA |
 | 3 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
 | 4 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
@@ -93,6 +93,7 @@ is PASS; a skipped or unverified gate is not PASS.
 
 | Timestamp (HKT) | Loop | Objective | Result | Commit | Evidence / next action |
 |---|---|---|---|---|---|
+| 2026-08-08 01:34 | capso-cleanshot-replacement | CAP-01a native command seam | APPROVED after 1 repair | `01c05d1` | 10/10 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01b. |
 
 ## Discovered technical debt
 

@@ -599,3 +599,24 @@ Three different fixes, because the three surfaces want different things:
 **One more plural, found while verifying.** The Inbox header read "1 need a decision" — missed in loop 27 because that grep looked for the noun and this sentence elides it. Now agrees.
 
 Verified against a synthetic 420×2100 capture pushed through the real drop path: Inbox row compact with the title legible in the crop, gallery card bounded, detail hero fully visible without scrolling, filmstrip uniform. `pnpm typecheck && lint && test (74) && build` green.
+
+## Loop 30 — Native capture command seam
+**Date:** 2026-08-08 · **Phase:** P2 / CAP-01a · **Outcome:** done; partial CAP-01 evidence
+
+Objective: Expose one tested native command seam for region, window, and fullscreen capture that writes to deterministic Application Support paths and treats user cancellation as a silent result.
+
+Phase/tasks: P2 native capture entry point; `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` CAP-01a; partial evidence for CAP-01/CAP-02.
+
+In-scope files: `apps/mac/src-tauri/src/capture.rs`, `apps/mac/src-tauri/src/lib.rs`, `apps/mac/src-tauri/Cargo.toml`, `apps/mac/src-tauri/Cargo.lock`, `apps/mac/src-tauri/capabilities/default.json`, `apps/mac/README.md`, `BUILD_LOG.md`.
+
+Out of scope: global shortcuts, clipboard, overlay UI, permissions onboarding or entitlements, durable upload queue, Supabase/auth, server processing, annotation, signing, deployment, and the pre-existing loop/draft files.
+
+Done-when: Tauri exposes region/window/fullscreen capture; each mode maps to the intended `screencapture` arguments; output lands under the app data `captures/` directory with a UUID filename; missing output with no diagnostic is returned as `cancelled`; empty or diagnostic failures remain actionable errors; automated native tests prove these boundaries.
+
+Verification: `cargo test --manifest-path apps/mac/src-tauri/Cargo.toml`; `cargo clippy --manifest-path apps/mac/src-tauri/Cargo.toml --all-targets -- -D warnings`; `pnpm --filter mac typecheck`; `pnpm --filter mac build`; `pnpm lint`; `pnpm test`; `git diff --check`.
+
+Implemented a Tauri `capture_screen` command backed by `/usr/sbin/screencapture`, isolated on the blocking executor. Region, window, and main-display fullscreen modes map to restricted silent PNG arguments; UUID filenames live under the Tauri Application Support data directory; success is returned only after non-empty pixels exist; Escape/no-output is a normal `cancelled` result; diagnostics and empty files remain structured failures. Added ten Rust tests covering arguments, deterministic placement, UUIDs, success, cancellation, diagnostics, empty output, storage failure, runner launch failure, and the persisted runner boundary.
+
+Verification: Rust tests **10/10 passed**; `RUSTFLAGS='-D warnings' cargo check --all-targets` passed; Mac TypeScript check and Vite production build passed; root typecheck, lint, and web/extension tests (**78 + 4**) passed; `git diff --check` passed; the project loop validator passed its 67 checks and 7 malformed fixtures. `rustfmt` and `clippy` were unavailable in the installed toolchain, so no global component install was attempted. Native picker/manual Screen Recording QA remains unverified because it would interrupt the foreground user.
+
+Checker: initial REJECT found missing deterministic coverage for storage-directory and runner-launch failures. Repair attempt 1 added both proofs; the independent Checker then APPROVED the complete allowlisted diff. Native implementation commit: `01c05d1`. This does not pass CAP-01 overall; shortcuts, interactive capture QA, permissions, clipboard, and overlay remain. Next loop: CAP-01b global shortcut registration, conflict reporting, and tray actions.
