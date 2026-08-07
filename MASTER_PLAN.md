@@ -80,10 +80,10 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
 `codex/capso-cleanshot-replacement`. The next implementation objective is a
-complete Quick Access interaction layer—Copy, Save, Annotate, drag-out, Close,
-auto-dismiss, and recent restore—on the approved non-activating native overlay. Mac
-identity and server-side processing remain hard prerequisites before a native capture
-can learn with every browser closed.
+completion slice for the Quick Access interaction layer—connect Annotate, native
+drag-out, and durable recent restore to the approved Copy, Save As, Close, and
+auto-dismiss actions. Mac identity and server-side processing remain hard prerequisites
+before a native capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
@@ -98,17 +98,20 @@ macOS 13 minimum support. Successful native captures now persist before an exact
 AppKit clipboard write, with cancellation, concurrency, and recoverable failure contracts
 tested. Completed captures now also prepare a hidden-until-decode, always-on-top,
 nonfocusable overlay on the correct display through the same direct/tray/global path.
-Overlay actions and the durable queue remain unwired. P2 native capture remains the active
-risk track under D15's sequencing exception.
+That overlay now has generation-safe Copy, atomic Save As, Close, and hover/action-paused
+auto-dismiss actions. Annotate, native drag-out, recent restore, and the durable queue
+remain unwired. P2 native capture remains the active risk track under D15's sequencing
+exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
-   non-activating display-correct overlay primitive are tested, but Quick Access actions
-   and the durable Mac queue do not exist. Physical shortcut, clipboard, focus,
-   mixed-scale display, permission, Login Item, and lifecycle QA also remains.
+   display-correct overlay with Copy, Save As, Close, and auto-dismiss are tested, but
+   Annotate, native drag-out, recent restore, and the durable Mac queue do not exist.
+   Physical shortcut, clipboard, focus, mixed-scale display, permission, Login Item, and
+   lifecycle QA also remains.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.

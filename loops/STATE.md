@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | OVL-01b: add Copy, Save, Annotate, drag-out, Close, auto-dismiss, and restore actions |
+| Next objective | OVL-01b2: connect Annotate, native drag-out, and durable recent restore |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 03:49 HKT | OVL-01a approved after 2 repairs and committed | OVL-01b |
+| capso-cleanshot-replacement | hourly | 2026-08-08 04:29 HKT | OVL-01b1 approved after 1 repair and committed | OVL-01b2 |
 
 ## Gate scoreboard
 
@@ -44,8 +44,8 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 |---|---|---|---|
 | UX-01 menu-bar availability | IN_PROGRESS | `b507eec` adds `LSUIElement`, Accessory lifecycle, default-off `SMAppService`, Screen Recording preflight/guidance, and a verified 360×620 popover | Native launch/quit/focus, permission, Login Item, relaunch, and Dock/app-switcher QA |
 | CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` defaults/tray fallbacks + `d4d2bff` persisted editable bindings with reconciled rollback; 23 Rust tests | Manual physical recording, relaunch, from-any-app, real conflict, rollback-message, and picker QA |
-| CAP-02 clipboard + <1s overlay | IN_PROGRESS | `3496c82` persists first and writes exact PNG bytes through AppKit; `91e6643` prepares the native overlay only after persistence/clipboard delivery; 52 Rust tests cover byte identity, delayed writes, overlay ordering, and failure isolation | Native general-pasteboard copy/paste QA plus OVL-01b actions and the 20-capture latency proof |
-| OVL-01 overlay experience | IN_PROGRESS | `91e6643` adds a hidden-until-decode 252×194 always-on-top, nonfocusable, click-through overlay on the cursor display for region/window and main display for fullscreen, with serialized stale-callback protection and scoped local asset access | OVL-01b actions plus native focus, mixed-scale multi-display, interaction, restore, and latency QA |
+| CAP-02 clipboard + <1s overlay | IN_PROGRESS | `3496c82` persists first and writes exact PNG bytes through AppKit; `91e6643` prepares the native overlay only after persistence/clipboard delivery; `8923e90` adds generation-ordered re-copy so stale manual writes cannot replace a newer capture; 59 Rust tests cover byte identity, delayed writes, overlay ordering, and failure isolation | Native general-pasteboard copy/paste QA plus the 20-capture latency proof |
+| OVL-01 overlay experience | IN_PROGRESS | `91e6643` adds the hidden-until-decode 252×194 display-correct overlay; `8923e90` adds exact-current Copy, atomic Save As, Close, and one-shot eight-second hover/action-paused dismissal with presentation generations | Annotate, native drag-out, durable recent restore, plus native focus, mixed-scale multi-display, interaction, and latency QA |
 | ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
 | DUR-01 durable queue | NOT_STARTED | Browser/extension durability exists; no Mac queue | Restart/offline/idempotency tests |
 | HIS-01 reliable history | IN_PROGRESS | Cloud library and local data seam exist | Native recent list + end-to-end persistence |
@@ -68,7 +68,7 @@ outcome that fits the run budget.
 | 4 | ✅ UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance (`b507eec`) | CAP-01a | permission/login-item/lifecycle QA |
 | 5 | ✅ CAP-02a — pasteboard write with pixel verification (`3496c82`) | CAP-01a | clipboard QA |
 | 6 | ✅ OVL-01a — non-activating overlay on the capture display (`91e6643`) | CAP-02a | focus + multi-display QA |
-| 7 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions | OVL-01a | interaction QA |
+| 7 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions <!-- partial: `8923e90` completes generation-safe Copy, atomic Save As, Close, and hover/action-paused auto-dismiss; Annotate, native drag-out, and durable recent restore remain --> | OVL-01a | interaction QA |
 | 8 | CAP-02b — 20-capture overlay latency proof | OVL-01a | foreground test window |
 | 9 | DUR-01a — durable local queue state machine, written test-first | CAP-01a | none |
 | 10 | DUR-01b — three-capture offline/restart/reconnect drill with no duplicates | DUR-01a | network toggle QA |
@@ -100,6 +100,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 02:45 | capso-cleanshot-replacement | UX-01a menu lifecycle, permissions, and opt-in login item | APPROVED | `b507eec` | 28/28 Rust tests; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, Mac/Tauri app builds, bundle metadata/link inspection, 360×620 light/dark visual QA, zero overflow/console errors, loop validator, and diff/scope checks pass. Native permission/login/relaunch/Dock QA remains; next: CAP-02a. |
 | 2026-08-08 03:07 | capso-cleanshot-replacement | CAP-02a persisted native PNG to AppKit pasteboard | APPROVED after 1 repair | `3496c82` | 43/43 Rust tests; delayed-write ordering, exact-byte custom pasteboard, single-flight, and event-contract proofs; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, debug `.app` bundle, loop validator, and diff/scope checks pass. Native general-pasteboard QA remains; next: OVL-01a. |
 | 2026-08-08 03:49 | capso-cleanshot-replacement | OVL-01a non-activating native capture overlay | APPROVED after 2 repairs | `91e6643` | 52/52 Rust tests include negative-origin/scaled placement, main-vs-cursor display routing, hidden-until-decode, serialized stale-callback interleavings, delivery/decode/show failure isolation, and exact event contracts; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, 252×194 light/dark visual QA, debug `.app`, loop validator, and diff/scope checks pass. Native focus/mixed-scale/latency QA remains; next: OVL-01b. |
+| 2026-08-08 04:29 | capso-cleanshot-replacement | OVL-01b1 interactive Copy, Save As, Close, and auto-dismiss | APPROVED after 1 repair | `8923e90` | 59/59 Rust and 6/6 Mac tests prove exact-current actions, ordered clipboard mutation, alias-safe atomic export, stale UI response rejection, and one-shot pause/reset timing; Clippy warnings-as-errors, root typecheck/lint/build, 78+4 tests, 252×194 dark interaction QA, fresh debug `.app`, loop validator, and diff/scope checks pass. Native interaction/focus QA remains; next: OVL-01b2. |
 
 ## Discovered technical debt
 
