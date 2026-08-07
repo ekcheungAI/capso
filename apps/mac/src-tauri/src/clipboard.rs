@@ -1,11 +1,11 @@
 use serde::Serialize;
-use std::{fs, path::Path};
+use std::{fs, path::Path, path::PathBuf, sync::Mutex};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSPasteboard, NSPasteboardType, NSPasteboardTypePNG};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSData;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
@@ -18,6 +18,46 @@ pub(crate) enum ClipboardStatus {
 
 pub(crate) trait ClipboardWriter {
     fn write_png(&mut self, png: &[u8]) -> Result<(), String>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ClipboardTicket {
+    generation: u64,
+    path: PathBuf,
+}
+
+#[derive(Default)]
+pub(crate) struct ClipboardRuntime {
+    generation: u64,
+    latest: Option<ClipboardTicket>,
+}
+
+impl ClipboardRuntime {
+    fn register_capture(&mut self, path: PathBuf) -> ClipboardTicket {
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("clipboard generation cannot exhaust u64");
+        let ticket = ClipboardTicket {
+            generation: self.generation,
+            path,
+        };
+        self.latest = Some(ticket.clone());
+        ticket
+    }
+
+    fn ticket_for_current(&self, path: &Path) -> Result<ClipboardTicket, ClipboardStatus> {
+        self.latest
+            .as_ref()
+            .filter(|ticket| ticket.path == path)
+            .cloned()
+            .ok_or_else(|| {
+                clipboard_failure(
+                    "clipboard_stale_capture",
+                    "That capture is no longer current, so it was not copied.",
+                )
+            })
+    }
 }
 
 #[cfg(test)]
@@ -52,6 +92,21 @@ fn write_png_payload<W: ClipboardWriter>(png: &[u8], writer: &mut W) -> Clipboar
             message: format!("Could not copy the capture: {error}"),
         },
     }
+}
+
+fn commit_registered_payload<W: ClipboardWriter>(
+    runtime: &ClipboardRuntime,
+    ticket: &ClipboardTicket,
+    png: &[u8],
+    writer: &mut W,
+) -> ClipboardStatus {
+    if runtime.latest.as_ref() != Some(ticket) {
+        return clipboard_failure(
+            "clipboard_stale_capture",
+            "A newer capture replaced this clipboard request before it could finish.",
+        );
+    }
+    write_png_payload(png, writer)
 }
 
 fn clipboard_failure(code: &'static str, message: impl Into<String>) -> ClipboardStatus {
@@ -104,10 +159,11 @@ impl ClipboardWriter for MacClipboard {
 /// AppKit pasteboard mutation on macOS' main thread. Clipboard failure is a
 /// recoverable post-capture status: it must never delete or downgrade pixels
 /// that are already durable on disk.
-pub(crate) async fn copy_png_file_to_general_pasteboard(
+async fn copy_registered_png_to_general_pasteboard(
     app: AppHandle,
-    path: std::path::PathBuf,
+    ticket: ClipboardTicket,
 ) -> ClipboardStatus {
+    let path = ticket.path.clone();
     let payload = match tauri::async_runtime::spawn_blocking(move || read_png_payload(&path)).await
     {
         Ok(Ok(payload)) => payload,
@@ -123,9 +179,19 @@ pub(crate) async fn copy_png_file_to_general_pasteboard(
     #[cfg(target_os = "macos")]
     {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let commit_app = app.clone();
         if let Err(error) = app.run_on_main_thread(move || {
-            let mut writer = MacClipboard;
-            let _ = sender.send(write_png_payload(&payload, &mut writer));
+            let status = match commit_app.state::<Mutex<ClipboardRuntime>>().lock() {
+                Ok(runtime) => {
+                    let mut writer = MacClipboard;
+                    commit_registered_payload(&runtime, &ticket, &payload, &mut writer)
+                }
+                Err(_) => clipboard_failure(
+                    "clipboard_state_failed",
+                    "The clipboard state is temporarily unavailable.",
+                ),
+            };
+            let _ = sender.send(status);
         }) {
             return clipboard_failure(
                 "clipboard_schedule_failed",
@@ -145,7 +211,7 @@ pub(crate) async fn copy_png_file_to_general_pasteboard(
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, payload);
+        let _ = (app, ticket, payload);
         clipboard_failure(
             "clipboard_unavailable",
             "Image clipboard copy is only available in the macOS app",
@@ -153,10 +219,51 @@ pub(crate) async fn copy_png_file_to_general_pasteboard(
     }
 }
 
+/// Registers a newly persisted capture before any asynchronous read. The
+/// registration is the ordering point: an older delayed copy must either
+/// commit before this call or fail its final main-thread revalidation.
+pub(crate) async fn copy_new_capture_to_general_pasteboard(
+    app: AppHandle,
+    path: PathBuf,
+) -> ClipboardStatus {
+    let ticket = match app.state::<Mutex<ClipboardRuntime>>().lock() {
+        Ok(mut runtime) => runtime.register_capture(path),
+        Err(_) => {
+            return clipboard_failure(
+                "clipboard_state_failed",
+                "The clipboard state is temporarily unavailable.",
+            )
+        }
+    };
+    copy_registered_png_to_general_pasteboard(app, ticket).await
+}
+
+pub(crate) async fn recopy_current_capture_to_general_pasteboard(
+    app: AppHandle,
+    path: PathBuf,
+) -> ClipboardStatus {
+    let ticket = match app.state::<Mutex<ClipboardRuntime>>().lock() {
+        Ok(runtime) => match runtime.ticket_for_current(&path) {
+            Ok(ticket) => ticket,
+            Err(status) => return status,
+        },
+        Err(_) => {
+            return clipboard_failure(
+                "clipboard_state_failed",
+                "The clipboard state is temporarily unavailable.",
+            )
+        }
+    };
+    copy_registered_png_to_general_pasteboard(app, ticket).await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{copy_png_file, ClipboardStatus, ClipboardWriter, PNG_SIGNATURE};
-    use std::{fs, path::Path};
+    use super::{
+        commit_registered_payload, copy_png_file, ClipboardRuntime, ClipboardStatus,
+        ClipboardWriter, PNG_SIGNATURE,
+    };
+    use std::{fs, path::Path, path::PathBuf};
 
     const PNG_FIXTURE: &[u8] = b"\x89PNG\r\n\x1a\nexact-pixel-payload";
 
@@ -256,6 +363,56 @@ mod tests {
     #[test]
     fn png_signature_constant_matches_the_platform_format_contract() {
         assert_eq!(&PNG_FIXTURE[..PNG_SIGNATURE.len()], PNG_SIGNATURE);
+    }
+
+    #[test]
+    fn delayed_old_copy_is_rejected_after_a_new_capture_registers() {
+        let mut runtime = ClipboardRuntime::default();
+        let old_path = PathBuf::from("/tmp/capso/old.png");
+        let new_path = PathBuf::from("/tmp/capso/new.png");
+        runtime.register_capture(old_path.clone());
+        let delayed_old = runtime
+            .ticket_for_current(&old_path)
+            .expect("old capture starts current");
+        let newest = runtime.register_capture(new_path);
+        let mut writer = RecordingWriter::default();
+
+        let stale =
+            commit_registered_payload(&runtime, &delayed_old, b"\x89PNG\r\n\x1a\nold", &mut writer);
+        assert!(matches!(
+            stale,
+            ClipboardStatus::Failed {
+                code: "clipboard_stale_capture",
+                ..
+            }
+        ));
+        assert_eq!(writer.attempts, 0);
+
+        assert_eq!(
+            commit_registered_payload(&runtime, &newest, b"\x89PNG\r\n\x1a\nnew", &mut writer,),
+            ClipboardStatus::Copied { bytes: 11 }
+        );
+        assert_eq!(writer.payload, b"\x89PNG\r\n\x1a\nnew");
+    }
+
+    #[test]
+    fn old_copy_before_new_registration_is_followed_by_the_newest_pixels() {
+        let mut runtime = ClipboardRuntime::default();
+        let old = runtime.register_capture(PathBuf::from("/tmp/capso/old.png"));
+        let mut writer = RecordingWriter::default();
+
+        assert!(matches!(
+            commit_registered_payload(&runtime, &old, b"\x89PNG\r\n\x1a\nold", &mut writer,),
+            ClipboardStatus::Copied { .. }
+        ));
+        let newest = runtime.register_capture(PathBuf::from("/tmp/capso/new.png"));
+        assert!(matches!(
+            commit_registered_payload(&runtime, &newest, b"\x89PNG\r\n\x1a\nnew", &mut writer,),
+            ClipboardStatus::Copied { .. }
+        ));
+
+        assert_eq!(writer.attempts, 2);
+        assert_eq!(writer.payload, b"\x89PNG\r\n\x1a\nnew");
     }
 
     #[cfg(target_os = "macos")]

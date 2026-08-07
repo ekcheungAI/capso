@@ -227,7 +227,7 @@ pub(crate) async fn capture_screen(
         StoredCaptureOutcome::Cancelled => Ok(CaptureOutcome::Cancelled),
         StoredCaptureOutcome::Captured { path } => {
             let clipboard =
-                crate::clipboard::copy_png_file_to_general_pasteboard(app.clone(), path.clone())
+                crate::clipboard::copy_new_capture_to_general_pasteboard(app.clone(), path.clone())
                     .await;
             let overlay = crate::overlay::prepare_capture_overlay(&app, mode, &path, &clipboard);
             Ok(CaptureOutcome::Captured {

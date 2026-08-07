@@ -344,6 +344,8 @@ pub fn run() {
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
         .manage(Mutex::new(system::PermissionRuntime::default()))
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
+        .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -377,17 +379,20 @@ pub fn run() {
             open_login_item_settings,
             overlay::get_overlay_capture,
             overlay::overlay_image_ready,
-            overlay::overlay_image_failed
+            overlay::overlay_image_failed,
+            overlay::overlay_copy_capture,
+            overlay::overlay_save_capture,
+            overlay::overlay_dismiss
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // OVL-01a is display-only. Until OVL-01b adds explicit controls,
-            // the thumbnail must not block clicks in the foreground app.
+            // The panel remains non-focusable but accepts deliberate Quick
+            // Access clicks without activating Capso or blocking outside it.
             if let Some(overlay_window) = app.get_webview_window(overlay::OVERLAY_LABEL) {
-                overlay_window.set_ignore_cursor_events(true)?;
+                overlay_window.set_ignore_cursor_events(false)?;
             }
 
             let loaded = match shortcut_settings_path(app.handle()) {

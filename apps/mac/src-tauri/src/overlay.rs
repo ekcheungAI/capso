@@ -1,6 +1,11 @@
 use crate::{capture::CaptureMode, clipboard::ClipboardStatus};
-use serde::Serialize;
-use std::{path::Path, sync::Mutex};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File, OpenOptions},
+    io,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow};
 
 pub(crate) const OVERLAY_LABEL: &str = "capture-overlay";
@@ -142,6 +147,34 @@ enum RevealTransition {
     Failed(OverlayFailureRecord),
 }
 
+#[derive(Debug, PartialEq)]
+enum DismissTransition {
+    Stale,
+    Dismissed,
+    Failed(OverlayFailureRecord),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DismissReason {
+    Close,
+    Timeout,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlaySaveResult {
+    destination: String,
+    bytes: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayDismissed<'a> {
+    path: &'a str,
+    reason: DismissReason,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum OverlayStatus {
@@ -257,6 +290,63 @@ fn fail_transition(
         let _ = window.hide_overlay();
     }
     failure
+}
+
+fn dismiss_transition(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+) -> DismissTransition {
+    if !capture_matches_path(runtime.current.as_ref(), path) {
+        return DismissTransition::Stale;
+    }
+
+    match window.hide_overlay() {
+        Ok(()) => {
+            runtime.reset();
+            DismissTransition::Dismissed
+        }
+        Err(error) => DismissTransition::Failed(runtime.record_failure(
+            path,
+            "overlay_dismiss_failed",
+            format!("Could not dismiss the capture overlay: {error}"),
+        )),
+    }
+}
+
+fn current_capture_path(runtime: &OverlayRuntime, path: &str) -> Result<PathBuf, String> {
+    runtime
+        .current
+        .as_ref()
+        .filter(|capture| capture.path == path)
+        .map(|capture| PathBuf::from(&capture.path))
+        .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
+}
+
+fn export_capture(source: &Path, destination: &Path) -> io::Result<u64> {
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let temporary = parent.join(format!(".capso-export-{}.tmp", uuid::Uuid::new_v4()));
+
+    let result = (|| {
+        let mut input = File::open(source)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        let bytes = io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
+        fs::rename(&temporary, destination)?;
+        Ok(bytes)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn report_overlay_failure(app: &AppHandle, failure: &OverlayFailureRecord) {
@@ -437,13 +527,106 @@ pub(crate) fn overlay_image_failed(
     Ok(true)
 }
 
+#[tauri::command]
+pub(crate) async fn overlay_copy_capture(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+) -> Result<ClipboardStatus, String> {
+    let source = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        current_capture_path(&runtime, &path)?
+    };
+
+    let status = crate::clipboard::recopy_current_capture_to_general_pasteboard(app, source).await;
+    if let Ok(mut runtime) = state.lock() {
+        if let Some(capture) = runtime
+            .current
+            .as_mut()
+            .filter(|capture| capture.path == path)
+        {
+            capture.clipboard = status.clone();
+        }
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub(crate) async fn overlay_save_capture(
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    destination: String,
+) -> Result<OverlaySaveResult, String> {
+    if destination.trim().is_empty() {
+        return Err("Choose a destination for the saved capture.".into());
+    }
+
+    let source = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        current_capture_path(&runtime, &path)?
+    };
+    let destination_path = PathBuf::from(&destination);
+    if source == destination_path {
+        return Err("Choose a different location for the saved copy.".into());
+    }
+
+    let bytes =
+        tauri::async_runtime::spawn_blocking(move || export_capture(&source, &destination_path))
+            .await
+            .map_err(|error| format!("The capture export task stopped unexpectedly: {error}"))?
+            .map_err(|error| format!("Could not save the capture copy: {error}"))?;
+
+    Ok(OverlaySaveResult { destination, bytes })
+}
+
+#[tauri::command]
+pub(crate) fn overlay_dismiss(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    reason: DismissReason,
+) -> Result<bool, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let transition = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        dismiss_transition(&mut runtime, &window, &path)
+    };
+
+    match transition {
+        DismissTransition::Stale => Ok(false),
+        DismissTransition::Dismissed => {
+            let _ = app.emit(
+                "capture-overlay-dismissed",
+                OverlayDismissed {
+                    path: &path,
+                    reason,
+                },
+            );
+            Ok(true)
+        }
+        DismissTransition::Failed(failure) => {
+            report_overlay_failure(&app, &failure);
+            Err(failure.message)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        bottom_right_position, capture_display, capture_matches_path, display_at_cursor,
-        fail_transition, prepare_transition, reveal_transition, DisplayGeometry, OverlayCapture,
-        OverlayRuntime, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
-        OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        bottom_right_position, capture_display, capture_matches_path, current_capture_path,
+        dismiss_transition, display_at_cursor, export_capture, fail_transition, prepare_transition,
+        reveal_transition, DismissTransition, DisplayGeometry, OverlayCapture, OverlayRuntime,
+        OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect, OVERLAY_HEIGHT_LOGICAL,
+        OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
@@ -453,6 +636,7 @@ mod tests {
     struct FakeWindow {
         visible: Cell<bool>,
         position: Cell<(i32, i32)>,
+        fail_hide: Cell<bool>,
         fail_show: Cell<bool>,
         transitions: RefCell<Vec<&'static str>>,
     }
@@ -460,6 +644,9 @@ mod tests {
     impl OverlayWindowOps for FakeWindow {
         fn hide_overlay(&self) -> Result<(), String> {
             self.transitions.borrow_mut().push("hide");
+            if self.fail_hide.get() {
+                return Err("native hide rejected".into());
+            }
             self.visible.set(false);
             Ok(())
         }
@@ -748,6 +935,111 @@ mod tests {
     }
 
     #[test]
+    fn dismiss_is_exact_and_cannot_hide_a_newer_capture() {
+        let old_path = "/tmp/capso/old.png";
+        let new_path = "/tmp/capso/new.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(new_path));
+
+        assert_eq!(
+            dismiss_transition(&mut runtime, &window, old_path),
+            DismissTransition::Stale
+        );
+        assert!(window.visible.get());
+        assert_eq!(runtime.current, Some(capture(new_path)));
+
+        assert_eq!(
+            dismiss_transition(&mut runtime, &window, new_path),
+            DismissTransition::Dismissed
+        );
+        assert!(!window.visible.get());
+        assert!(runtime.current.is_none());
+        assert_eq!(*window.transitions.borrow(), vec!["hide"]);
+    }
+
+    #[test]
+    fn failed_dismiss_keeps_the_exact_capture_available_for_retry() {
+        let path = "/tmp/capso/current.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        window.fail_hide.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+
+        let DismissTransition::Failed(failure) = dismiss_transition(&mut runtime, &window, path)
+        else {
+            panic!("native hide failure must be reported");
+        };
+        assert_eq!(failure.code, "overlay_dismiss_failed");
+        assert_eq!(runtime.current, Some(capture(path)));
+        assert!(window.visible.get());
+
+        window.fail_hide.set(false);
+        assert_eq!(
+            dismiss_transition(&mut runtime, &window, path),
+            DismissTransition::Dismissed
+        );
+        assert!(runtime.current.is_none());
+        assert!(!window.visible.get());
+    }
+
+    #[test]
+    fn copy_and_save_actions_reject_a_stale_capture_path() {
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture("/tmp/capso/new.png"));
+
+        assert!(current_capture_path(&runtime, "/tmp/capso/old.png").is_err());
+        assert_eq!(
+            current_capture_path(&runtime, "/tmp/capso/new.png").expect("current capture"),
+            std::path::PathBuf::from("/tmp/capso/new.png")
+        );
+    }
+
+    #[test]
+    fn save_as_exports_exact_bytes_without_mutating_the_durable_capture() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("source.png");
+        let destination = directory.path().join("Capso capture.png");
+        let pixels = b"\x89PNG\r\n\x1a\nexact-action-export";
+        std::fs::write(&source, pixels).expect("write source capture");
+
+        assert_eq!(
+            export_capture(&source, &destination).expect("export succeeds"),
+            pixels.len() as u64
+        );
+        assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
+        assert_eq!(
+            std::fs::read(&destination).expect("destination exists"),
+            pixels
+        );
+    }
+
+    #[test]
+    fn save_as_is_safe_when_the_destination_aliases_the_durable_capture() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("source.png");
+        let alias = directory.path().join("alias.png");
+        let pixels = b"\x89PNG\r\n\x1a\nsource-cannot-be-truncated";
+        std::fs::write(&source, pixels).expect("write source capture");
+
+        assert_eq!(
+            export_capture(&source, &source).expect("same path remains safe"),
+            pixels.len() as u64
+        );
+        assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
+
+        std::fs::hard_link(&source, &alias).expect("create aliased destination");
+        assert_eq!(
+            export_capture(&source, &alias).expect("hard-link alias remains safe"),
+            pixels.len() as u64
+        );
+        assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
+        assert_eq!(std::fs::read(&alias).expect("alias remains"), pixels);
+    }
+
+    #[test]
     fn bundled_overlay_window_is_hidden_non_activating_and_capture_scoped() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
@@ -786,7 +1078,7 @@ mod tests {
             .any(|window| window == OVERLAY_LABEL));
         assert_eq!(
             capability["permissions"],
-            serde_json::json!(["core:event:default"])
+            serde_json::json!(["core:event:default", "dialog:allow-save"])
         );
     }
 }
