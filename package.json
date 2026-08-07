@@ -14,7 +14,8 @@
     "brand:tokens": "node scripts/gen-tokens.mjs",
     "brand:check": "node scripts/gen-tokens.mjs --check",
     "capture:spec": "node --experimental-strip-types scripts/gen-capture-spec.mjs",
-    "capture:check": "node --experimental-strip-types scripts/gen-capture-spec.mjs --check"
+    "capture:check": "node --experimental-strip-types scripts/gen-capture-spec.mjs --check",
+    "loop:check": "node scripts/validate-capso-loop.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

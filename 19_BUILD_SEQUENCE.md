@@ -32,6 +32,13 @@ graph LR
 
 Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `screencapture` behavior, Tauri global hotkeys, overlay window layering). Start P2 as soon as P1 schema lands — do not defer it behind P3/P4 polish. If Tauri friction >2 days, STOP and surface Electron fallback decision to owner.
 
+**Owner-approved sequencing exception (D15, 2026-08-08):** P1 schema, owner-only RLS,
+private Storage buckets, and the web remote-store path are live. P2 native local capture
+primitives may therefore proceed now to retire the highest platform risk, even though P0
+Mac auth/CI/telemetry and P1 jobs/worker work remain incomplete. This exception does not
+permit claiming AC-CAP-03, AI-01, P2 done, or dogfood readiness until authenticated native
+ingest and browser-independent processing are complete.
+
 ---
 
 ## P0 — Foundation
@@ -46,7 +53,7 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 - [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- blocked by Supabase project -->
 - [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
 
-- [ ] Vercel deploy of `apps/web` (empty shell with sign-in)
+- [x] Vercel deploy of `apps/web` <!-- production deployed in BUILD_LOG loop 20; real app, not empty shell -->
 - [ ] CI: GitHub Actions running `pnpm typecheck`, `pnpm lint`, `pnpm test` on push
 - [ ] Sentry + PostHog SDK initialized in both apps (keys via env, no events beyond init yet)
 
@@ -66,8 +73,8 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 
 **Tasks:**
 - [ ] Migration implementing full schema from `10_DATA_MODEL.md` (screenshots, projects, threads, messages, jobs, corrections, embeddings via pgvector; links/PDF columns schema-ready but unused)
-- [ ] RLS policies: owner-only access on every table (single-user MVP, but enforce anyway)
-- [ ] Storage buckets: `originals`, `thumbs`, private, RLS-scoped
+- [x] RLS policies: owner-only access on every table (single-user MVP, but enforce anyway) <!-- migration 0001; applied per BUILD_LOG loop 12 -->
+- [x] Storage buckets: `originals`, `thumbs`, private, RLS-scoped <!-- migration 0002; remote store shipped -->
 - [ ] Jobs table + `pg_cron` tick + Edge Function worker skeleton: claim job (`FOR UPDATE SKIP LOCKED`), execute, mark done/failed, retry with backoff, `attempts` cap → `poisoned` status
 - [ ] Generated TS types from schema into `packages/shared`
 - [ ] Seed script for local dev (1 project, 3 fake screenshot rows)
@@ -86,8 +93,12 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 
 **Entry criteria:** P1 schema + buckets live; Mac test machine with permissions grantable.
 
+**Current phase:** active under D15. Schema/buckets satisfy the local capture entry gate;
+unfinished auth/worker work remains a downstream blocker explicitly tracked by the hourly
+loop.
+
 **Tasks:**
-- [ ] Global hotkey (default ⌘⇧5-alternative, configurable later) triggering `screencapture -i` (region) and `-iw` (window); result copied to clipboard
+- [ ] Global hotkey (default ⌘⇧5-alternative, configurable later) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15 -->
 - [ ] Screen Recording / accessibility permission detection + guidance UI (specs/permission_model.md)
 - [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer
 - [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01)

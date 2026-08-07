@@ -1,7 +1,7 @@
 # Capso — Master Plan
 
 > Canonical entry point for the Capso planning pack. Every planning or build session starts here.
-> Status: **Planning pack complete — ready for Build Loop 1.** Last updated: 2026-07-31.
+> Status: **Build active — native CleanShot replacement loop.** Last updated: 2026-08-08.
 
 ## 1. Product summary
 
@@ -55,6 +55,7 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 | D12 | 2026-07-31 | **MiniMax M3 replaces the Haiku/Sonnet split.** Coding-plan key on the Anthropic-compatible endpoint; one provider for both the per-capture pass and chat. Revises D9. The `lib/ai` seam keeps swapping back to a one-file change. |
 | D13 | 2026-07-31 | **Memory optimisation is a first-class surface** (new M10) — see [24_FEATURE_SPEC_MEMORY.md](24_FEATURE_SPEC_MEMORY.md). No pack doc had specified any UI for viewing or editing what the system learned. |
 | D14 | 2026-07-31 | **`why_saved` is user-editable**, superseding `06_FEATURE_SPEC_AI_MEMORY.md` §5. Each edit writes a correction row. |
+| D15 | 2026-08-08 | Owner approved an hourly Maker–Checker build loop whose exit is daily-driver CleanShot replacement: intentional region/window/fullscreen capture, clipboard, non-activating overlay, four-tool annotation, durable history, and post-capture background learning. Fullscreen is added to the capture path; scrolling capture, recording/GIF, pins, background composition, and passive screen observation remain out. P2 native capture primitives may proceed while the remaining P0 Mac-auth/CI/telemetry and P1 worker gaps stay explicit blockers for AI processing and dogfood, not blockers for local capture-risk spikes. |
 
 ## 5. Current assumptions (unverified — challenge freely)
 
@@ -77,34 +78,45 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 
 ## 7. Recommended next action
 
-**Run Build Loop 1 (Phase P0 — Foundation)** using [prompts/FABLE5_MVP_BUILD_PROMPT.md](prompts/FABLE5_MVP_BUILD_PROMPT.md):
-scaffold the monorepo (Tauri app + Next.js app), create the Supabase project, wire auth, and stand up CI/typecheck — entry/done criteria in [19_BUILD_SEQUENCE.md](19_BUILD_SEQUENCE.md).
-
-Before Loop 1, the owner should: (a) confirm or replace the "Capso" name (non-blocking), (b) create the Supabase project + AI provider keys in `.env.local` (never in git).
+Run `loops/capso-cleanshot-replacement-loop.md` on
+`codex/capso-cleanshot-replacement`. The first implementation objective is the tested
+native region/window/fullscreen command seam. Mac identity and server-side processing
+remain hard prerequisites before a native capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
-**Current status (2026-07-31):** P0 partially done; a **demo track** now runs ahead of it at the owner's direction — an interactive web app on a local IndexedDB store, so UX questions get answered before Supabase exists.
+**Current status (2026-08-08):** the web/Supabase demo track advanced far beyond this
+ledger's original 2026-07-31 snapshot. Web capture/import, Storage-backed persistence,
+real MiniMax classification, correction few-shot context, projects, review, memory,
+thread chat, lexical retrieval, annotation, and the Chrome extension are implemented.
+The native app is still only a Tauri menu-bar shell, so P2 native capture is now the
+active risk track under D15's explicit sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
-Known blockers (all STOP-rule items from [20_AGENT_LOOP_INSTRUCTIONS.md](20_AGENT_LOOP_INSTRUCTIONS.md) §7):
-1. **Supabase project** — org `vibemarketing99's Org` already runs 4 active projects; a 5th likely adds recurring compute cost (rules 3 + 4). Blocks auth, schema, all of P1.
-2. **GitHub remote + Vercel** — external accounts/pushes (rules 3 + 6). Blocks CI and web deploy.
-3. **Screen Recording permission for the build shell** — `screencapture` is blocked from the agent shell, so tray/overlay pixel QA can't run. Same permission surface P2 capture depends on.
-4. **Next.js version** — scaffold installed 16.2.12; pack docs say 15. Accept 16 (and update version strings) or pin to 15.
-5. **MiniMax key** — rotate the one pasted in chat, then set `MINIMAX_TEXT_API_KEY` in `apps/web/.env.local`. Until then classification is sample data. First real call must confirm the Anthropic-compatible endpoint accepts base64 image blocks.
+Known blockers:
+1. **Native capture path** — no macOS capture commands, global shortcuts, clipboard,
+   non-activating overlay, permissions flow, or durable Mac queue exist yet.
+2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
+   the Mac app, and classification is still called by a browser tab rather than a server
+   worker. Native captures cannot learn with the web app closed.
+3. **Native permission evidence** — Screen Recording and multi-display behavior have not
+   passed end-to-end QA from the bundled app.
+4. **Distribution** — the local DMG is ad-hoc signed, not notarized, and its current bundle
+   identifier is unsuitable. Developer ID decisions remain an owner gate.
+5. **Retrieval** — current UI search is lexical; the planned pgvector hybrid path and
+   embedding generation are incomplete.
 
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | 🟡 in progress | loop 01 scaffold ✅, loop 02 tray shell ✅; auth/CI/deploy blocked on owner |
-| Demo track | 🟢 running ahead | state layer, capture, detail, organise, ⌘K, memory surface, M3 client. Chat + extension next |
-| P1 Core backend | ⬜ not started | — |
-| P2 Screenshot ingestion | ⬜ not started | riskiest (macOS permissions) — surface early |
-| P3 OCR/classification | ⬜ not started | needs embedding-provider decision |
-| P4 Project threads | ⬜ not started | — |
-| P5 Chat retrieval | ⬜ not started | — |
-| P6 Search | ⬜ not started | — |
-| P7 Polish + dogfood gate | ⬜ not started | exit = CleanShot X cancelled |
+| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
+| Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
+| P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest and library work; native capture/overlay/queue do not |
+| P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
+| P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay integration remains |
+| P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
+| P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |
+| P7 Polish + dogfood gate | 🟡 partial | web annotation exists; native onboarding, signed DMG and five-day dogfood remain |
 | P8 Billing | 🅿 parked | build only when external users exist |

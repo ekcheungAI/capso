@@ -1,0 +1,112 @@
+# Capso CleanShot Replacement Loop State
+
+> Persistent cross-session memory for `capso-cleanshot-replacement`.
+> Read before every run; update after every run, including no-op and failure.
+
+## Current control state
+
+| Field | Value |
+|---|---|
+| Status | READY |
+| Active lease | none |
+| Branch | `codex/capso-cleanshot-replacement` |
+| Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
+| Current phase | Native capture vertical slice |
+| Next objective | LOOP-01: expose a tested native capture command seam for region/window/fullscreen with silent cancellation and deterministic file placement |
+| Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
+
+## Protected pre-existing work
+
+These paths were already untracked when the loop was created. Every run must preserve
+them and must never stage, delete, rename, or rewrite them unless Elvin separately asks:
+
+- `.playwright-cli/`
+- `design-qa.md`
+- `drafts/2026-08-03_capso-image2-preview/`
+- `drafts/2026-08-03_capso-interactive-preview/`
+- `package-lock.json`
+- `qa/`
+
+Build outputs under ignored `target/`, `dist/`, and `.next/` are disposable caches, not
+candidate source files.
+
+## Active loops
+
+| Loop | Schedule | Last run | Last result | Next gate |
+|---|---|---|---|---|
+| capso-cleanshot-replacement | hourly | — | not started | CAP-01 |
+
+## Gate scoreboard
+
+Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
+
+| Gate | Status | Current evidence | Next proof |
+|---|---|---|---|
+| UX-01 menu-bar availability | IN_PROGRESS | Tauri tray shell builds; visual behavior unverified | Launch/quit/focus/login-item QA |
+| CAP-01 native capture modes | NOT_STARTED | No native command or shortcut plugin | Region/window/fullscreen command seam |
+| CAP-02 clipboard + <1s overlay | NOT_STARTED | Web simulation only | Native clipboard and timed overlay |
+| OVL-01 overlay experience | NOT_STARTED | Web overlay exists; no native window | Non-activating multi-display panel |
+| ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
+| DUR-01 durable queue | NOT_STARTED | Browser/extension durability exists; no Mac queue | Restart/offline/idempotency tests |
+| HIS-01 reliable history | IN_PROGRESS | Cloud library and local data seam exist | Native recent list + end-to-end persistence |
+| AI-01 browser-independent processing | BLOCKED | Classification caller is browser-only | Authenticated native ingest + server worker |
+| LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
+| RET-01 retrieval | IN_PROGRESS | Lexical retrieval passes; pgvector path absent | Hybrid search golden evaluation |
+| PKG-01 signed installer | BLOCKED | Local `.app`/`.dmg` build; ad-hoc signature fails Gatekeeper | Fix identifier; Developer ID/notarization owner gate |
+| DOG-01 five-day dogfood | NOT_STARTED | Replacement gates incomplete | Start only after all prior gates PASS |
+
+## Ordered task queue
+
+The hourly loop always takes the first unblocked item and shrinks it to one verifiable
+outcome that fits the run budget.
+
+| Order | Objective | Depends on | Human action |
+|---|---|---|---|
+| 1 | CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests | schema/buckets live | none |
+| 2 | CAP-01b — global shortcut registration, conflict reporting, and tray actions | CAP-01a | manual shortcut QA |
+| 3 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
+| 4 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
+| 5 | OVL-01a — non-activating overlay on the capture display | CAP-02a | focus + multi-display QA |
+| 6 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions | OVL-01a | interaction QA |
+| 7 | CAP-02b — 20-capture overlay latency proof | OVL-01a | foreground test window |
+| 8 | DUR-01a — durable local queue state machine, written test-first | CAP-01a | none |
+| 9 | DUR-01b — three-capture offline/restart/reconnect drill with no duplicates | DUR-01a | network toggle QA |
+| 10 | AI-01a — Mac identity/auth handoff and authenticated ingest contract | DUR-01a | auth decision if required |
+| 11 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
+| 12 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
+| 13 | ANN-01a — reuse the four-tool editor from the overlay and flatten before final upload | OVL-01b, DUR-01a | annotation QA |
+| 14 | ANN-01b — irreversible blur and flattened-pixel proof | ANN-01a | none |
+| 15 | HIS-01a — recent captures menu and full library deep links | DUR-01a | history QA |
+| 16 | LRN-01a — scripted three-corrections-to-fourth-capture evaluation | AI-01b | model calls approved under existing config |
+| 17 | RET-01a — pgvector + keyword retrieval implementation | AI-01b | embedding-provider decision if unresolved |
+| 18 | RET-01b — exact OCR and vague-memory golden query evaluation | RET-01a | real dogfood corpus |
+| 19 | PKG-01a — correct bundle identity and entitlement manifest | UX-01a | none |
+| 20 | PKG-01b — Developer ID signing and notarization | PKG-01a | explicit credentials/distribution approval |
+| 21 | PKG-01c — fresh-user install and onboarding proof | PKG-01b | fresh macOS user QA |
+| 22 | DOG-01 — five-day, 50-capture replacement period | every scoreboard gate PASS | Elvin daily use |
+
+Manual objectives are allowed to remain BLOCKED while independent code objectives whose
+dependencies pass continue. DOG-01 is never eligible until every preceding scoreboard gate
+is PASS; a skipped or unverified gate is not PASS.
+
+## Run history
+
+| Timestamp (HKT) | Loop | Objective | Result | Commit | Evidence / next action |
+|---|---|---|---|---|---|
+
+## Discovered technical debt
+
+| Priority | Area | Debt | Disposition |
+|---|---|---|---|
+| P0 | Processing | Native captures cannot classify without an open browser tab. | AI-01b before dogfood. |
+| P0 | Identity | Browser anonymous auth cannot be transferred safely to the Mac app. | AI-01a; owner decision if auth model changes. |
+| P1 | Distribution | Bundle id ends in `.app`; build is ad-hoc signed and fails Gatekeeper. | PKG-01a. |
+| P1 | Permissions | Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 QA. |
+| P1 | Retrieval | Current search is lexical; embedding column is not used by the client path. | RET-01a. |
+
+## Blocked owner decisions
+
+- Developer ID signing/notarization credentials are required only when PKG-01a begins.
+  Never read, export, or alter signing credentials without explicit owner approval.
+- Changing production auth, applying database migrations, spending money, distributing a
+  build, or changing CleanShot settings remains a STOP-and-ask action.
