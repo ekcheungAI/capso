@@ -109,7 +109,7 @@ Conflict handling: if registration fails (shortcut taken), show attention state 
 | Notifications | Optional: upload-failure notices | Ask lazily, first time a background failure occurs; never on first run |
 | Login Item (auto-start) | Menu-bar app always available | Onboarding asks explicitly ("Start Capso at login?"); default off until user says yes |
 
-First-run flow: welcome → sign in (opens web auth, returns token via deep link `capso://auth`) → Screen Recording walkthrough → optional login item → prompt first capture (⌃⇧C).
+First-run flow: welcome → sign in (Mac-originated PKCE opens web auth; `capso://auth/callback` returns only a one-time code + state; native exchange stores the session in Keychain) → Screen Recording walkthrough → optional login item → prompt first capture (⌃⇧C). Access and refresh tokens never travel in a URL or through the webview.
 
 ## Auto-update & distribution
 

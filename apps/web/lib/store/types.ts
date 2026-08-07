@@ -51,7 +51,7 @@ export type Screenshot = {
    */
   simulated: boolean;
   assignmentSource: AssignmentSource | null;
-  source: "hotkey_region" | "hotkey_window" | "drag" | "clipboard" | "web_upload" | "extension" | "seed";
+  source: "hotkey_region" | "hotkey_window" | "hotkey_fullscreen" | "drag" | "clipboard" | "web_upload" | "extension" | "seed";
   capturedAt: string;
   /** Data URL of the real capture; null for seeded fixtures which draw a placeholder. */
   imageDataUrl: string | null;

@@ -106,14 +106,15 @@ export async function contentHash(encodedDataUrl: string): Promise<string> {
 /**
  * Where a capture came from. Mirrors `Screenshot["source"]`.
  *
- * `hotkey_region` and `hotkey_window` are the Mac app's two capture modes (M1);
- * they exist here already because the sample generator uses the first, and
- * because a surface that invents its own source string ends up invisible to the
- * provenance badge.
+ * `hotkey_region`, `hotkey_window`, and `hotkey_fullscreen` are the Mac app's
+ * capture modes (D15); they exist here already because the sample generator
+ * uses the first, and because a surface that invents its own source string ends
+ * up invisible to the provenance badge.
  */
 export const captureSource = z.enum([
   "hotkey_region",
   "hotkey_window",
+  "hotkey_fullscreen",
   "drag",
   "clipboard",
   "web_upload",

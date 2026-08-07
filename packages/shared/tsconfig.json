@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // Test-only TypeScript entry points run under Node's strip-types mode.
+    // The package remains no-emit, so keeping explicit `.ts` imports is safe.
+    "allowImportingTsExtensions": true,
     // WebWorker, not DOM: `capture.ts` needs WebCrypto and TextEncoder, which
     // exist in browsers, MV3 service workers, Node 18+ and Deno alike — every
     // runtime a capture surface might be. DOM would type them too, but would

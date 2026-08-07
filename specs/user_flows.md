@@ -123,7 +123,7 @@ sequenceDiagram
 ## F9 — Onboarding first-run (sign-in, permissions, first capture)
 
 1. User → launches Capso.app first time → MacApp menu-bar icon appears, welcome window opens → state: signed-out.
-2. User → clicks "Sign in" → MacApp opens browser to Web auth (Supabase Auth, magic link/OAuth) → deep-links session back to the app → session stored in keychain.
+2. User → clicks "Sign in" → MacApp creates PKCE verifier/challenge + state and opens browser to Web auth (Supabase Auth, magic link/OAuth) → browser deep-links only the one-time code + matching state to `capso://auth/callback` → MacApp exchanges using its local verifier and stores the returned session in Keychain. Access/refresh tokens never appear in the URL or webview.
 3. MacApp → requests Screen Recording permission with an explainer screen (why + degraded mode; see permission_model.md) → macOS System Settings prompt → User grants and relaunches app if macOS requires it.
 4. MacApp → registers global hotkeys ⌃⇧C/⌃⇧W (conflict handling in edge_cases.md), offers optional Login Item + Notifications toggles → defaults saved.
 5. MacApp → shows "Try it: press ⌃⇧C and grab anything" coach mark → User performs first capture → full F1 pipeline runs.

@@ -1,8 +1,10 @@
+mod auth;
 mod capture;
 mod clipboard;
 mod dragout;
 mod drain;
 mod history;
+mod ingest;
 mod overlay;
 mod queue;
 mod shortcuts;
@@ -447,6 +449,7 @@ pub fn run() {
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
         .manage(drain::DrainCoordinator::default())
+        .manage(Mutex::new(auth::AuthRuntime::default()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(

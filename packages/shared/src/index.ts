@@ -5,6 +5,7 @@ import { z } from "zod";
  * that can make a capture (extension, web, Mac app). See ./capture.ts.
  */
 export * from "./capture";
+export * from "./native";
 
 /** Locked taxonomy — see 10_DATA_MODEL.md. Only `screenshot` is implemented in v1. */
 export const captureKind = z.enum(["screenshot", "link", "file"]);

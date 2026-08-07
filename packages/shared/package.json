@@ -8,16 +8,19 @@
   "exports": {
     ".": "./src/index.ts",
     "./capture": "./src/capture.ts",
+    "./native": "./src/native.ts",
     "./tokens": "./src/tokens.ts",
     "./tokens.json": "./src/tokens.json"
   },
   "scripts": {
+    "test": "node --experimental-strip-types --test 'src/**/*.check.ts'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@types/node": "^20",
     "typescript": "^5"
   }
 }

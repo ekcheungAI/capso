@@ -84,6 +84,8 @@ Companion to user_flows.md (happy paths) and api_contracts.md (error envelope). 
 | Refresh token revoked/invalid | Supabase refresh fails permanently | Full sign-out state; local queue retained encrypted-at-rest by FileVault assumption; captures continue to queue locally (capture never blocked by auth) | "Signed out — captures are being saved locally until you sign back in" |
 | Web session expired during triage | SDK 401 | Standard redirect to sign-in, return to same view after | Normal re-auth loop |
 | Clock skew breaks JWT validation | 401 with valid-looking token | Surface distinct error after retry; suggest checking system clock | Rare; error toast with hint |
+| Forged, stale, or replayed native auth callback | Callback scheme/host/path, five-minute age, exact state, or single-use pending handoff fails | Reject without exchanging; a wrong-state callback does not consume the valid pending flow, while expiry/replay requires a new explicit sign-in | "Sign-in link was invalid or expired — try again"; capture queue remains local |
+| Access or refresh token appears in callback URL | Any token field or URL fragment is present | Reject the entire callback; tokens are accepted only from the PKCE code exchange and stored in Keychain | Generic invalid sign-in message; secret is never logged or forwarded |
 
 ## 8. Cross-cutting recovery rules
 

@@ -1,0 +1,44 @@
+{
+  "auth_exchange": {
+    "code": "code_018f22c4cada7c6b9d5bfc35f7f92270",
+    "code_verifier": "verifier_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "redirect_uri": "capso://auth/callback"
+  },
+  "ingest_request": {
+    "screenshot_id": "018f22c4-cada-7c6b-9d5b-fc35f7f92270",
+    "storage_path": "originals/018f22c4-cada-7c6b-9d5b-fc35f7f92279/018f22c4-cada-7c6b-9d5b-fc35f7f92270.png",
+    "captured_at": "2026-08-08T06:48:00+08:00",
+    "source": "hotkey_fullscreen",
+    "content_hash": "sha256:8c1e000000000000000000000000000000000000000000000000000000000000",
+    "annotated": false,
+    "width": 2412,
+    "height": 1548,
+    "bytes": 1832400
+  },
+  "ingest_response": {
+    "screenshot_id": "018f22c4-cada-7c6b-9d5b-fc35f7f92270",
+    "status": "processing",
+    "deduped": false
+  },
+  "ingest_error": {
+    "error": {
+      "code": "storage_quota",
+      "message": "Storage is full; the capture remains held locally.",
+      "retryable": false
+    }
+  },
+  "invalid_boundaries": {
+    "captured_at": [
+      "2026-08-08 06:48:00+08:00",
+      "2026-08-08_06:48:00+08:00",
+      "2026-08-08t06:48:00+08:00",
+      "2026-08-08T06:48:00+0800",
+      "2026-08-08T06:48Z",
+      "2026-08-08T06:48+08:00",
+      "2026-08-08T24:00:00+08:00",
+      "2026-08-08T06:48:60+08:00"
+    ],
+    "empty_api_error_message": "",
+    "overlong_api_error_message_length": 513
+  }
+}
