@@ -667,3 +667,18 @@ Verification: failing-first tests proved the degraded-mode and one-prompt/sessio
 Checker: APPROVED with no P0–P2 findings and no repair pass. Implementation commit: `b507eec`.
 
 UX-01 remains IN_PROGRESS: permission grant/revoke, Login Item enable/disable plus relaunch, Dock/app-switcher absence, any-app capture behavior, and signed installed-bundle behavior require manual native QA. The existing `.app`-suffixed identifier/signing warning remains PKG-01a. Next loop: CAP-02a pasteboard write with pixel verification.
+
+## Loop 34 — Persist-first native clipboard delivery
+**Date:** 2026-08-08 · **Phase:** P2 / CAP-02a · **Outcome:** done; partial CAP-02 evidence
+
+Objective: Connect every completed native capture to macOS' image pasteboard without weakening the already-proven storage, cancellation, failure, or permission semantics.
+
+Capso now treats the saved PNG as the source of truth. A successful region, window, or fullscreen capture first lands under Application Support, is read and signature-validated off the UI thread, and is then written byte-for-byte as `NSPasteboardTypePNG` on AppKit's main thread. Cancellation never schedules or clears the pasteboard. A pasteboard failure stays a top-level successful capture with a nested actionable clipboard status, so pixels already on disk are never deleted or reported lost.
+
+Direct Tauri commands, tray actions, and global shortcuts converge on the same command-level RAII single-flight lease. This prevents overlapping pickers and out-of-order clipboard writes regardless of entry point, while every normal and error exit releases the lease. The `capture-finished` event now has an explicit top-level `captured`, `cancelled`, or `failed` contract rather than serializing an implementation-level `Result` wrapper.
+
+Verification: Rust tests **43/43 passed**, including exact-byte write proof, invalid/missing PNG no-mutation boundaries, failure-with-file-preserved proof, a native custom `NSPasteboard` byte round trip, delayed scheduled-write ordering, overlapping/early-error lease release, and exact JSON for all event outcomes. `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, root typecheck/lint, web/extension tests (**78 + 4**), the Mac Vite build, debug Tauri `.app` bundle, loop validator (**67 checks + 7 malformed fixtures**), and `git diff --check` all passed. Bundle inspection confirmed AppKit, CoreGraphics, Foundation, ServiceManagement, and WebKit linkage.
+
+Checker: initial REJECT found a late-write race after the 500ms timeout, direct IPC bypass of the outer single-flight guard, an unproven event envelope, and stale client documentation. Repair attempt 1 removed the early timeout return, moved the lease into the shared command path, introduced a tagged event payload with four exact contract tests, and updated the Mac README. The independent Checker then APPROVED with no P0–P2 findings. Implementation commit: `3496c82`.
+
+CAP-02 remains IN_PROGRESS. Native general-pasteboard copy/paste and perceived latency require manual QA; the Quick Access-style native overlay and 20-capture <1s proof do not exist yet. The debug bundle still carries the existing `.app`-suffixed identifier warning and only an ad-hoc linker signature; PKG-01a/01b remain required before distribution. No app was launched, no capture was invoked, and the user's clipboard and installed CleanShot X were untouched. Next loop: OVL-01a non-activating capture overlay.
