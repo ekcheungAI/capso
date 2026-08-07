@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   OverlayActionCoordinator,
   type OverlayActionKind,
+  type OverlayActionToken,
 } from "./overlay-actions";
+import { OverlayDragGesture, suggestedCaptureFilename } from "./overlay-drag";
 import { PausableOverlayTimer } from "./overlay-timing";
 
 type ClipboardStatus =
@@ -29,6 +31,16 @@ type OverlaySaveResult = {
   bytes: number;
 };
 
+type OverlayDragStarted = {
+  bytes: number;
+};
+
+type OverlayDragEnded = {
+  path: string;
+  presentationId: number;
+  outcome: "dropped" | "cancelled";
+};
+
 type BusyAction = OverlayActionKind | null;
 type DismissReason = "close" | "timeout";
 
@@ -47,15 +59,6 @@ const PREVIEW_CAPTURE: PresentedCapture = {
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
-}
-
-function suggestedFileName() {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const time = [now.getHours(), now.getMinutes(), now.getSeconds()]
-    .map((part) => String(part).padStart(2, "0"))
-    .join(".");
-  return `Capso ${date} at ${time}.png`;
 }
 
 function destinationName(path: string) {
@@ -101,6 +104,11 @@ export default function CaptureOverlay() {
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeIsWarning, setNoticeIsWarning] = useState(false);
   const revealedPresentation = useRef<number | null>(null);
+  const dragGesture = useRef(new OverlayDragGesture(6));
+  const dragAction = useRef<{
+    token: OverlayActionToken;
+    presentationId: number;
+  } | null>(null);
   const actionCoordinator = useRef<OverlayActionCoordinator | null>(null);
   if (actionCoordinator.current === null) {
     actionCoordinator.current = new OverlayActionCoordinator(
@@ -127,11 +135,14 @@ export default function CaptureOverlay() {
     let disposed = false;
     let receivedLiveCapture = false;
     let unlisten: UnlistenFn | undefined;
+    let unlistenDrag: UnlistenFn | undefined;
 
     void (async () => {
       unlisten = await listen<OverlayCapture>("overlay-capture", (event) => {
         if (disposed) return;
         receivedLiveCapture = true;
+        dragGesture.current.reset();
+        dragAction.current = null;
         const presentation = actionCoordinator.current!.activateCapture(event.payload.path);
         revealedPresentation.current = null;
         setImageFailed(false);
@@ -141,8 +152,25 @@ export default function CaptureOverlay() {
         setNoticeIsWarning(false);
         setCapture({ ...event.payload, presentation });
       });
+      unlistenDrag = await listen<OverlayDragEnded>("overlay-drag-ended", (event) => {
+        if (disposed) return;
+        const active = dragAction.current;
+        if (
+          !active ||
+          active.token.path !== event.payload.path ||
+          active.presentationId !== event.payload.presentationId ||
+          !actionCoordinator.current?.finish(active.token)
+        ) {
+          return;
+        }
+        dragAction.current = null;
+        setBusyAction(null);
+        setNoticeIsWarning(false);
+        setNotice(event.payload.outcome === "dropped" ? "Shared a copy" : null);
+      });
       if (disposed) {
         unlisten();
+        unlistenDrag();
         return;
       }
 
@@ -156,6 +184,7 @@ export default function CaptureOverlay() {
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenDrag?.();
     };
   }, [nativeRuntime]);
 
@@ -282,7 +311,7 @@ export default function CaptureOverlay() {
     try {
       const destination = await save({
         title: "Save Capso Capture",
-        defaultPath: suggestedFileName(),
+        defaultPath: suggestedCaptureFilename(),
         filters: [{ name: "PNG image", extensions: ["png"] }],
         canCreateDirectories: true,
       });
@@ -303,6 +332,32 @@ export default function CaptureOverlay() {
       }
     } finally {
       if (actionCoordinator.current?.finish(action)) setBusyAction(null);
+    }
+  }
+
+  async function startDragCapture() {
+    if (!nativeRuntime || !capture?.path || !imageReady || imageFailed) return;
+    const path = capture.path;
+    const presentationId = capture.presentationId;
+    const action = actionCoordinator.current?.begin(path, "drag");
+    if (!action) return;
+    dragAction.current = { token: action, presentationId };
+    setBusyAction("drag");
+    setNotice("Drag into any app");
+    setNoticeIsWarning(false);
+    try {
+      await invoke<OverlayDragStarted>("overlay_start_drag", {
+        path,
+        presentationId,
+        filename: suggestedCaptureFilename(),
+      });
+    } catch (error) {
+      if (actionCoordinator.current?.finish(action)) {
+        dragAction.current = null;
+        setBusyAction(null);
+        setNotice(`Drag failed: ${String(error)}`);
+        setNoticeIsWarning(true);
+      }
     }
   }
 
@@ -329,18 +384,36 @@ export default function CaptureOverlay() {
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
     >
-      <div className="capture-overlay__preview">
+      <div className="capture-overlay__preview" data-dragging={busyAction === "drag"}>
         {source && !imageFailed ? (
           <img
             key={`${capture.path}:${capture.presentationId}`}
             src={source}
             alt={isHistory ? "Restored screenshot" : "Latest screenshot"}
+            title="Drag screenshot to another app"
             draggable={false}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || !event.isPrimary || busyAction !== null) return;
+              dragGesture.current.begin(event.pointerId, event.clientX, event.clientY);
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!dragGesture.current.move(event.pointerId, event.clientX, event.clientY)) {
+                return;
+              }
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              void startDragCapture();
+            }}
+            onPointerUp={(event) => dragGesture.current.end(event.pointerId)}
+            onPointerCancel={(event) => dragGesture.current.end(event.pointerId)}
             onLoad={() => {
               setImageReady(true);
               reveal();
             }}
             onError={() => {
+              dragGesture.current.reset();
               setImageFailed(true);
               if (nativeRuntime && capture.path) {
                 void invoke<boolean>("overlay_image_failed", {

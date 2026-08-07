@@ -73,6 +73,13 @@ html[data-surface="overlay"] #root {
   object-fit: cover;
   object-position: top;
   user-select: none;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-drag: none;
+}
+
+.capture-overlay__preview[data-dragging="true"] img {
+  cursor: grabbing;
 }
 
 .capture-overlay__footer {

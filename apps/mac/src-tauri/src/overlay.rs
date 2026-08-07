@@ -1,5 +1,9 @@
 use crate::{capture::CaptureMode, clipboard::ClipboardStatus};
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGEventType, CGMouseButton};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::sync::{mpsc, Arc};
 use std::{
     fs::{self, File, OpenOptions},
     io,
@@ -78,6 +82,19 @@ pub(crate) struct OverlayRuntime {
     current: Option<OverlayCapture>,
     last_failure: Option<OverlayFailureRecord>,
     presentation_generation: u64,
+    active_drag: Option<OverlayDragIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OverlayDragIdentity {
+    path: String,
+    presentation_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DragGestureState {
+    left_button_is_down: bool,
+    left_mouse_down_counter: u32,
 }
 
 impl OverlayRuntime {
@@ -140,6 +157,33 @@ impl OverlayRuntime {
         self.current = None;
         Some(self.record_failure(path, presentation_id, code, message))
     }
+
+    fn begin_drag(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+    ) -> Result<OverlayDragIdentity, String> {
+        if !capture_matches(self.current.as_ref(), path, presentation_id) {
+            return Err("That capture is no longer active in the overlay.".into());
+        }
+        if self.active_drag.is_some() {
+            return Err("Another capture drag is still in progress.".into());
+        }
+        let identity = OverlayDragIdentity {
+            path: path.into(),
+            presentation_id,
+        };
+        self.active_drag = Some(identity.clone());
+        Ok(identity)
+    }
+
+    fn finish_drag(&mut self, identity: &OverlayDragIdentity) -> bool {
+        if self.active_drag.as_ref() != Some(identity) {
+            return false;
+        }
+        self.active_drag = None;
+        true
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -198,6 +242,27 @@ pub(crate) enum DismissReason {
 pub(crate) struct OverlaySaveResult {
     destination: String,
     bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlayDragStarted {
+    bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlayDragOutcome {
+    Dropped,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayDragEnded {
+    path: String,
+    presentation_id: u64,
+    outcome: OverlayDragOutcome,
 }
 
 #[derive(Clone, Serialize)]
@@ -367,6 +432,24 @@ fn current_capture_path(
         .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
         .map(|capture| PathBuf::from(&capture.path))
         .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
+}
+
+fn begin_drag_transition(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    initial_gesture: DragGestureState,
+    current_gesture: DragGestureState,
+) -> Result<OverlayDragIdentity, String> {
+    if !initial_gesture.left_button_is_down
+        || !current_gesture.left_button_is_down
+        || initial_gesture.left_mouse_down_counter != current_gesture.left_mouse_down_counter
+    {
+        return Err(
+            "The original pointer gesture ended before the capture drag could start.".into(),
+        );
+    }
+    runtime.begin_drag(path, presentation_id)
 }
 
 fn export_capture(source: &Path, destination: &Path) -> io::Result<u64> {
@@ -699,6 +782,185 @@ pub(crate) async fn overlay_save_capture(
     Ok(OverlaySaveResult { destination, bytes })
 }
 
+fn drag_exports_directory(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map(|directory| directory.join("drag-exports"))
+        .map_err(|error| format!("Could not locate Capso's drag cache: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn current_drag_gesture_state() -> DragGestureState {
+    let state_id = CGEventSourceStateID::CombinedSessionState;
+    DragGestureState {
+        left_button_is_down: CGEventSource::button_state(state_id, CGMouseButton::Left),
+        left_mouse_down_counter: CGEventSource::counter_for_event_type(
+            state_id,
+            CGEventType::LeftMouseDown,
+        ),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn native_drag_options() -> drag::Options {
+    drag::Options {
+        mode: drag::DragMode::Copy,
+        ..drag::Options::default()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn begin_native_drag(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    identity: OverlayDragIdentity,
+    artifact: crate::dragout::PreparedDragArtifact,
+) -> Result<(), String> {
+    let export_path = artifact.export_path.clone();
+    let preview_png = artifact.preview_png.clone();
+    let artifact_owner = Arc::new(Mutex::new(Some(artifact)));
+    let callback_owner = Arc::clone(&artifact_owner);
+    let callback_app = app.clone();
+    let callback_identity = identity.clone();
+
+    let result = drag::start_drag(
+        window,
+        drag::DragItem::Files(vec![export_path]),
+        drag::Image::Raw(preview_png),
+        move |result, _cursor| {
+            let outcome = match result {
+                drag::DragResult::Dropped => OverlayDragOutcome::Dropped,
+                drag::DragResult::Cancel => OverlayDragOutcome::Cancelled,
+            };
+            if outcome == OverlayDragOutcome::Dropped {
+                if let Ok(mut owner) = callback_owner.lock() {
+                    if let Some(artifact) = owner.take() {
+                        // Keep the isolated friendly-name proxy until next
+                        // launch so async destination apps can finish reading.
+                        artifact.retain();
+                    }
+                }
+            } else if let Ok(mut owner) = callback_owner.lock() {
+                // Cancellation drops and cleans the isolated proxy now.
+                let _ = owner.take();
+            }
+
+            let finished = callback_app
+                .state::<Mutex<OverlayRuntime>>()
+                .lock()
+                .map(|mut runtime| runtime.finish_drag(&callback_identity))
+                .unwrap_or(false);
+            if finished {
+                let _ = callback_app.emit_to(
+                    OVERLAY_LABEL,
+                    "overlay-drag-ended",
+                    OverlayDragEnded {
+                        path: callback_identity.path.clone(),
+                        presentation_id: callback_identity.presentation_id,
+                        outcome,
+                    },
+                );
+            }
+        },
+        native_drag_options(),
+    );
+
+    if let Err(error) = result {
+        if let Ok(mut runtime) = app.state::<Mutex<OverlayRuntime>>().lock() {
+            let _ = runtime.finish_drag(&identity);
+        }
+        if let Ok(mut owner) = artifact_owner.lock() {
+            if let Some(artifact) = owner.take() {
+                crate::dragout::cleanup_drag_artifact(&artifact);
+            }
+        }
+        return Err(format!("Could not start the macOS capture drag: {error}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn overlay_start_drag(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+    filename: String,
+) -> Result<OverlayDragStarted, String> {
+    let source = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        current_capture_path(&runtime, &path, presentation_id)?
+    };
+    let capture_directory = crate::history::capture_directory(&app)?;
+    let export_root = drag_exports_directory(&app)?;
+
+    #[cfg(target_os = "macos")]
+    let initial_gesture = current_drag_gesture_state();
+
+    #[cfg(target_os = "macos")]
+    if !initial_gesture.left_button_is_down {
+        return Err(
+            "The original pointer gesture ended before the capture drag could start.".into(),
+        );
+    }
+
+    let artifact = tauri::async_runtime::spawn_blocking(move || {
+        crate::dragout::prepare_drag_artifact(&capture_directory, &export_root, &source, &filename)
+    })
+    .await
+    .map_err(|error| format!("The capture drag task stopped unexpectedly: {error}"))??;
+
+    let bytes = artifact.bytes;
+
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window(OVERLAY_LABEL)
+            .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let start_app = app.clone();
+        app.run_on_main_thread(move || {
+            let identity = start_app
+                .state::<Mutex<OverlayRuntime>>()
+                .lock()
+                .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())
+                .and_then(|mut runtime| {
+                    begin_drag_transition(
+                        &mut runtime,
+                        &path,
+                        presentation_id,
+                        initial_gesture,
+                        current_drag_gesture_state(),
+                    )
+                });
+            let result = match identity {
+                Ok(identity) => begin_native_drag(&start_app, &window, identity, artifact),
+                Err(error) => {
+                    crate::dragout::cleanup_drag_artifact(&artifact);
+                    Err(error)
+                }
+            };
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("Could not schedule the macOS capture drag: {error}"))?;
+
+        tauri::async_runtime::spawn_blocking(move || receiver.recv())
+            .await
+            .map_err(|error| format!("The capture drag start task stopped unexpectedly: {error}"))?
+            .map_err(|error| format!("The capture drag did not start: {error}"))??;
+        Ok(OverlayDragStarted { bytes })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        crate::dragout::cleanup_drag_artifact(&artifact);
+        let _ = (app, path, presentation_id);
+        Err("Capture drag-out is only available in the macOS app.".into())
+    }
+}
+
 #[tauri::command]
 pub(crate) fn overlay_dismiss(
     app: AppHandle,
@@ -740,9 +1002,10 @@ pub(crate) fn overlay_dismiss(
 #[cfg(test)]
 mod tests {
     use super::{
-        bottom_right_position, capture_display, capture_matches, current_capture_path,
-        dismiss_transition, display_at_cursor, export_capture, fail_transition, prepare_transition,
-        reveal_transition, DismissTransition, DisplayGeometry, OverlayCapture, OverlayRuntime,
+        begin_drag_transition, bottom_right_position, capture_display, capture_matches,
+        current_capture_path, dismiss_transition, display_at_cursor, export_capture,
+        fail_transition, prepare_transition, reveal_transition, DismissTransition, DisplayGeometry,
+        DragGestureState, OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayRuntime,
         OverlaySource, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
         OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
@@ -984,6 +1247,113 @@ mod tests {
         );
         assert!(window.visible.get());
         assert_eq!(runtime.current, Some(capture_with_id(path, 2)));
+    }
+
+    #[test]
+    fn native_drag_is_exact_single_flight_and_survives_capture_replacement() {
+        let old_path = "/tmp/capso/old.png";
+        let new_path = "/tmp/capso/new.png";
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(old_path, 7));
+
+        assert!(runtime.begin_drag(old_path, 6).is_err());
+        let old_drag = runtime
+            .begin_drag(old_path, 7)
+            .expect("exact current drag starts");
+        assert!(runtime.begin_drag(old_path, 7).is_err());
+
+        runtime.replace(capture_with_id(new_path, 8));
+        assert!(runtime.begin_drag(new_path, 8).is_err());
+        assert!(runtime.finish_drag(&old_drag));
+        assert!(!runtime.finish_drag(&old_drag));
+
+        let new_drag = runtime
+            .begin_drag(new_path, 8)
+            .expect("new capture drags after old session finishes");
+        assert_eq!(new_drag.path, new_path);
+        assert_eq!(new_drag.presentation_id, 8);
+    }
+
+    #[test]
+    fn repeated_path_drag_completion_cannot_finish_a_newer_presentation() {
+        let path = "/tmp/capso/recent.png";
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(path, 1));
+        let old_drag = runtime.begin_drag(path, 1).expect("old drag starts");
+        assert!(runtime.finish_drag(&old_drag));
+
+        runtime.replace(capture_with_id(path, 2));
+        let new_drag = runtime.begin_drag(path, 2).expect("new drag starts");
+
+        assert!(!runtime.finish_drag(&old_drag));
+        assert!(runtime.finish_drag(&new_drag));
+    }
+
+    #[test]
+    fn released_pointer_never_arms_a_delayed_native_drag() {
+        let path = "/tmp/capso/current.png";
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(path, 3));
+
+        let original_press = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 41,
+        };
+        let released = DragGestureState {
+            left_button_is_down: false,
+            left_mouse_down_counter: 41,
+        };
+
+        assert!(begin_drag_transition(&mut runtime, path, 3, original_press, released).is_err());
+        assert!(runtime.active_drag.is_none());
+        assert!(
+            begin_drag_transition(&mut runtime, path, 3, original_press, original_press).is_ok()
+        );
+    }
+
+    #[test]
+    fn released_then_repressed_pointer_never_revives_the_old_drag() {
+        let path = "/tmp/capso/current.png";
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(path, 4));
+        let original_press = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 91,
+        };
+        let later_press = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 92,
+        };
+
+        assert!(begin_drag_transition(&mut runtime, path, 4, original_press, later_press).is_err());
+        assert!(runtime.active_drag.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_drag_advertises_copy_only() {
+        assert!(matches!(
+            super::native_drag_options().mode,
+            drag::DragMode::Copy
+        ));
+    }
+
+    #[test]
+    fn native_drag_completion_event_is_exact_and_explicit() {
+        let event = OverlayDragEnded {
+            path: "/tmp/capso/current.png".into(),
+            presentation_id: 12,
+            outcome: OverlayDragOutcome::Dropped,
+        };
+
+        assert_eq!(
+            serde_json::to_value(event).expect("serialize drag completion"),
+            serde_json::json!({
+                "path": "/tmp/capso/current.png",
+                "presentationId": 12,
+                "outcome": "dropped"
+            })
+        );
     }
 
     #[test]

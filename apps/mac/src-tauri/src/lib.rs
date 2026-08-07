@@ -1,5 +1,6 @@
 mod capture;
 mod clipboard;
+mod dragout;
 mod history;
 mod overlay;
 mod shortcuts;
@@ -424,12 +425,17 @@ pub fn run() {
             overlay::overlay_image_failed,
             overlay::overlay_copy_capture,
             overlay::overlay_save_capture,
+            overlay::overlay_start_drag,
             overlay::overlay_dismiss
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            if let Ok(cache_directory) = app.path().app_cache_dir() {
+                let _ = dragout::cleanup_drag_exports(&cache_directory.join("drag-exports"));
+            }
 
             // The panel remains non-focusable but accepts deliberate Quick
             // Access clicks without activating Capso or blocking outside it.
