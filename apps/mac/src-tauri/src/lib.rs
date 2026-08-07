@@ -1,5 +1,6 @@
 mod capture;
 mod shortcuts;
+mod system;
 
 use std::{
     path::PathBuf,
@@ -42,6 +43,13 @@ impl shortcuts::ShortcutRegistry for TauriShortcutRegistry<'_> {
 }
 
 fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
+    if system::permission_for_capture(action.mode(), system::screen_recording_granted())
+        == system::CapturePermission::RequiresScreenRecording
+    {
+        show_permission_guidance(&app);
+        return;
+    }
+
     if CAPTURE_IN_PROGRESS.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -58,6 +66,19 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
 
         let _ = app.emit("capture-finished", result);
     });
+}
+
+fn show_permission_guidance(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    if let Ok(status) = current_system_status(app) {
+        let _ = app.emit("system-status-changed", status);
+    }
+    if let Err(error) = refresh_tray_status(app) {
+        eprintln!("Could not refresh the Capso permission guidance: {error}");
+    }
 }
 
 /// Show the popover and give it focus; hide it if it is already visible.
@@ -77,10 +98,15 @@ fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Str
         .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
 }
 
-fn shortcut_tooltip(status: &shortcuts::ShortcutStatus) -> &'static str {
-    if !status.conflicts.is_empty() {
+fn tray_tooltip(
+    shortcut_status: &shortcuts::ShortcutStatus,
+    system_status: &system::SystemStatus,
+) -> &'static str {
+    if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+        "Capso — Screen Recording needed for Window and Fullscreen"
+    } else if !shortcut_status.conflicts.is_empty() {
         "Capso — shortcut conflict; Capture menu remains available"
-    } else if status.storage_warning.is_some() {
+    } else if shortcut_status.storage_warning.is_some() {
         "Capso — shortcut settings warning; defaults are active"
     } else {
         "Capso"
@@ -89,15 +115,36 @@ fn shortcut_tooltip(status: &shortcuts::ShortcutStatus) -> &'static str {
 
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
-    status: &shortcuts::ShortcutStatus,
+    shortcut_status: &shortcuts::ShortcutStatus,
+    system_status: &system::SystemStatus,
 ) -> tauri::Result<Menu<R>> {
     let mut menu_builder = MenuBuilder::new(app);
     for definition in shortcuts::definitions() {
-        menu_builder = menu_builder.text(definition.menu_id, definition.menu_label);
+        let needs_permission = system_status.screen_recording
+            == system::ScreenRecordingStatus::Required
+            && system::permission_for_capture(definition.action.mode(), false)
+                == system::CapturePermission::RequiresScreenRecording;
+        let label = if needs_permission {
+            format!("{} — Permission required", definition.menu_label)
+        } else {
+            definition.menu_label.into()
+        };
+        menu_builder = menu_builder.text(definition.menu_id, label);
     }
 
-    let warning_label =
-        shortcuts::conflict_label(&status.conflicts).or_else(|| status.storage_warning.clone());
+    if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+        let permission_warning = MenuItem::with_id(
+            app,
+            "screen-recording-warning",
+            "Screen Recording required — open Capso to grant",
+            false,
+            None::<&str>,
+        )?;
+        menu_builder = menu_builder.separator().item(&permission_warning);
+    }
+
+    let warning_label = shortcuts::conflict_label(&shortcut_status.conflicts)
+        .or_else(|| shortcut_status.storage_warning.clone());
     let warning_item = warning_label
         .as_ref()
         .map(|label| MenuItem::with_id(app, "shortcut-warning", label, false, None::<&str>))
@@ -110,10 +157,31 @@ fn build_tray_menu<R: Runtime>(
     menu_builder.separator().item(&quit).build()
 }
 
-fn refresh_tray_status(app: &AppHandle, status: &shortcuts::ShortcutStatus) -> tauri::Result<()> {
+fn current_system_status(app: &AppHandle) -> Result<system::SystemStatus, String> {
+    app.state::<Mutex<system::PermissionRuntime>>()
+        .lock()
+        .map(|runtime| runtime.status())
+        .map_err(|_| "System settings are temporarily unavailable".into())
+}
+
+fn current_shortcut_status(app: &AppHandle) -> Result<shortcuts::ShortcutStatus, String> {
+    app.state::<Mutex<shortcuts::ShortcutRuntime>>()
+        .lock()
+        .map(|runtime| runtime.status())
+        .map_err(|_| "Shortcut settings are temporarily unavailable".into())
+}
+
+fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
+    let shortcut_status = current_shortcut_status(app)?;
+    let system_status = current_system_status(app)?;
     if let Some(tray) = app.tray_by_id("main") {
-        tray.set_menu(Some(build_tray_menu(app, status)?))?;
-        tray.set_tooltip(Some(shortcut_tooltip(status)))?;
+        tray.set_menu(Some(
+            build_tray_menu(app, &shortcut_status, &system_status)
+                .map_err(|error| error.to_string())?,
+        ))
+        .map_err(|error| error.to_string())?;
+        tray.set_tooltip(Some(tray_tooltip(&shortcut_status, &system_status)))
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -151,10 +219,9 @@ fn update_shortcut_settings(
         || shortcuts::save_shortcut_settings(&settings_path, &candidate.settings),
     ) {
         runtime.reconcile_failed_update(&error);
-        let status = runtime.status();
         let message = error.message;
         drop(runtime);
-        if let Err(refresh_error) = refresh_tray_status(&app, &status) {
+        if let Err(refresh_error) = refresh_tray_status(&app) {
             eprintln!("Could not refresh the Capso tray after shortcut failure: {refresh_error}");
         }
         return Err(message);
@@ -164,16 +231,75 @@ fn update_shortcut_settings(
     let status = runtime.status();
     drop(runtime);
 
-    if let Err(error) = refresh_tray_status(&app, &status) {
+    if let Err(error) = refresh_tray_status(&app) {
         eprintln!("Could not refresh the Capso tray menu: {error}");
     }
     Ok(status)
+}
+
+#[tauri::command]
+fn get_system_status(
+    state: State<'_, Mutex<system::PermissionRuntime>>,
+) -> Result<system::SystemStatus, String> {
+    state
+        .lock()
+        .map(|runtime| runtime.status())
+        .map_err(|_| "System settings are temporarily unavailable".into())
+}
+
+#[tauri::command]
+fn request_screen_recording_permission(
+    app: AppHandle,
+    state: State<'_, Mutex<system::PermissionRuntime>>,
+) -> Result<system::SystemStatus, String> {
+    let granted = system::screen_recording_granted();
+    let should_request = state
+        .lock()
+        .map_err(|_| "System settings are temporarily unavailable".to_string())?
+        .should_request(granted);
+
+    if should_request {
+        let _ = system::request_screen_recording_access();
+    }
+
+    let status = current_system_status(&app)?;
+    let _ = app.emit("system-status-changed", status);
+    if let Err(error) = refresh_tray_status(&app) {
+        eprintln!("Could not refresh the Capso tray after permission request: {error}");
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+fn open_screen_recording_settings() -> Result<(), String> {
+    system::open_screen_recording_settings()
+}
+
+#[tauri::command]
+fn set_launch_at_login_enabled(
+    app: AppHandle,
+    state: State<'_, Mutex<system::PermissionRuntime>>,
+    enabled: bool,
+) -> Result<system::SystemStatus, String> {
+    system::set_launch_at_login(enabled)?;
+    let status = state
+        .lock()
+        .map(|runtime| runtime.status())
+        .map_err(|_| "System settings are temporarily unavailable".to_string())?;
+    let _ = app.emit("system-status-changed", status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn open_login_item_settings() {
+    system::open_login_item_settings();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
+        .manage(Mutex::new(system::PermissionRuntime::default()))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -199,7 +325,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture::capture_screen,
             get_shortcut_settings,
-            update_shortcut_settings
+            update_shortcut_settings,
+            get_system_status,
+            request_screen_recording_permission,
+            open_screen_recording_settings,
+            set_launch_at_login_enabled,
+            open_login_item_settings
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
@@ -235,11 +366,13 @@ pub fn run() {
                 runtime.status()
             };
 
-            let menu = build_tray_menu(app.handle(), &status)?;
+            let system_status = current_system_status(app.handle())
+                .map_err(|error| format!("Could not initialize system status: {error}"))?;
+            let menu = build_tray_menu(app.handle(), &status, &system_status)?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip(shortcut_tooltip(&status))
+                .tooltip(tray_tooltip(&status, &system_status))
                 .menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
@@ -271,6 +404,14 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+            } else if let tauri::WindowEvent::Focused(true) = event {
+                let app = window.app_handle();
+                if let Ok(status) = current_system_status(app) {
+                    let _ = app.emit("system-status-changed", status);
+                }
+                if let Err(error) = refresh_tray_status(app) {
+                    eprintln!("Could not refresh Capso after focus: {error}");
+                }
             }
         })
         .run(tauri::generate_context!())

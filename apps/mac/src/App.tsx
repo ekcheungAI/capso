@@ -27,10 +27,29 @@ type ShortcutStatus = {
   storageWarning: string | null;
 };
 
+type ScreenRecordingStatus = "granted" | "required";
+type LoginItemStatus =
+  | "disabled"
+  | "enabled"
+  | "requiresApproval"
+  | "unavailable";
+
+type SystemStatus = {
+  screenRecording: ScreenRecordingStatus;
+  screenRecordingRequestAttempted: boolean;
+  launchAtLogin: LoginItemStatus;
+};
+
 const DEFAULT_SHORTCUTS: ShortcutSettings = {
   region: "Control+Shift+C",
   window: "Control+Shift+W",
   fullscreen: "Control+Shift+F",
+};
+
+const PREVIEW_SYSTEM_STATUS: SystemStatus = {
+  screenRecording: "required",
+  screenRecordingRequestAttempted: false,
+  launchAtLogin: "disabled",
 };
 
 const SHORTCUT_FIELDS: Array<{
@@ -117,8 +136,45 @@ function App() {
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [needsRetry, setNeedsRetry] = useState(false);
+  const [systemStatus, setSystemStatus] = useState(PREVIEW_SYSTEM_STATUS);
+  const [systemNotice, setSystemNotice] = useState(() =>
+    isTauriRuntime()
+      ? "Checking macOS access…"
+      : "Preview mode — system controls activate in the installed app.",
+  );
+  const [systemNoticeIsError, setSystemNoticeIsError] = useState(
+    () => !isTauriRuntime(),
+  );
+  const [systemAction, setSystemAction] = useState<
+    "permission" | "login" | null
+  >(null);
   const nativeRuntime = useMemo(isTauriRuntime, []);
   const isDirty = !sameSettings(settings, savedSettings);
+  const screenRecordingGranted = systemStatus.screenRecording === "granted";
+  const launchAtLoginEnabled =
+    systemStatus.launchAtLogin === "enabled" ||
+    systemStatus.launchAtLogin === "requiresApproval";
+
+  async function refreshSystemStatus() {
+    if (!nativeRuntime) return;
+
+    try {
+      const status = await invoke<SystemStatus>("get_system_status");
+      setSystemStatus(status);
+      if (status.screenRecording === "granted") {
+        setSystemNotice("Screen capture access is ready.");
+        setSystemNoticeIsError(false);
+      } else {
+        setSystemNotice(
+          "Area capture still works. Window and full-screen capture need access.",
+        );
+        setSystemNoticeIsError(true);
+      }
+    } catch (error) {
+      setSystemNotice(`Could not check macOS access: ${String(error)}`);
+      setSystemNoticeIsError(true);
+    }
+  }
 
   useEffect(() => {
     if (!nativeRuntime) {
@@ -151,6 +207,112 @@ function App() {
         setNeedsRetry(true);
       });
   }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime) return;
+
+    void refreshSystemStatus();
+    const handleFocus = () => void refreshSystemStatus();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [nativeRuntime]);
+
+  async function handleScreenRecording() {
+    if (!nativeRuntime || screenRecordingGranted) return;
+    setSystemAction("permission");
+    setSystemNoticeIsError(false);
+
+    try {
+      if (systemStatus.screenRecordingRequestAttempted) {
+        await invoke("open_screen_recording_settings");
+        setSystemNotice(
+          "System Settings opened. Enable Capso, then return here to recheck.",
+        );
+      } else {
+        setSystemNotice("Waiting for your macOS permission choice…");
+        const status = await invoke<SystemStatus>(
+          "request_screen_recording_permission",
+        );
+        setSystemStatus(status);
+        if (status.screenRecording === "granted") {
+          setSystemNotice("Screen Recording granted. All capture modes are ready.");
+          setSystemNoticeIsError(false);
+        } else {
+          setSystemNotice(
+            "Access is still off. Open System Settings to enable Capso.",
+          );
+          setSystemNoticeIsError(true);
+        }
+      }
+    } catch (error) {
+      setSystemNotice(String(error));
+      setSystemNoticeIsError(true);
+    } finally {
+      setSystemAction(null);
+    }
+  }
+
+  async function toggleLaunchAtLogin() {
+    if (
+      !nativeRuntime ||
+      systemAction !== null ||
+      systemStatus.launchAtLogin === "unavailable"
+    ) {
+      return;
+    }
+
+    setSystemAction("login");
+    setSystemNotice(
+      launchAtLoginEnabled
+        ? "Turning off launch at login…"
+        : "Enabling launch at login…",
+    );
+    setSystemNoticeIsError(false);
+
+    try {
+      const status = await invoke<SystemStatus>(
+        "set_launch_at_login_enabled",
+        { enabled: !launchAtLoginEnabled },
+      );
+      setSystemStatus(status);
+      if (status.launchAtLogin === "requiresApproval") {
+        setSystemNotice("macOS needs your approval in Login Items.");
+        setSystemNoticeIsError(true);
+      } else {
+        setSystemNotice(
+          status.launchAtLogin === "enabled"
+            ? "Capso will start after you log in."
+            : "Capso will only start when you open it.",
+        );
+      }
+    } catch (error) {
+      const message = String(error);
+      try {
+        const status = await invoke<SystemStatus>("get_system_status");
+        setSystemStatus(status);
+      } catch {
+        // Preserve the last known state; the mutation error remains actionable.
+      }
+      setSystemNotice(message);
+      setSystemNoticeIsError(true);
+    } finally {
+      setSystemAction(null);
+    }
+  }
+
+  async function openLoginItemSettings() {
+    if (!nativeRuntime) return;
+    try {
+      await invoke("open_login_item_settings");
+      setSystemNotice(
+        "Login Items opened. Approve Capso, then return here to recheck.",
+      );
+      setSystemNoticeIsError(false);
+    } catch (error) {
+      setSystemNotice(String(error));
+      setSystemNoticeIsError(true);
+    }
+  }
 
   function recordShortcut(
     action: CaptureAction,
@@ -225,12 +387,111 @@ function App() {
       <header className="popover-header">
         <div>
           <p className="eyebrow">Capso capture</p>
-          <h1>Keyboard shortcuts</h1>
+          <h1>Capture settings</h1>
         </div>
-        <span className="status-dot" aria-label="Capso is running" />
+        <span
+          className="status-dot"
+          data-ready={screenRecordingGranted}
+          aria-label={
+            screenRecordingGranted
+              ? "Capso is ready"
+              : "Capso needs Screen Recording access"
+          }
+        />
       </header>
 
-      <section className="shortcut-list" aria-label="Capture shortcuts">
+      <section className="system-card" aria-labelledby="system-heading">
+        <div className="section-heading">
+          <h2 id="system-heading">System readiness</h2>
+          <span data-ready={screenRecordingGranted}>
+            {screenRecordingGranted ? "Ready" : "Action needed"}
+          </span>
+        </div>
+
+        <div className="system-row">
+          <div className="system-copy">
+            <strong>Screen Recording</strong>
+            <span>
+              {screenRecordingGranted
+                ? "Window and full-screen capture enabled"
+                : "Required for windows and full screens"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="compact-button"
+            data-granted={screenRecordingGranted}
+            disabled={
+              !nativeRuntime ||
+              screenRecordingGranted ||
+              systemAction !== null
+            }
+            onClick={handleScreenRecording}
+          >
+            {screenRecordingGranted
+              ? "Granted"
+              : systemAction === "permission"
+                ? "Checking…"
+                : systemStatus.screenRecordingRequestAttempted
+                  ? "Open settings"
+                  : "Grant access"}
+          </button>
+        </div>
+
+        <div className="system-row">
+          <div className="system-copy">
+            <strong>Launch at login</strong>
+            <span>
+              {systemStatus.launchAtLogin === "requiresApproval"
+                ? "Needs approval in Login Items"
+                : systemStatus.launchAtLogin === "enabled"
+                  ? "Starts automatically after login"
+                  : systemStatus.launchAtLogin === "unavailable"
+                    ? "Unavailable outside the installed Mac app"
+                    : "Optional — off until you enable it"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-label="Launch Capso at login"
+            aria-checked={launchAtLoginEnabled}
+            disabled={
+              !nativeRuntime ||
+              systemAction !== null ||
+              systemStatus.launchAtLogin === "unavailable"
+            }
+            onClick={toggleLaunchAtLogin}
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
+
+        {systemStatus.launchAtLogin === "requiresApproval" && (
+          <button
+            type="button"
+            className="settings-link"
+            onClick={openLoginItemSettings}
+          >
+            Open Login Items
+          </button>
+        )}
+
+        <div
+          className="system-notice"
+          data-error={systemNoticeIsError}
+          aria-live="polite"
+        >
+          {systemNotice}
+        </div>
+      </section>
+
+      <section aria-labelledby="shortcuts-heading">
+        <div className="section-heading shortcuts-heading">
+          <h2 id="shortcuts-heading">Keyboard shortcuts</h2>
+        </div>
+        <div className="shortcut-list">
         {SHORTCUT_FIELDS.map(({ action, label, detail }) => (
           <div className="shortcut-row" key={action}>
             <div className="shortcut-copy">
@@ -261,6 +522,7 @@ function App() {
             </button>
           </div>
         ))}
+        </div>
       </section>
 
       <div className="notice" data-error={noticeIsError} aria-live="polite">

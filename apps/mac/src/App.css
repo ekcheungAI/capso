@@ -16,7 +16,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--background);
   color: var(--foreground);
 }
@@ -30,7 +30,7 @@ button {
   padding: 2rem 1rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: 0.75rem;
 }
 
 .popover-header {
@@ -61,8 +61,163 @@ button {
   height: 0.5rem;
   margin-top: 0.45rem;
   border-radius: var(--radius-pill);
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.status-dot[data-ready="true"] {
   background: var(--intent-design-inspiration);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--intent-design-inspiration) 16%, transparent);
+}
+
+.system-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.section-heading {
+  min-height: 2.1rem;
+  padding: 0.55rem 0.75rem 0.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.section-heading h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.section-heading > span {
+  color: var(--danger);
+  font-size: 0.64rem;
+  font-weight: 650;
+}
+
+.section-heading > span[data-ready="true"] {
+  color: var(--intent-design-inspiration);
+}
+
+.system-row {
+  min-height: 3.55rem;
+  padding: 0.62rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.system-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.system-copy strong {
+  font-size: 0.78rem;
+  font-weight: 610;
+}
+
+.system-copy span {
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.compact-button,
+.settings-link {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-input);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.67rem;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.compact-button {
+  flex: 0 0 auto;
+  min-height: 1.9rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.compact-button[data-granted="true"] {
+  color: var(--intent-design-inspiration);
+}
+
+.compact-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 1.28rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--organise-surface);
+  cursor: pointer;
+  transition: background var(--dur-press) ease;
+}
+
+.switch span {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.16rem;
+  width: 0.86rem;
+  height: 0.86rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  transition: transform var(--dur-press) var(--ease-out-strong);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--intent-design-inspiration);
+}
+
+.switch[aria-checked="true"] span {
+  transform: translateX(0.96rem);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-link {
+  margin: -0.2rem 0.75rem 0.55rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.system-notice {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--intent-design-inspiration) 8%, transparent);
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.system-notice[data-error="true"] {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.shortcuts-heading {
+  min-height: 1.75rem;
+  padding: 0 0.25rem 0.35rem;
 }
 
 .shortcut-list {
@@ -73,8 +228,8 @@ button {
 }
 
 .shortcut-row {
-  min-height: 4rem;
-  padding: 0.7rem 0.75rem;
+  min-height: 3.65rem;
+  padding: 0.6rem 0.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;

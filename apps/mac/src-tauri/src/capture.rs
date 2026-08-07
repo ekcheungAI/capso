@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -147,9 +146,7 @@ fn screencapture_args(mode: CaptureMode, output: &Path) -> Vec<OsString> {
 }
 
 fn capture_path(app_data: &Path, capture_id: &str) -> PathBuf {
-    app_data
-        .join("captures")
-        .join(format!("{capture_id}.png"))
+    app_data.join("captures").join(format!("{capture_id}.png"))
 }
 
 fn new_capture_id() -> String {
@@ -166,6 +163,15 @@ pub async fn capture_screen(
     app: AppHandle,
     mode: CaptureMode,
 ) -> Result<CaptureOutcome, CaptureFailure> {
+    if crate::system::permission_for_capture(mode, crate::system::screen_recording_granted())
+        == crate::system::CapturePermission::RequiresScreenRecording
+    {
+        return Err(CaptureFailure {
+            code: "screen_recording_required",
+            message: "Grant Screen Recording to capture windows or the full screen.".into(),
+        });
+    }
+
     let app_data = app.path().app_data_dir().map_err(|error| CaptureFailure {
         code: "storage_unavailable",
         message: format!("Could not locate Capso's data directory: {error}"),
@@ -342,7 +348,10 @@ mod tests {
                 path: expected.to_string_lossy().into_owned(),
             })
         );
-        assert_eq!(fs::read(&expected).expect("stored capture"), b"fake png bytes");
+        assert_eq!(
+            fs::read(&expected).expect("stored capture"),
+            b"fake png bytes"
+        );
 
         fs::remove_dir_all(app_data).expect("clean test capture directory");
     }
