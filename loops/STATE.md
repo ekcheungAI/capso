@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | DUR-01b1: idempotent queue-drain coordinator with a fake transport and reconnect wake seam; no production network/auth changes; CAP-02b remains a foreground manual proof |
+| Next objective | AI-01a: Mac identity/auth handoff and authenticated ingest contract; stop for owner direction before any production-auth change; CAP-02b remains a foreground manual proof |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 06:25 HKT | DUR-01a approved after 1 repair and committed | DUR-01b1 |
+| capso-cleanshot-replacement | hourly | 2026-08-08 06:45 HKT | DUR-01b1 approved after 1 repair and committed | AI-01a |
 
 ## Gate scoreboard
 
@@ -47,7 +47,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | CAP-02 clipboard + <1s overlay | IN_PROGRESS | `3496c82` persists first and writes exact PNG bytes through AppKit; `91e6643` prepares the native overlay only after persistence/clipboard delivery; `8923e90` adds generation-ordered re-copy so stale manual writes cannot replace a newer capture; 59 Rust tests cover byte identity, delayed writes, overlay ordering, and failure isolation | Native general-pasteboard copy/paste QA plus the 20-capture latency proof |
 | OVL-01 overlay experience | IN_PROGRESS | `91e6643` adds the hidden-until-decode 252×194 display-correct overlay; `8923e90` adds exact-current Copy, atomic Save As, Close, and one-shot eight-second hover/action-paused dismissal; `8bd0888` restores recent durable PNGs; `db0ab1e` adds exact copy-only native drag-out with bounded preview and protected-original semantics | Annotate, plus native focus, mixed-scale multi-display, interaction, relaunch-restore, drag/drop, and latency QA |
 | ANN-01 four-tool annotation | IN_PROGRESS | Web editor and 15 annotation tests pass | Wire editor to native capture and pixel proof |
-| DUR-01 durable queue | IN_PROGRESS | `a5c5e80` syncs capture pixels before atomic JSON handoff and proves restart FIFO, orphan reconciliation, exact 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt-store preservation, and zero capture deletion | Fake-transport drain coordinator, connectivity wakeup, then the real three-capture offline/restart/reconnect drill |
+| DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels, atomic restart FIFO/orphan recovery, exact backoff, poison isolation, idempotency, corrupt-store preservation, and zero deletion; `b3b9641` proves a production-compiled single-flight coordinator, exact-ID completion, no-attempt holds, healthy-work isolation, restart idempotency, and error-safe wake handoff against a fake transport | Mac identity/auth, real upload transport plus connectivity/retry wake sources, then the three-capture offline/restart/reconnect drill |
 | HIS-01 reliable history | IN_PROGRESS | `8bd0888` scans the five newest valid durable UUID PNGs at launch and exposes exact-ID native Recent Captures restore without touching the pasteboard | Native relaunch/menu interaction proof, thumbnails, full-library deep links, and queued end-to-end persistence |
 | AI-01 browser-independent processing | BLOCKED | Classification caller is browser-only | Authenticated native ingest + server worker |
 | LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
@@ -71,7 +71,7 @@ outcome that fits the run budget.
 | 7 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions <!-- partial: `8923e90` completes generation-safe Copy, atomic Save As, Close, and hover/action-paused auto-dismiss; `8bd0888` completes durable recent restore; `db0ab1e` completes native copy-only drag-out; Annotate remains and depends on DUR-01a --> | OVL-01a | interaction QA |
 | 8 | CAP-02b — 20-capture overlay latency proof | OVL-01a | foreground test window |
 | 9 | ✅ DUR-01a — synced capture durability plus atomic restart-safe local queue state machine (`a5c5e80`) | CAP-01a | none |
-| 10 | DUR-01b1 — idempotent drain coordinator with fake upload transport, exact acknowledgements, and reconnect wake seam; then DUR-01b2 three-capture offline/restart/reconnect drill | DUR-01a | network toggle QA only for the final drill |
+| 10 | ✅ DUR-01b1 — idempotent single-flight drain coordinator with fake transport, exact acknowledgements, no-attempt holds, and error-safe wake handoff (`b3b9641`); DUR-01b2 real transport/wake wiring plus three-capture offline/restart/reconnect drill remains | DUR-01a, AI-01a for authenticated transport | network toggle QA only for the final drill |
 | 11 | AI-01a — Mac identity/auth handoff and authenticated ingest contract | DUR-01a | auth decision if required |
 | 12 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
 | 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
@@ -104,6 +104,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 05:12 | capso-cleanshot-replacement | OVL-01b2a durable Recent Captures restore | APPROVED after 2 repairs | `8bd0888` | 74/74 Rust and 6/6 Mac tests prove full-decode history filtering, exact UUID revalidation, repeated-path presentation safety, and atomic history/fresh-capture ordering; strict Clippy, root typecheck/lint/build, 78+4 tests, 252×194 history preview QA, fresh debug `.app`, loop validator, and diff/scope checks pass. Native relaunch/menu/focus/pasteboard QA remains; next: OVL-01b2b. |
 | 2026-08-08 05:48 | capso-cleanshot-replacement | OVL-01b2b native Quick Access drag-out | APPROVED after 2 repairs | `db0ab1e` | 84/84 Rust and 10/10 Mac tests prove exact copy proxy bytes, bounded preview, conservative cleanup, single-flight path/presentation ordering, local-calendar naming, and release/repress rejection; strict Clippy, full root verification, dark overlay browser QA, fresh debug `.app`, loop validator, and diff/scope checks pass. Real Finder/AppKit drop, preview, cancel/retention cleanup, source hash, focus, and timer behavior remain manual; next independent objective: DUR-01a. |
 | 2026-08-08 06:25 | capso-cleanshot-replacement | DUR-01a synced durable local queue state machine | APPROVED after 1 repair | `a5c5e80` | 98/98 Rust and 10/10 Mac tests prove file/directory sync boundaries, atomic JSON commit, restart FIFO/orphan recovery, exact interrupted 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt/inconsistent-store preservation, and zero capture deletion; strict Clippy, full root verification, fresh debug `.app`, loop validator, and diff/scope checks pass. Checker repair added end-to-end fsync, orphan reconciliation, and restart backoff. No network drain/auth/AI exists; next: DUR-01b1. |
+| 2026-08-08 06:45 | capso-cleanshot-replacement | DUR-01b1 fake-transport drain coordinator | APPROVED after 1 repair | `b3b9641` | 104/104 Rust tests prove offline/auth holds consume no attempt, reconnect FIFO, exact-ID completion, retry/mismatch healthy-work isolation, restart idempotency, single-flight overlap, and error-safe coalesced wake handoff; strict Clippy, full root verification, fresh debug `.app`, loop validator, and diff/scope checks pass. No production transport/auth/connectivity monitor or real offline drill exists; next: AI-01a. |
 
 ## Discovered technical debt
 
