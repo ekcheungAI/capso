@@ -80,10 +80,11 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
 `codex/capso-cleanshot-replacement`. The next implementation objective is a
-completion slice for the Quick Access interaction layer—connect Annotate, native
-drag-out, and durable recent restore to the approved Copy, Save As, Close, and
-auto-dismiss actions. Mac identity and server-side processing remain hard prerequisites
-before a native capture can learn with every browser closed.
+completion slice for the Quick Access interaction layer—connect native drag-out to the
+approved Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions.
+Annotation follows the durable-queue seam so flattened pixels and upload ownership stay
+unambiguous. Mac identity and server-side processing remain hard prerequisites before a
+native capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
@@ -99,19 +100,21 @@ AppKit clipboard write, with cancellation, concurrency, and recoverable failure 
 tested. Completed captures now also prepare a hidden-until-decode, always-on-top,
 nonfocusable overlay on the correct display through the same direct/tray/global path.
 That overlay now has generation-safe Copy, atomic Save As, Close, and hover/action-paused
-auto-dismiss actions. Annotate, native drag-out, recent restore, and the durable queue
-remain unwired. P2 native capture remains the active risk track under D15's sequencing
-exception.
+auto-dismiss actions. A native Recent Captures submenu now discovers the five newest
+valid durable PNGs across relaunches and restores an exact item to the cursor display
+without changing the pasteboard until Copy. Annotate, native drag-out, and the durable
+queue remain unwired. P2 native capture remains the active risk track under D15's
+sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
-   display-correct overlay with Copy, Save As, Close, and auto-dismiss are tested, but
-   Annotate, native drag-out, recent restore, and the durable Mac queue do not exist.
-   Physical shortcut, clipboard, focus, mixed-scale display, permission, Login Item, and
-   lifecycle QA also remains.
+   display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
+   recent restore are tested, but Annotate, native drag-out, and the durable Mac queue do
+   not exist. Physical shortcut, recent-menu relaunch/selection, clipboard, focus,
+   mixed-scale display, permission, Login Item, and lifecycle QA also remains.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.
@@ -128,7 +131,7 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, and display-only overlay seams work; overlay actions/queue and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, and five-item recent restore work; annotation/drag-out/queue and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |

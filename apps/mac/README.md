@@ -39,7 +39,15 @@ The bundled window is hidden by default, undecorated, non-focusable, always on t
 
 The action footer can re-copy the exact durable PNG, export its exact bytes through an explicit **Save As…** dialog, or close the exact active preview. The overlay auto-dismisses eight seconds after decode; hovering or opening an action pauses the remaining duration rather than restarting it. Presentation/action generations prevent delayed UI responses from changing a newer preview, while the shared clipboard generation is revalidated at the AppKit mutation point so an older manual copy cannot replace newer captured pixels. Save As streams through a same-directory temporary file and atomic rename, so even destination aliases cannot truncate the Application Support PNG. Dismiss and export failures leave those durable pixels untouched and remain retryable.
 
-OVL-01a placement/configuration/ordering/failure proof remains green. OVL-01b1 adds automated exact-action, exact-byte export, failure-retry, and deterministic pause/reset timer proof plus direct 252×194 interaction QA. Native focus preservation, real Copy/Save dialog behavior, two-display placement with mixed scale factors, and perceived appearance latency remain manual QA. Annotate, native drag-out, and durable recent-history restore remain OVL-01b2 and are not claimed here.
+OVL-01a placement/configuration/ordering/failure proof remains green. OVL-01b1 adds automated exact-action, exact-byte export, failure-retry, and deterministic pause/reset timer proof plus direct 252×194 interaction QA. Native focus preservation, real Copy/Save dialog behavior, two-display placement with mixed scale factors, and perceived appearance latency remain manual QA. Annotate and native drag-out remain OVL-01b2 work.
+
+## Recent captures
+
+Every durable capture refreshes a native **Recent Captures** tray submenu. On launch Capso scans `$APPDATA/captures/`, fully decodes candidates, and lists the five newest valid direct-child `<uuid>.png` files with deterministic ordering. Missing directories and corrupt, truncated, symlinked, nested, or noncanonical files are ignored. Menu actions contain only an exact UUID; selection re-resolves and revalidates the regular PNG instead of trusting a path or stale list index.
+
+Selecting history restores that PNG to the overlay on the display containing the cursor. The overlay labels it **Recent capture** and **Ready to copy** because selection leaves the macOS pasteboard unchanged until the user presses **Copy**. A native presentation ID protects repeated restores of the same UUID from delayed callbacks. Clipboard identity and history overlay publication share one transaction, so a concurrent fresh capture either wins first and rejects the restore or follows it and safely supersedes both states.
+
+Automated restart-equivalent disk discovery, full-decode validation, exact-ID resolution, repeated-path callbacks, and both fresh/history ordering directions are covered. Native relaunch population, real tray selection, cursor-display placement, focus preservation, and general-pasteboard behavior still require manual QA before HIS-01 or OVL-01 passes.
 
 ## Global capture entry points
 
