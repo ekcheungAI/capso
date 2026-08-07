@@ -80,7 +80,8 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
 `codex/capso-cleanshot-replacement`. The next implementation objective is a
-non-activating Quick Access-style overlay on the display where capture completed. Mac
+complete Quick Access interaction layer—Copy, Save, Annotate, drag-out, Close,
+auto-dismiss, and recent restore—on the approved non-activating native overlay. Mac
 identity and server-side processing remain hard prerequisites before a native capture
 can learn with every browser closed.
 
@@ -95,16 +96,19 @@ tray fallbacks, Screen Recording preflight/guidance, capture gating, and a defau
 `SMAppService` Login Item control. Its bundle declares menu-bar-only launch behavior and
 macOS 13 minimum support. Successful native captures now persist before an exact-byte
 AppKit clipboard write, with cancellation, concurrency, and recoverable failure contracts
-tested. The overlay and durable queue remain unwired. P2 native capture remains the
-active risk track under D15's sequencing exception.
+tested. Completed captures now also prepare a hidden-until-decode, always-on-top,
+nonfocusable overlay on the correct display through the same direct/tray/global path.
+Overlay actions and the durable queue remain unwired. P2 native capture remains the active
+risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
-   fallbacks, permission-aware menu lifecycle, and persist-first AppKit clipboard path are
-   tested, but the non-activating overlay and durable Mac queue do not exist. Physical
-   shortcut, clipboard, permission, Login Item, and lifecycle QA also remains.
+   fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
+   non-activating display-correct overlay primitive are tested, but Quick Access actions
+   and the durable Mac queue do not exist. Physical shortcut, clipboard, focus,
+   mixed-scale display, permission, Login Item, and lifecycle QA also remains.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.
@@ -121,9 +125,9 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission and AppKit clipboard seams work; overlay/queue and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, and display-only overlay seams work; overlay actions/queue and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
-| P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay integration remains |
+| P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
 | P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |
 | P7 Polish + dogfood gate | 🟡 partial | web annotation and native menu/login/permission guidance exist; full onboarding, native QA, signed DMG and five-day dogfood remain |

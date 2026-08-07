@@ -100,7 +100,7 @@ loop.
 **Tasks:**
 - [ ] Global hotkey (default ⌘⇧5-alternative) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: command seam 01c05d1, conflict-safe defaults/tray fallbacks 056801e, persisted rollback-safe editable bindings d4d2bff, and persist-first exact-byte AppKit clipboard 3496c82 are Checker-approved; physical shortcut/picker/general-pasteboard QA remains -->
 - [x] Screen Recording permission detection + guidance UI; Accessibility is neither needed nor requested (`b507eec`; native grant/revoke QA remains) (specs/permission_model.md)
-- [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer
+- [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer <!-- partial: hidden-until-decode display-only native overlay 91e6643 is Checker-approved; actions, timer, restore, and native focus/multi-display QA remain -->
 - [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01)
 - [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job
 - [ ] Web: drag-drop / paste ingest on `apps/web` hitting the same upload path
