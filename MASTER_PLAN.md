@@ -80,12 +80,13 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
 `codex/capso-cleanshot-replacement`. Native Quick Access drag-out now joins the approved
-Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions. The next
-independent implementation objective is DUR-01a: a restart-safe local queue state machine,
-written test-first. CAP-02b's 20-capture latency proof remains a foreground manual gate.
-The queue seam then gives annotation flattened-pixel ownership and native ingest a durable
-handoff. Mac identity and server-side processing remain hard prerequisites before a native
-capture can learn with every browser closed.
+Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions. `a5c5e80`
+now adds synced capture pixels and an atomic restart-safe local queue. The next independent
+implementation objective is DUR-01b1: an idempotent drain coordinator with a fake upload
+transport and reconnect wake seam, without touching production auth or network state.
+CAP-02b's 20-capture latency proof remains a foreground manual gate. Mac identity,
+authenticated ingest, the reconnect drill, and server-side processing remain hard
+prerequisites before a native capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
@@ -106,8 +107,11 @@ valid durable PNGs across relaunches and restores an exact item to the cursor di
 without changing the pasteboard until Copy. The thumbnail now also starts an exact,
 copy-only native macOS drag using an isolated friendly-name proxy and bounded preview;
 stale, released, re-pressed, and concurrent gestures are rejected without mutating the
-durable UUID original. Annotate and the durable queue remain unwired. P2 native capture
-remains the active risk track under D15's sequencing exception.
+durable UUID original. Every new capture is now file-and-directory synced before an atomic
+JSON queue handoff; restart restores FIFO work, reconciles safe orphan UUID PNGs, and keeps
+retry/poison/idempotency state without deleting local pixels. Annotate and the actual queue
+drain/authenticated upload remain unwired. P2 native capture remains the active risk track
+under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
@@ -115,9 +119,10 @@ Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
    display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
-   recent restore are tested, but Annotate, native drag-out, and the durable Mac queue do
-   not exist. Physical shortcut, recent-menu relaunch/selection, clipboard, focus,
-   mixed-scale display, permission, Login Item, and lifecycle QA also remains.
+   recent restore, native drag-out, and durable local queue are tested, but Annotate and the
+   authenticated reconnecting queue drain do not exist. Physical shortcut, recent-menu
+   relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
+   lifecycle QA also remains.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.
@@ -134,7 +139,7 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, and five-item recent restore work; annotation/drag-out/queue and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, and durable local queue work; annotation, queue drain/authenticated upload, and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |

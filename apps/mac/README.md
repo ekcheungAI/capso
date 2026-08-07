@@ -17,11 +17,12 @@ Successful captures return:
   "status": "captured",
   "path": "…/com.capso.app/captures/<uuid>.png",
   "clipboard": { "status": "copied", "bytes": 123456 },
-  "overlay": { "status": "prepared", "x": 1440, "y": 900 }
+  "overlay": { "status": "prepared", "x": 1440, "y": 900 },
+  "queue": { "status": "enqueued", "id": "<uuid>", "queued": 1 }
 }
 ```
 
-The PNG is durable before Capso attempts the clipboard write. If AppKit rejects that post-capture step, the command remains a successful capture and returns `"clipboard": { "status": "failed", "code", "message" }`; the stored pixels are not deleted or downgraded. Pressing Escape in an interactive picker returns `{ "status": "cancelled" }`, never schedules a clipboard mutation, and is not an error. Storage, launch, empty-output, permission, concurrent-capture, and diagnostic failures reject with `{ "code", "message" }`.
+The PNG file and its containing directory are synced before Capso reports it as durable. Capso then commits the local queue handoff before attempting the clipboard or overlay. If queue persistence, AppKit, or overlay publication fails, the command remains a successful capture and reports that post-capture failure under `queue`, `clipboard`, or `overlay`; stored pixels are never deleted or downgraded. Pressing Escape in an interactive picker returns `{ "status": "cancelled" }`, never schedules a clipboard mutation, and is not an error. Storage, launch, empty-output, permission, concurrent-capture, and diagnostic failures reject with `{ "code", "message" }`.
 
 Mode mapping:
 
@@ -29,7 +30,15 @@ Mode mapping:
 - `window`: macOS interactive window selection only.
 - `fullscreen`: main display capture. Multi-display selection is a later CAP-01 objective.
 
-The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. It then reads and validates that persisted PNG off the UI thread and writes the exact bytes to macOS `NSPasteboard` on the main thread. The user-facing default-on copy toggle, upload queue, and background AI remain separate objectives. Native general-pasteboard copy/paste still requires manual QA.
+The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. It then reads and validates that persisted PNG off the UI thread and writes the exact bytes to macOS `NSPasteboard` on the main thread. The user-facing default-on copy toggle and background AI remain separate objectives. Native general-pasteboard copy/paste still requires manual QA.
+
+## Durable capture queue
+
+Every new native capture is handed to an atomic JSON queue at `$APPDATA/upload-queue.json` immediately after the PNG becomes durable. Each record keeps the capture UUID, protected path, capture source, timestamp, state, attempt count, retry deadline, and last error. Queue updates write and sync a unique sibling temporary file, rename it over the queue document, and sync the containing directory. A failure before rename rolls memory back; a failure after a visible rename is reported but keeps the in-memory record so an exact retry remains idempotent.
+
+Startup validates the whole queue before changing it. Corrupt, unsupported, duplicate, path-unsafe, or internally inconsistent documents are preserved and surface a tray warning instead of being overwritten. Valid interrupted uploads return to the 5-second, 30-second, or 2-minute retry deadline for their attempt; the fourth interrupted/failed attempt becomes terminal and cannot block later FIFO work. Direct, non-empty canonical UUID PNGs left by a crash before handoff are recovered once with an honest `recovered` source. Missing captures remain visible as terminal records. Completed records are never reclaimed, and no queue transition deletes the local PNG.
+
+This slice provides durable local ownership and the state machine only. It does not yet authenticate, upload, monitor connectivity, drain on reconnect, create server processing jobs, or run background AI; those remain DUR-01b/AI-01. Until those paths and their manual offline drill pass, “sync pending” means safely retained on this Mac, not remotely stored.
 
 ## Capture overlay
 
