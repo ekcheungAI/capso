@@ -16,7 +16,8 @@ Successful captures return:
 {
   "status": "captured",
   "path": "…/com.capso.app/captures/<uuid>.png",
-  "clipboard": { "status": "copied", "bytes": 123456 }
+  "clipboard": { "status": "copied", "bytes": 123456 },
+  "overlay": { "status": "prepared", "x": 1440, "y": 900 }
 }
 ```
 
@@ -28,7 +29,15 @@ Mode mapping:
 - `window`: macOS interactive window selection only.
 - `fullscreen`: main display capture. Multi-display selection is a later CAP-01 objective.
 
-The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. It then reads and validates that persisted PNG off the UI thread and writes the exact bytes to macOS `NSPasteboard` on the main thread. This slice copies every completed capture; the user-facing default-on copy toggle, overlay, upload queue, and background AI remain separate objectives. Native general-pasteboard copy/paste still requires manual QA.
+The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. It then reads and validates that persisted PNG off the UI thread and writes the exact bytes to macOS `NSPasteboard` on the main thread. The user-facing default-on copy toggle, upload queue, and background AI remain separate objectives. Native general-pasteboard copy/paste still requires manual QA.
+
+## Capture overlay
+
+Every completed capture prepares the hidden `capture-overlay` webview through the same command path used by direct IPC, tray actions, and global shortcuts. Region and window captures target the display containing the cursor at picker completion; fullscreen captures target the main display to match `screencapture -m`. Rust positions the 252×194 logical-pixel window inside that display's bottom-right work area and updates the latest durable capture. The webview reveals only after the new local PNG has decoded, so a previous thumbnail cannot flash; prepare, exact-path show, and exact-path failure/hide are serialized under one transition lock so stale callbacks cannot race a newer preview. Decode or native show failure keeps the overlay hidden, clears only the matching preview state, and reports the recoverable failure through the tray and `capture-overlay-failed` event while preserving the saved PNG.
+
+The bundled window is hidden by default, undecorated, non-focusable, always on top, visible across workspaces, and excluded from task surfaces by the menu-bar-only app lifecycle. OVL-01a is click-through so its display-only thumbnail cannot block the foreground app; OVL-01b will enable pointer interaction when it adds controls. Its asset protocol can read only `$APPDATA/captures/**`, and its separate capability grants only Tauri event access. Clipboard or overlay delivery failures remain nested post-capture statuses and never downgrade the stored pixels.
+
+OVL-01a has automated placement/configuration/ordering/failure proof and light/dark visual evidence. Native focus preservation, real two-display placement with mixed scale factors, and perceived appearance latency remain manual QA. Copy, Save, Annotate, drag-out, Close, auto-dismiss, and history restore belong to OVL-01b and are not claimed here.
 
 ## Global capture entry points
 

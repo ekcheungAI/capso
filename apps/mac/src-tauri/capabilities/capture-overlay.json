@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-overlay",
+  "description": "Read-only event access for the non-activating capture overlay",
+  "windows": ["capture-overlay"],
+  "permissions": ["core:event:default"]
+}

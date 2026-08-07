@@ -1,5 +1,6 @@
 mod capture;
 mod clipboard;
+mod overlay;
 mod shortcuts;
 mod system;
 
@@ -42,6 +43,7 @@ enum CaptureEvent<'a> {
     Captured {
         path: &'a str,
         clipboard: &'a clipboard::ClipboardStatus,
+        overlay: &'a overlay::OverlayStatus,
     },
     Cancelled,
     Failed {
@@ -54,9 +56,15 @@ fn capture_event(
     result: &Result<capture::CaptureOutcome, capture::CaptureFailure>,
 ) -> CaptureEvent<'_> {
     match result {
-        Ok(capture::CaptureOutcome::Captured { path, clipboard }) => {
-            CaptureEvent::Captured { path, clipboard }
-        }
+        Ok(capture::CaptureOutcome::Captured {
+            path,
+            clipboard,
+            overlay,
+        }) => CaptureEvent::Captured {
+            path,
+            clipboard,
+            overlay,
+        },
         Ok(capture::CaptureOutcome::Cancelled) => CaptureEvent::Cancelled,
         Err(error) => CaptureEvent::Failed {
             code: error.code,
@@ -83,6 +91,12 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
                 }
                 Ok(capture::CaptureOutcome::Captured {
                     clipboard: clipboard::ClipboardStatus::Failed { message, .. },
+                    ..
+                }) => {
+                    let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+                }
+                Ok(capture::CaptureOutcome::Captured {
+                    overlay: overlay::OverlayStatus::Failed { message, .. },
                     ..
                 }) => {
                     let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
@@ -329,6 +343,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
         .manage(Mutex::new(system::PermissionRuntime::default()))
+        .manage(Mutex::new(overlay::OverlayRuntime::default()))
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -359,12 +374,21 @@ pub fn run() {
             request_screen_recording_permission,
             open_screen_recording_settings,
             set_launch_at_login_enabled,
-            open_login_item_settings
+            open_login_item_settings,
+            overlay::get_overlay_capture,
+            overlay::overlay_image_ready,
+            overlay::overlay_image_failed
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // OVL-01a is display-only. Until OVL-01b adds explicit controls,
+            // the thumbnail must not block clicks in the foreground app.
+            if let Some(overlay_window) = app.get_webview_window(overlay::OVERLAY_LABEL) {
+                overlay_window.set_ignore_cursor_events(true)?;
+            }
 
             let loaded = match shortcut_settings_path(app.handle()) {
                 Ok(path) => shortcuts::load_shortcut_settings(&path),
@@ -449,7 +473,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture, clipboard};
+    use super::{capture, clipboard, overlay};
 
     fn event_json(
         result: Result<capture::CaptureOutcome, capture::CaptureFailure>,
@@ -463,11 +487,13 @@ mod tests {
             event_json(Ok(capture::CaptureOutcome::Captured {
                 path: "/tmp/capso/captured.png".into(),
                 clipboard: clipboard::ClipboardStatus::Copied { bytes: 42 },
+                overlay: overlay::OverlayStatus::Prepared { x: 1440, y: 900 },
             })),
             serde_json::json!({
                 "status": "captured",
                 "path": "/tmp/capso/captured.png",
-                "clipboard": { "status": "copied", "bytes": 42 }
+                "clipboard": { "status": "copied", "bytes": 42 },
+                "overlay": { "status": "prepared", "x": 1440, "y": 900 }
             })
         );
     }
@@ -481,6 +507,10 @@ mod tests {
                     code: "clipboard_write_failed",
                     message: "Could not copy the capture".into(),
                 },
+                overlay: overlay::OverlayStatus::Failed {
+                    code: "overlay_unavailable",
+                    message: "The capture overlay window is unavailable.".into(),
+                },
             })),
             serde_json::json!({
                 "status": "captured",
@@ -489,6 +519,11 @@ mod tests {
                     "status": "failed",
                     "code": "clipboard_write_failed",
                     "message": "Could not copy the capture"
+                },
+                "overlay": {
+                    "status": "failed",
+                    "code": "overlay_unavailable",
+                    "message": "The capture overlay window is unavailable."
                 }
             })
         );

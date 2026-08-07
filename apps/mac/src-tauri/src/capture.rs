@@ -30,6 +30,7 @@ pub(crate) enum CaptureOutcome {
     Captured {
         path: String,
         clipboard: crate::clipboard::ClipboardStatus,
+        overlay: crate::overlay::OverlayStatus,
     },
     Cancelled,
 }
@@ -226,10 +227,13 @@ pub(crate) async fn capture_screen(
         StoredCaptureOutcome::Cancelled => Ok(CaptureOutcome::Cancelled),
         StoredCaptureOutcome::Captured { path } => {
             let clipboard =
-                crate::clipboard::copy_png_file_to_general_pasteboard(app, path.clone()).await;
+                crate::clipboard::copy_png_file_to_general_pasteboard(app.clone(), path.clone())
+                    .await;
+            let overlay = crate::overlay::prepare_capture_overlay(&app, mode, &path, &clipboard);
             Ok(CaptureOutcome::Captured {
                 path: path.to_string_lossy().into_owned(),
                 clipboard,
+                overlay,
             })
         }
     }
@@ -242,6 +246,7 @@ mod tests {
         CaptureOutcome, CaptureRunner, ProcessResult, StoredCaptureOutcome,
     };
     use crate::clipboard::ClipboardStatus;
+    use crate::overlay::OverlayStatus;
     use std::{
         ffi::OsString,
         fs, io,
@@ -376,6 +381,7 @@ mod tests {
         let outcome = CaptureOutcome::Captured {
             path: "/tmp/capso/captured.png".into(),
             clipboard: ClipboardStatus::Copied { bytes: 42 },
+            overlay: OverlayStatus::Prepared { x: 1440, y: 900 },
         };
 
         assert_eq!(
@@ -386,6 +392,11 @@ mod tests {
                 "clipboard": {
                     "status": "copied",
                     "bytes": 42
+                },
+                "overlay": {
+                    "status": "prepared",
+                    "x": 1440,
+                    "y": 900
                 }
             })
         );
@@ -399,6 +410,10 @@ mod tests {
                 code: "clipboard_write_failed",
                 message: "Could not copy the capture: pasteboard unavailable".into(),
             },
+            overlay: OverlayStatus::Failed {
+                code: "overlay_unavailable",
+                message: "The capture overlay window is unavailable.".into(),
+            },
         };
 
         assert_eq!(
@@ -410,6 +425,11 @@ mod tests {
                     "status": "failed",
                     "code": "clipboard_write_failed",
                     "message": "Could not copy the capture: pasteboard unavailable"
+                },
+                "overlay": {
+                    "status": "failed",
+                    "code": "overlay_unavailable",
+                    "message": "The capture overlay window is unavailable."
                 }
             })
         );
