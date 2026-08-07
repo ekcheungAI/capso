@@ -16,14 +16,14 @@ pub enum CaptureMode {
     Fullscreen,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CaptureOutcome {
     Captured { path: String },
     Cancelled,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CaptureFailure {
     pub code: &'static str,
     pub message: String,

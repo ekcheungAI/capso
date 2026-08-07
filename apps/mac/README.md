@@ -26,6 +26,20 @@ Mode mapping:
 
 The command runs `/usr/sbin/screencapture` on Tauri's blocking executor and writes pixels into the application-data `captures/` directory before reporting success. Global shortcuts, clipboard output, overlay, upload queue, and background AI are deliberately separate objectives.
 
+## Global capture entry points
+
+Capso registers the three capture shortcuts from Rust at startup:
+
+| Capture | Default | Tray fallback |
+|---|---|---|
+| Region | ⌃⇧C | Capture Region |
+| Window | ⌃⇧W | Capture Window |
+| Main-display fullscreen | ⌃⇧F | Capture Fullscreen |
+
+Shortcut registration is isolated per action. If another app already owns one default, Capso keeps the other shortcuts active, identifies the unavailable shortcut in the tray menu and tooltip, and leaves every capture mode available from the menu. Shortcut presses trigger only once on the key-down event; a small process guard prevents overlapping native pickers.
+
+The plugin is used entirely from Rust, so no global-shortcut commands are exposed to the webview and no frontend capability permission is enabled. The native result is emitted as `capture-finished` for the upcoming clipboard/overlay objective. Configurable bindings and interactive shortcut QA remain required before CAP-01 can pass.
+
 ## Commands
 
 ```bash
