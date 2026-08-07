@@ -79,12 +79,13 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 ## 7. Recommended next action
 
 Run `loops/capso-cleanshot-replacement-loop.md` on
-`codex/capso-cleanshot-replacement`. The next implementation objective is a
-completion slice for the Quick Access interaction layer—connect native drag-out to the
-approved Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions.
-Annotation follows the durable-queue seam so flattened pixels and upload ownership stay
-unambiguous. Mac identity and server-side processing remain hard prerequisites before a
-native capture can learn with every browser closed.
+`codex/capso-cleanshot-replacement`. Native Quick Access drag-out now joins the approved
+Copy, Save As, Close, auto-dismiss, and durable Recent Captures restore actions. The next
+independent implementation objective is DUR-01a: a restart-safe local queue state machine,
+written test-first. CAP-02b's 20-capture latency proof remains a foreground manual gate.
+The queue seam then gives annotation flattened-pixel ownership and native ingest a durable
+handoff. Mac identity and server-side processing remain hard prerequisites before a native
+capture can learn with every browser closed.
 
 ## 8. Status ledger (update after every loop)
 
@@ -102,9 +103,11 @@ nonfocusable overlay on the correct display through the same direct/tray/global 
 That overlay now has generation-safe Copy, atomic Save As, Close, and hover/action-paused
 auto-dismiss actions. A native Recent Captures submenu now discovers the five newest
 valid durable PNGs across relaunches and restores an exact item to the cursor display
-without changing the pasteboard until Copy. Annotate, native drag-out, and the durable
-queue remain unwired. P2 native capture remains the active risk track under D15's
-sequencing exception.
+without changing the pasteboard until Copy. The thumbnail now also starts an exact,
+copy-only native macOS drag using an isolated friendly-name proxy and bounded preview;
+stale, released, re-pressed, and concurrent gestures are rejected without mutating the
+durable UUID original. Annotate and the durable queue remain unwired. P2 native capture
+remains the active risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
