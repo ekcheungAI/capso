@@ -99,7 +99,7 @@ loop.
 
 **Tasks:**
 - [ ] Global hotkey (default ⌘⇧5-alternative) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: command seam 01c05d1, conflict-safe defaults/tray fallbacks 056801e, and persisted rollback-safe editable bindings d4d2bff are Checker-approved; manual QA and clipboard remain -->
-- [ ] Screen Recording / accessibility permission detection + guidance UI (specs/permission_model.md)
+- [x] Screen Recording permission detection + guidance UI; Accessibility is neither needed nor requested (`b507eec`; native grant/revoke QA remains) (specs/permission_model.md)
 - [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer
 - [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01)
 - [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job

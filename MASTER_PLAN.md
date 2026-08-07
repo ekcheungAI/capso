@@ -90,17 +90,19 @@ prerequisites before a native capture can learn with every browser closed.
 ledger's original 2026-07-31 snapshot. Web capture/import, Storage-backed persistence,
 real MiniMax classification, correction few-shot context, projects, review, memory,
 thread chat, lexical retrieval, annotation, and the Chrome extension are implemented.
-The native app now has a tested Tauri command seam plus default global shortcuts and tray
-fallbacks for region, window, and main-display fullscreen capture. Bindings are not yet
-editable, and clipboard, overlay, permissions, and the durable queue remain unwired. P2
+The native app now has a tested Tauri command seam, persisted editable global shortcuts,
+tray fallbacks, Screen Recording preflight/guidance, capture gating, and a default-off
+`SMAppService` Login Item control. Its bundle declares menu-bar-only launch behavior and
+macOS 13 minimum support. Clipboard, overlay, and the durable queue remain unwired. P2
 native capture remains the active risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
 Known blockers:
-1. **Native capture path** — the native command seam, default shortcuts, conflict report,
-   and tray fallbacks are tested, but editable bindings, clipboard, non-activating overlay,
-   permissions flow, and durable Mac queue do not exist.
+1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
+   fallbacks, and permission-aware menu lifecycle are tested, but clipboard,
+   non-activating overlay, and durable Mac queue do not exist. Physical shortcut,
+   permission, Login Item, and lifecycle QA also remains.
 2. **Mac identity + background worker** — browser anonymous auth cannot be transferred to
    the Mac app, and classification is still called by a browser tab rather than a server
    worker. Native captures cannot learn with the web app closed.
@@ -117,10 +119,10 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; Mac auth, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/default-shortcut/tray seams work; editable bindings/clipboard/overlay/queue remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission seams work; clipboard/overlay/queue remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay integration remains |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
 | P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |
-| P7 Polish + dogfood gate | 🟡 partial | web annotation exists; native onboarding, signed DMG and five-day dogfood remain |
+| P7 Polish + dogfood gate | 🟡 partial | web annotation and native menu/login/permission guidance exist; full onboarding, native QA, signed DMG and five-day dogfood remain |
 | P8 Billing | 🅿 parked | build only when external users exist |

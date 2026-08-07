@@ -652,3 +652,18 @@ Verification: shortcut work began with the expected failing compile against the 
 Checker: initial REJECT found that partial rollback could leave stale runtime claims, an unarmed focused recorder still consumed keys, and unhealthy unchanged settings could not retry while a failed save cleared prior conflicts. Repair attempt 1 added registry reconciliation and two partial-failure tests, armed-only input handling with `aria-pressed`, and separate retry health with native status reload. The independent Checker then APPROVED with no P0–P2 findings. Native implementation commit: `d4d2bff`.
 
 CAP-01 remains IN_PROGRESS: physical shortcut recording, relaunch persistence, dispatch from another foreground app, a real CleanShot/other-app conflict, rollback messaging, and native picker behavior were not invoked unattended. Next loop: UX-01a menu-bar lifecycle, opt-in login item, and permission guidance while the manual CAP-01 proof remains pending.
+
+## Loop 33 — Permission-aware menu-bar lifecycle and opt-in login item
+**Date:** 2026-08-08 · **Phase:** P2 / UX-01a · **Outcome:** done; partial UX-01 evidence
+
+Objective: Make Capso reliably available as a menu-bar app, prevent permission-required capture paths from producing blank output, and expose launch at login only after explicit opt-in through Apple's visible Login Items mechanism.
+
+The bundled app now declares `LSUIElement=true`, retains the runtime Accessory activation policy, hides its popover on close, and keeps an explicit tray quit action. Its bundle minimum is macOS 13, matching the approved `SMAppService` contract. Launch at login remains off until the user changes the switch; the native seam reads enabled, disabled, approval-required, and unavailable states, registers/unregisters only after the explicit action, and links to Login Items when macOS requires approval. Tauri's LaunchAgent-based autostart plugin was deliberately not used because it would violate the existing permission model.
+
+Screen Recording preflight is read-only and runs at startup/focus without prompting. Region capture remains available in degraded mode, while Window and Fullscreen are gated before `screencapture` across shortcut, tray, and direct-command paths. A tray/shortcut attempt shows and focuses the permission guidance. The visible **Grant access** action is the only path to the OS request, and a session guard prevents repeated prompts; denial becomes an explicit System Settings action. Accessibility is neither needed nor requested.
+
+Verification: failing-first tests proved the degraded-mode and one-prompt/session policy before implementation. Final Rust suite **28/28 passed**; `cargo fmt -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, root typecheck/lint, web/extension tests (**78 + 4**), Mac production build, debug Tauri `.app`/DMG then app-only rebuild, loop validator (**67 checks + 7 malformed fixtures**), and `git diff --check` passed. Bundle inspection confirmed `LSUIElement=true`, `LSMinimumSystemVersion=13.0`, and CoreGraphics/ServiceManagement linkage. The 360×620 popover passed light/dark Playwright inspection with exact viewport/scroll dimensions, working shortcut recording, and zero console errors. Screenshots were kept outside Git.
+
+Checker: APPROVED with no P0–P2 findings and no repair pass. Implementation commit: `b507eec`.
+
+UX-01 remains IN_PROGRESS: permission grant/revoke, Login Item enable/disable plus relaunch, Dock/app-switcher absence, any-app capture behavior, and signed installed-bundle behavior require manual native QA. The existing `.app`-suffixed identifier/signing warning remains PKG-01a. Next loop: CAP-02a pasteboard write with pixel verification.

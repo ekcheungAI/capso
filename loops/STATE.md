@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | CAP-01c: persist editable shortcut bindings and re-register safely without losing tray fallbacks |
+| Next objective | CAP-02a: copy successful native captures to the pasteboard with pixel verification |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 02:22 HKT | CAP-01c approved after 1 repair and committed | UX-01a |
+| capso-cleanshot-replacement | hourly | 2026-08-08 02:45 HKT | UX-01a approved and committed | CAP-02a |
 
 ## Gate scoreboard
 
@@ -42,7 +42,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 
 | Gate | Status | Current evidence | Next proof |
 |---|---|---|---|
-| UX-01 menu-bar availability | IN_PROGRESS | Tauri tray shell builds; visual behavior unverified | Launch/quit/focus/login-item QA |
+| UX-01 menu-bar availability | IN_PROGRESS | `b507eec` adds `LSUIElement`, Accessory lifecycle, default-off `SMAppService`, Screen Recording preflight/guidance, and a verified 360×620 popover | Native launch/quit/focus, permission, Login Item, relaunch, and Dock/app-switcher QA |
 | CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` defaults/tray fallbacks + `d4d2bff` persisted editable bindings with reconciled rollback; 23 Rust tests | Manual physical recording, relaunch, from-any-app, real conflict, rollback-message, and picker QA |
 | CAP-02 clipboard + <1s overlay | NOT_STARTED | Web simulation only | Native clipboard and timed overlay |
 | OVL-01 overlay experience | NOT_STARTED | Web overlay exists; no native window | Non-activating multi-display panel |
@@ -65,7 +65,7 @@ outcome that fits the run budget.
 | 1 | ✅ CAP-01a — native command seam for region/window/fullscreen plus cancel/error tests (`01c05d1`) | schema/buckets live | none |
 | 2 | ✅ CAP-01b — default global shortcuts, conflict reporting, and tray actions (`056801e`) | CAP-01a | manual shortcut QA |
 | 3 | ✅ CAP-01c — persisted editable bindings and safe shortcut re-registration (`d4d2bff`) | CAP-01b | manual shortcut/conflict QA |
-| 4 | UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance | CAP-01a | permission QA |
+| 4 | ✅ UX-01a — menu-bar lifecycle, opt-in login item, permission detection and guidance (`b507eec`) | CAP-01a | permission/login-item/lifecycle QA |
 | 5 | CAP-02a — pasteboard write with pixel verification | CAP-01a | clipboard QA |
 | 6 | OVL-01a — non-activating overlay on the capture display | CAP-02a | focus + multi-display QA |
 | 7 | OVL-01b — Copy, Save, Annotate, drag-out, Close, auto-dismiss and restore actions | OVL-01a | interaction QA |
@@ -97,6 +97,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 01:34 | capso-cleanshot-replacement | CAP-01a native command seam | APPROVED after 1 repair | `01c05d1` | 10/10 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01b. |
 | 2026-08-08 01:49 | capso-cleanshot-replacement | CAP-01b global shortcuts and tray fallbacks | APPROVED | `056801e` | 14/14 Rust tests; warnings-as-errors, typecheck, lint, 78+4 tests, Mac build, loop validator, and diff check pass. Next: CAP-01c. |
 | 2026-08-08 02:22 | capso-cleanshot-replacement | CAP-01c persisted editable shortcuts and safe re-registration | APPROVED after 1 repair | `d4d2bff` | 23/23 Rust tests; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, Mac and Tauri app builds, 360×480 visual QA, loop validator, and diff/scope checks pass. Manual native QA remains; next: UX-01a. |
+| 2026-08-08 02:45 | capso-cleanshot-replacement | UX-01a menu lifecycle, permissions, and opt-in login item | APPROVED | `b507eec` | 28/28 Rust tests; Clippy warnings-as-errors, root typecheck/lint, 78+4 tests, Mac/Tauri app builds, bundle metadata/link inspection, 360×620 light/dark visual QA, zero overflow/console errors, loop validator, and diff/scope checks pass. Native permission/login/relaunch/Dock QA remains; next: CAP-02a. |
 
 ## Discovered technical debt
 
@@ -105,7 +106,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | P0 | Processing | Native captures cannot classify without an open browser tab. | AI-01b before dogfood. |
 | P0 | Identity | Browser anonymous auth cannot be transferred safely to the Mac app. | AI-01a; owner decision if auth model changes. |
 | P1 | Distribution | Bundle id ends in `.app`; build is ad-hoc signed and fails Gatekeeper. | PKG-01a. |
-| P1 | Permissions | Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 QA. |
+| P1 | Permissions | Preflight/guidance and capture gating are implemented, but Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 manual QA. |
 | P1 | Retrieval | Current search is lexical; embedding column is not used by the client path. | RET-01a. |
 
 ## Blocked owner decisions

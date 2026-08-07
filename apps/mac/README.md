@@ -42,11 +42,22 @@ Left-click the Capso menu-bar icon to edit all three bindings. Each recorder acc
 
 The plugin is used entirely from Rust, so no global-shortcut commands are exposed to the webview and no frontend capability permission is enabled. The native result is emitted as `capture-finished` for the upcoming clipboard/overlay objective. Physical recording, relaunch persistence, any-foreground-app dispatch, real cross-app conflicts, rollback messaging, and picker behavior still require manual QA before CAP-01 can pass.
 
+## Menu lifecycle and macOS permissions
+
+Capso is packaged as an agent app (`LSUIElement=true`), applies Tauri's Accessory activation policy, hides its popover on close, and remains available from the menu bar until **Quit Capso** is chosen. The bundle declares macOS 13 as its minimum because the Login Item control uses Apple's `SMAppService`.
+
+Screen Recording status is checked without prompting at startup and whenever the popover regains focus. Region capture remains available in degraded mode. Window and fullscreen capture are blocked before `/usr/sbin/screencapture` can run, regardless of whether the request came from a shortcut, tray action, or direct Tauri command; a shortcut or tray attempt opens the visible guidance instead of saving blank pixels. The OS prompt only follows an explicit **Grant access** action and is attempted at most once per app session. A denied request becomes an **Open settings** action.
+
+**Launch at login** is off unless the user explicitly enables it. Capso reads, registers, and unregisters the main-app Login Item through `SMAppService`, represents macOS' approval-required state honestly, and provides an explicit route to Login Items. It does not install a hidden LaunchAgent and never requests Accessibility access.
+
+Native permission grant/revoke, Login Item enable/disable plus relaunch, Dock/app-switcher absence, and signed installed-bundle behavior still require manual QA before UX-01 can pass.
+
 ## Commands
 
 ```bash
 pnpm --filter mac typecheck
 pnpm --filter mac build
 cargo test --manifest-path apps/mac/src-tauri/Cargo.toml
-RUSTFLAGS='-D warnings' cargo check --manifest-path apps/mac/src-tauri/Cargo.toml --all-targets
+cargo clippy --manifest-path apps/mac/src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+pnpm --filter mac tauri build --debug --bundles app
 ```
