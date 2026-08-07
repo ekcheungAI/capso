@@ -309,6 +309,24 @@ impl DurableUploadQueue {
         })
     }
 
+    pub(crate) fn mark_held(&mut self, id: &str, message: &str) -> Result<(), String> {
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The queued capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::Uploading || item.attempts == 0 {
+                return Err("Only an active upload attempt can be placed on hold.".into());
+            }
+            item.status = QueueItemStatus::Pending;
+            item.attempts = item.attempts.saturating_sub(1);
+            item.next_attempt_at_ms = None;
+            item.last_error = Some(message.into());
+            Ok(())
+        })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn item(&self, id: &str) -> Option<&QueueItem> {
         self.document.entries.iter().find(|item| item.id == id)
@@ -590,6 +608,69 @@ impl QueueRuntime {
                 .unwrap_or_default(),
             warning: self.warning.clone(),
         }
+    }
+
+    fn unavailable_message(&self) -> String {
+        self.warning
+            .clone()
+            .unwrap_or_else(|| "Capso's upload queue is not initialized.".into())
+    }
+
+    fn record_drain_result<T>(&mut self, result: Result<T, String>) -> Result<T, String> {
+        match result {
+            Ok(value) => {
+                self.warning = None;
+                Ok(value)
+            }
+            Err(error) => {
+                self.warning = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn claim_next(&mut self, now_ms: u64) -> Result<Option<QueueItem>, String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.claim_next(now_ms),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn mark_uploaded(&mut self, id: &str) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.mark_uploaded(id),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn mark_failed(
+        &mut self,
+        id: &str,
+        failed_at_ms: u64,
+        error: &str,
+    ) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.mark_failed(id, failed_at_ms, error),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn mark_held(&mut self, id: &str, message: &str) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.mark_held(id, message),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn drain_summary(&self) -> Result<QueueSummary, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::summary)
+            .ok_or_else(|| self.unavailable_message())
     }
 }
 

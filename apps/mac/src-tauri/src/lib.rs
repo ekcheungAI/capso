@@ -1,6 +1,7 @@
 mod capture;
 mod clipboard;
 mod dragout;
+mod drain;
 mod history;
 mod overlay;
 mod queue;
@@ -445,6 +446,7 @@ pub fn run() {
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
+        .manage(drain::DrainCoordinator::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
