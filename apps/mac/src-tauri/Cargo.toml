@@ -38,6 +38,10 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 # Already present transitively through Tauri; declared directly so capture ids
 # are real UUIDs at the filesystem and ingest boundary.
 uuid = { version = "1", features = ["v4"] }
+# The queue drain is deliberately synchronous inside Tauri's blocking runtime.
+# A bounded blocking client keeps the transport small and prevents network I/O
+# from ever running on the capture/UI executor.
+reqwest = { version = "0.13.4", features = ["blocking"], default-features = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # These bindings expose Apple's own Screen Recording preflight and Login Items

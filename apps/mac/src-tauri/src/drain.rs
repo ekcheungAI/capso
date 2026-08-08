@@ -34,6 +34,7 @@ pub(crate) enum UploadResult {
     Confirmed(UploadAcknowledgement),
     Retryable { message: String },
     Held { message: String },
+    Terminal { message: String },
 }
 
 pub(crate) trait UploadTransport: Send + Sync {
@@ -45,6 +46,7 @@ pub(crate) trait DrainQueue: Send + Sync {
     fn claim_next(&self, now_ms: u64) -> Result<Option<QueueItem>, String>;
     fn mark_uploaded(&self, id: &str) -> Result<(), String>;
     fn mark_failed(&self, id: &str, failed_at_ms: u64, error: &str) -> Result<(), String>;
+    fn mark_terminal(&self, id: &str, error: &str) -> Result<(), String>;
     fn mark_held(&self, id: &str, message: &str) -> Result<(), String>;
     fn summary(&self) -> Result<QueueSummary, String>;
 }
@@ -70,6 +72,12 @@ impl DrainQueue for Mutex<DurableUploadQueue> {
         self.lock()
             .map_err(|_| queue_lock_error())?
             .mark_failed(id, failed_at_ms, error)
+    }
+
+    fn mark_terminal(&self, id: &str, error: &str) -> Result<(), String> {
+        self.lock()
+            .map_err(|_| queue_lock_error())?
+            .mark_terminal(id, error)
     }
 
     fn mark_held(&self, id: &str, message: &str) -> Result<(), String> {
@@ -102,6 +110,12 @@ impl DrainQueue for Mutex<QueueRuntime> {
         self.lock()
             .map_err(|_| queue_lock_error())?
             .mark_failed(id, failed_at_ms, error)
+    }
+
+    fn mark_terminal(&self, id: &str, error: &str) -> Result<(), String> {
+        self.lock()
+            .map_err(|_| queue_lock_error())?
+            .mark_terminal(id, error)
     }
 
     fn mark_held(&self, id: &str, message: &str) -> Result<(), String> {
@@ -273,6 +287,9 @@ impl DrainCoordinator {
                     report.held += 1;
                     report.last_hold = Some(message);
                     break;
+                }
+                UploadResult::Terminal { message } => {
+                    queue.mark_terminal(&item.id, &message)?;
                 }
             }
         }
@@ -590,6 +607,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_transport_rejection_stops_retrying_without_blocking_later_work() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let first = capture(&captures, FIRST_ID);
+        let second = capture(&captures, SECOND_ID);
+        let queue =
+            Mutex::new(DurableUploadQueue::open(&store, &captures, 0).expect("open durable queue"));
+        {
+            let mut queue = queue.lock().expect("queue lock");
+            queue
+                .enqueue(&first, QueueSource::Region, 1)
+                .expect("enqueue first");
+            queue
+                .enqueue(&second, QueueSource::Window, 2)
+                .expect("enqueue second");
+        }
+        let transport = ScriptedTransport::new(
+            TransportAvailability::Ready,
+            vec![
+                UploadResult::Terminal {
+                    message: "The server rejected invalid immutable metadata.".into(),
+                },
+                UploadResult::Confirmed(UploadAcknowledgement {
+                    capture_id: SECOND_ID.into(),
+                }),
+            ],
+        );
+
+        DrainCoordinator::default()
+            .wake(DrainWake::CaptureEnqueued, &queue, &transport, 100)
+            .expect("drain queue");
+        let queue = queue.lock().expect("queue lock");
+        let rejected = queue.item(FIRST_ID).expect("terminal item retained");
+        assert!(rejected.is_terminal());
+        assert_eq!(rejected.next_attempt_at_ms, None);
+        assert_eq!(
+            queue.item(SECOND_ID).expect("healthy item").status,
+            QueueItemStatus::Uploaded
+        );
+        assert!(first.exists() && second.exists());
+    }
+
     #[derive(Debug, Default)]
     struct BlockingTransport {
         gate: (Mutex<(bool, bool)>, Condvar),
@@ -736,6 +797,10 @@ mod tests {
 
         fn mark_failed(&self, _id: &str, _failed_at_ms: u64, _error: &str) -> Result<(), String> {
             panic!("no item can fail in this fixture")
+        }
+
+        fn mark_terminal(&self, _id: &str, _error: &str) -> Result<(), String> {
+            panic!("no item can fail terminally in this fixture")
         }
 
         fn mark_held(&self, _id: &str, _message: &str) -> Result<(), String> {

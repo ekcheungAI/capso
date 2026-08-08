@@ -98,12 +98,13 @@ process-completion-to-native-show durations and surfaces strict `<1s` progress, 
 and maximum evidence in the tray. The physical 20-capture perceived-latency and native
 pasteboard run remains the next foreground gate. The next identity code item is PKG-01a,
 but changing the permanent reverse-DNS identity and entitlement manifest requires owner
-approval. A
-real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
-a production job producer remain hard prerequisites before a native capture can learn
-with every browser closed. Loop 47 now supplies the locally verified one-job Edge worker
-and unapplied atomic jobs migration, but no migration, function, secret, or schedule has
-been changed in production.
+approval. The native client now has a locally verified authenticated Storage/RPC
+transport and an unapplied owner-derived ingest function that atomically produces the
+background job. Supabase code exchange, Keychain session storage, transport/wake
+instantiation, the reconnect drill, and production migration/deployment remain hard
+prerequisites before a native capture can learn with every browser closed. Loop 47
+supplies the locally verified one-job Edge worker and unapplied atomic jobs migration;
+no migration, function, secret, or schedule has been changed in production.
 
 ## 8. Status ledger (update after every loop)
 
@@ -181,9 +182,9 @@ Known blockers:
 | Planning pack | ✅ complete | 2026-07-31 |
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; strict Mac auth contract is compiled, but production session wiring, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
-| P1 Core backend | 🟡 partial | schema/RLS/Storage live; unapplied jobs migration and local Edge worker core exist; job production, Vault/Cron, apply/deploy, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, fake-transport drain coordinator, and authenticated-ingest contract; production auth/transport/wake wiring, offline drill, and native QA remain |
-| P3 OCR/classification | 🟡 partial | browser MiniMax path works; local server worker core now passes 18 Deno tests, but hosted integration and embeddings do not exist |
+| P1 Core backend | 🟡 partial | schema/RLS/Storage live; unapplied jobs + authenticated native-ingest migrations and local Edge worker core exist; production apply, Vault/Cron, generated types and integration proof remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, drain coordinator, and locally verified real Storage/RPC transport; production auth session/transport/wake instantiation, offline drill, and native QA remain |
+| P3 OCR/classification | 🟡 partial | browser MiniMax path works; local server worker/ingest core now passes 19 Deno tests, but hosted integration and embeddings do not exist |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
 | P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |

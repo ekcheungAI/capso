@@ -318,6 +318,24 @@ impl DurableUploadQueue {
         })
     }
 
+    pub(crate) fn mark_terminal(&mut self, id: &str, error: &str) -> Result<(), String> {
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The queued capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::Uploading || item.attempts == 0 {
+                return Err("Only an active upload attempt can be marked terminal.".into());
+            }
+            item.status = QueueItemStatus::Failed;
+            item.attempts = MAX_AUTOMATIC_ATTEMPTS;
+            item.next_attempt_at_ms = None;
+            item.last_error = Some(error.into());
+            Ok(())
+        })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn mark_uploaded(&mut self, id: &str) -> Result<(), String> {
         self.transaction(|document| {
@@ -781,6 +799,14 @@ impl QueueRuntime {
     ) -> Result<(), String> {
         let result = match self.queue.as_mut() {
             Some(queue) => queue.mark_failed(id, failed_at_ms, error),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn mark_terminal(&mut self, id: &str, error: &str) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.mark_terminal(id, error),
             None => Err(self.unavailable_message()),
         };
         self.record_drain_result(result)

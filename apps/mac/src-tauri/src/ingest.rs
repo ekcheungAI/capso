@@ -165,6 +165,10 @@ impl NativeApiErrorEnvelope {
             _ => IngestFailureDisposition::Terminal,
         }
     }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.error.message
+    }
 }
 
 fn deserialize_api_error_message<'de, D>(deserializer: D) -> Result<String, D::Error>

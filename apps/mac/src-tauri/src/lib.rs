@@ -11,6 +11,7 @@ mod overlay;
 mod queue;
 mod shortcuts;
 mod system;
+mod upload;
 
 use serde::Serialize;
 use std::{path::PathBuf, sync::Mutex};
