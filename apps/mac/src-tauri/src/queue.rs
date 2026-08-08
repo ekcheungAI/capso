@@ -52,6 +52,8 @@ pub(crate) struct QueueItem {
     pub(crate) attempts: u8,
     pub(crate) next_attempt_at_ms: Option<u64>,
     pub(crate) last_error: Option<String>,
+    #[serde(default)]
+    pub(crate) annotated: bool,
 }
 
 impl QueueItem {
@@ -179,7 +181,8 @@ impl DurableUploadQueue {
         };
         let recovered = queue.recover_unavailable_sources()
             | queue.recover_interrupted(restart_time_ms)
-            | queue.reconcile_orphaned_captures(restart_time_ms)?;
+            | queue.reconcile_orphaned_captures(restart_time_ms)?
+            | queue.reconcile_annotation_metadata()?;
         if recovered {
             queue.persist().map_err(|error| error.message)?;
         }
@@ -224,6 +227,7 @@ impl DurableUploadQueue {
                     attempts: 0,
                     next_attempt_at_ms: None,
                     last_error: None,
+                    annotated: false,
                 });
                 Ok(())
             },
@@ -236,12 +240,20 @@ impl DurableUploadQueue {
     // them executable under T-UNIT-01 before any auth or network work exists.
     #[allow(dead_code)]
     pub(crate) fn claim_next(&mut self, now_ms: u64) -> Result<Option<QueueItem>, String> {
+        self.claim_next_excluding(now_ms, &HashSet::new())
+    }
+
+    fn claim_next_excluding(
+        &mut self,
+        now_ms: u64,
+        excluded: &HashSet<String>,
+    ) -> Result<Option<QueueItem>, String> {
         let next_index = self
             .document
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.ready_at(now_ms))
+            .filter(|(_, item)| item.ready_at(now_ms) && !excluded.contains(&item.id))
             .min_by(|(_, left), (_, right)| {
                 (left.created_at_ms, left.id.as_str())
                     .cmp(&(right.created_at_ms, right.id.as_str()))
@@ -259,6 +271,21 @@ impl DurableUploadQueue {
             Ok(())
         })?;
         Ok(self.document.entries.get(next_index).cloned())
+    }
+
+    fn mark_annotated(&mut self, id: &str) -> Result<(), String> {
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The queued capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::Pending || item.attempts != 0 {
+                return Err("That capture can no longer be edited before upload.".into());
+            }
+            item.annotated = true;
+            Ok(())
+        })
     }
 
     #[allow(dead_code)]
@@ -429,6 +456,7 @@ impl DurableUploadQueue {
                 last_error: Some(
                     "Recovered a durable capture that was interrupted before queue handoff.".into(),
                 ),
+                annotated: false,
             });
         }
 
@@ -462,6 +490,51 @@ impl DurableUploadQueue {
             }
         }
         recovered
+    }
+
+    fn reconcile_annotation_metadata(&mut self) -> Result<bool, String> {
+        let Some(app_data_directory) = self.capture_directory.parent() else {
+            return Ok(false);
+        };
+        let original_directory = app_data_directory.join("capture-originals");
+        let mut recovered = false;
+
+        for item in &mut self.document.entries {
+            if item.annotated {
+                continue;
+            }
+            let original = original_directory.join(format!("{}.png", item.id));
+            let original_metadata = match fs::symlink_metadata(&original) {
+                Ok(metadata) if metadata.file_type().is_file() && metadata.len() > 0 => metadata,
+                Ok(_) => continue,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "Could not inspect Capso's protected annotation original: {error}"
+                    ));
+                }
+            };
+            let current_metadata = match fs::symlink_metadata(&item.file_path) {
+                Ok(metadata) if metadata.file_type().is_file() && metadata.len() > 0 => metadata,
+                _ => continue,
+            };
+            let differs = if original_metadata.len() != current_metadata.len() {
+                true
+            } else {
+                let original_bytes = fs::read(&original).map_err(|error| {
+                    format!("Could not read Capso's protected annotation original: {error}")
+                })?;
+                let current_bytes = fs::read(&item.file_path).map_err(|error| {
+                    format!("Could not read Capso's annotated capture during recovery: {error}")
+                })?;
+                original_bytes != current_bytes
+            };
+            if differs {
+                item.annotated = true;
+                recovered = true;
+            }
+        }
+        Ok(recovered)
     }
 
     fn transaction<F>(&mut self, mutation: F) -> Result<(), String>
@@ -559,10 +632,12 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 pub(crate) struct QueueRuntime {
     queue: Option<DurableUploadQueue>,
     warning: Option<String>,
+    annotation_reservations: HashSet<String>,
 }
 
 impl QueueRuntime {
     fn initialize(&mut self, queue: Result<DurableUploadQueue, String>) {
+        self.annotation_reservations.clear();
         match queue {
             Ok(queue) => {
                 self.queue = Some(queue);
@@ -631,10 +706,48 @@ impl QueueRuntime {
 
     pub(crate) fn claim_next(&mut self, now_ms: u64) -> Result<Option<QueueItem>, String> {
         let result = match self.queue.as_mut() {
-            Some(queue) => queue.claim_next(now_ms),
+            Some(queue) => queue.claim_next_excluding(now_ms, &self.annotation_reservations),
             None => Err(self.unavailable_message()),
         };
         self.record_drain_result(result)
+    }
+
+    pub(crate) fn begin_annotation(&mut self, source: &Path) -> Result<String, String> {
+        let queue = self
+            .queue
+            .as_ref()
+            .ok_or_else(|| self.unavailable_message())?;
+        let id = capture_id_from_path(&queue.capture_directory, source)?;
+        let item = queue
+            .item(&id)
+            .ok_or_else(|| "That capture is not waiting in Capso's upload queue.".to_string())?;
+        if item.status != QueueItemStatus::Pending || item.attempts != 0 {
+            return Err("That capture can no longer be edited before upload.".into());
+        }
+        if !self.annotation_reservations.insert(id.clone()) {
+            return Err("That capture is already open in the annotation editor.".into());
+        }
+        Ok(id)
+    }
+
+    pub(crate) fn cancel_annotation(&mut self, id: &str) {
+        self.annotation_reservations.remove(id);
+    }
+
+    pub(crate) fn record_annotation(&mut self, id: &str) -> Result<(), String> {
+        if !self.annotation_reservations.contains(id) {
+            return Err("That annotation session is no longer active.".into());
+        }
+        let unavailable = self.unavailable_message();
+        self.queue.as_mut().ok_or(unavailable)?.mark_annotated(id)
+    }
+
+    pub(crate) fn complete_annotation(&mut self, id: &str) -> Result<(), String> {
+        if self.annotation_reservations.remove(id) {
+            Ok(())
+        } else {
+            Err("That annotation session is no longer active.".into())
+        }
     }
 
     pub(crate) fn mark_uploaded(&mut self, id: &str) -> Result<(), String> {
@@ -841,8 +954,8 @@ fn validate_document(document: &QueueDocument, capture_directory: &Path) -> Resu
 #[cfg(test)]
 mod tests {
     use super::{
-        DurableUploadQueue, EnqueueOutcome, QueueItemStatus, QueueSource, MAX_AUTOMATIC_ATTEMPTS,
-        RETRY_DELAYS_MS,
+        DurableUploadQueue, EnqueueOutcome, QueueItemStatus, QueueRuntime, QueueSource,
+        MAX_AUTOMATIC_ATTEMPTS, RETRY_DELAYS_MS,
     };
     use std::{fs, path::Path};
 
@@ -946,6 +1059,103 @@ mod tests {
             first.exists(),
             "queue completion must not delete local pixels"
         );
+    }
+
+    #[test]
+    fn annotation_reservation_blocks_upload_until_flattened_pixels_are_committed() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let source = capture(&captures, FIRST_ID);
+        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        queue
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue capture");
+        let mut runtime = QueueRuntime::default();
+        runtime.initialize(Ok(queue));
+
+        assert_eq!(
+            runtime.begin_annotation(&source).expect("reserve"),
+            FIRST_ID
+        );
+        assert!(runtime.claim_next(1).expect("inspect queue").is_none());
+        runtime
+            .record_annotation(FIRST_ID)
+            .expect("commit annotation record");
+
+        let item = runtime
+            .queue
+            .as_ref()
+            .and_then(|queue| queue.item(FIRST_ID))
+            .expect("queued annotation");
+        assert!(item.annotated);
+        assert_eq!(item.status, QueueItemStatus::Pending);
+        assert!(runtime.claim_next(2).expect("still reserved").is_none());
+        runtime
+            .complete_annotation(FIRST_ID)
+            .expect("release annotation reservation");
+        assert_eq!(
+            runtime
+                .claim_next(3)
+                .expect("claim after annotation")
+                .expect("item")
+                .id,
+            FIRST_ID
+        );
+    }
+
+    #[test]
+    fn cancelling_annotation_releases_the_unmodified_capture() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let source = capture(&captures, FIRST_ID);
+        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        queue
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue capture");
+        let mut runtime = QueueRuntime::default();
+        runtime.initialize(Ok(queue));
+
+        let id = runtime.begin_annotation(&source).expect("reserve");
+        runtime.cancel_annotation(&id);
+        let claimed = runtime
+            .claim_next(1)
+            .expect("claim queue")
+            .expect("capture");
+        assert!(!claimed.annotated);
+    }
+
+    #[test]
+    fn restart_recovers_annotation_metadata_only_after_pixels_changed() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let originals = root.path().join("capture-originals");
+        let store = root.path().join("upload-queue.json");
+        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        let source = capture(&captures, FIRST_ID);
+        queue
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue capture");
+        fs::create_dir_all(&originals).expect("create protected originals");
+        fs::copy(&source, originals.join(format!("{FIRST_ID}.png"))).expect("preserve original");
+        drop(queue);
+
+        let unchanged =
+            DurableUploadQueue::open(&store, &captures, 1).expect("restart before replacement");
+        assert!(!unchanged.item(FIRST_ID).expect("unchanged item").annotated);
+        drop(unchanged);
+
+        fs::write(&source, b"\x89PNG\r\n\x1a\nflattened annotation")
+            .expect("replace canonical pixels");
+        let recovered =
+            DurableUploadQueue::open(&store, &captures, 2).expect("restart after replacement");
+        assert!(recovered.item(FIRST_ID).expect("recovered item").annotated);
+        drop(recovered);
+
+        let durable =
+            DurableUploadQueue::open(&store, &captures, 3).expect("restart persisted metadata");
+        assert!(durable.item(FIRST_ID).expect("durable item").annotated);
     }
 
     #[test]

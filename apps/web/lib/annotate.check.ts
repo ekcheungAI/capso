@@ -85,6 +85,24 @@ test("pixelate covers the whole region it was given", () => {
   assert.equal(ops.filter((o) => o === "blurblock").length, 16);
 });
 
+test("pixelate normalises fractional Retina coordinates before reading pixels", () => {
+  const reads: number[][] = [];
+  const fills: number[][] = [];
+  const context = {
+    strokeStyle: "", fillStyle: "", lineWidth: 0, lineCap: "", lineJoin: "", font: "", textBaseline: "",
+    strokeRect: () => {}, strokeText: () => {}, fillText: () => {},
+    beginPath: () => {}, moveTo: () => {}, lineTo: () => {}, closePath: () => {}, stroke: () => {}, fill: () => {},
+    getImageData: (x: number, y: number, w: number, h: number) => {
+      reads.push([x, y, w, h]);
+      return { data: new Uint8ClampedArray(w * h * 4) };
+    },
+    fillRect: (x: number, y: number, w: number, h: number) => fills.push([x, y, w, h]),
+  } as unknown as CanvasRenderingContext2D;
+  pixelate(context, 10.25, 20.75, 24.4, 12.2, 12);
+  assert.deepEqual(reads, [[10, 20, 25, 13]]);
+  assert.ok(fills.every((rect) => rect.every(Number.isInteger)));
+});
+
 test("pixelate on a degenerate region does nothing rather than throwing", () => {
   const { ops, ctx } = fakeCtx();
   pixelate(ctx, 0, 0, 0, 0);

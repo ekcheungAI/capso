@@ -1,4 +1,4 @@
-export type OverlayActionKind = "copy" | "save" | "drag" | "dismiss";
+export type OverlayActionKind = "annotate" | "copy" | "save" | "drag" | "dismiss";
 
 export type OverlayActionToken = Readonly<{
   actionGeneration: number;

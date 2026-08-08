@@ -10,6 +10,10 @@ use tauri::{AppHandle, Manager};
 
 static CAPTURE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
+pub(crate) fn is_capture_in_progress() -> bool {
+    CAPTURE_IN_PROGRESS.load(Ordering::Acquire)
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CaptureMode {
@@ -233,6 +237,16 @@ fn new_capture_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+fn require_idle_annotation(annotation_active: bool) -> Result<(), CaptureFailure> {
+    if annotation_active {
+        return Err(CaptureFailure {
+            code: "annotation_in_progress",
+            message: "Finish or cancel the open annotation before starting another capture.".into(),
+        });
+    }
+    Ok(())
+}
+
 /// Runs macOS' native picker without occupying Tauri's async command executor.
 ///
 /// Returning `cancelled` is intentional: Escape is a normal user outcome and
@@ -244,6 +258,8 @@ pub(crate) async fn capture_screen(
     mode: CaptureMode,
 ) -> Result<CaptureOutcome, CaptureFailure> {
     let _capture_lease = CaptureLease::try_acquire(&CAPTURE_IN_PROGRESS)?;
+
+    require_idle_annotation(crate::annotation::is_active(&app))?;
 
     if crate::system::permission_for_capture(mode, crate::system::screen_recording_granted())
         == crate::system::CapturePermission::RequiresScreenRecording
@@ -293,8 +309,9 @@ pub(crate) async fn capture_screen(
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_path, classify_capture, screencapture_args, CaptureDurability, CaptureEvidence,
-        CaptureMode, CaptureOutcome, CaptureRunner, ProcessResult, StoredCaptureOutcome,
+        capture_path, classify_capture, require_idle_annotation, screencapture_args,
+        CaptureDurability, CaptureEvidence, CaptureMode, CaptureOutcome, CaptureRunner,
+        ProcessResult, StoredCaptureOutcome,
     };
     use crate::clipboard::ClipboardStatus;
     use crate::overlay::OverlayStatus;
@@ -308,6 +325,14 @@ mod tests {
     };
 
     struct WritingRunner;
+
+    #[test]
+    fn active_annotation_blocks_every_capture_before_the_picker_runs() {
+        let failure = require_idle_annotation(true).expect_err("annotation blocks capture");
+        assert_eq!(failure.code, "annotation_in_progress");
+        assert!(failure.message.contains("Finish or cancel"));
+        assert!(require_idle_annotation(false).is_ok());
+    }
 
     impl CaptureRunner for WritingRunner {
         fn run(&self, args: &[OsString]) -> io::Result<ProcessResult> {

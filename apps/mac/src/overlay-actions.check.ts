@@ -40,3 +40,15 @@ test("a repeated path still receives a new capture generation", () => {
   coordinator.activateCapture("/captures/current.png");
   assert.equal(coordinator.isCurrent(oldAction), false);
 });
+
+test("annotation stays serialized until save or cancel refreshes the presentation", () => {
+  const coordinator = new OverlayActionCoordinator();
+  coordinator.activateCapture("/captures/current.png");
+  const annotate = coordinator.begin("/captures/current.png", "annotate");
+  assert.ok(annotate);
+  assert.equal(coordinator.begin("/captures/current.png", "copy"), null);
+
+  coordinator.activateCapture("/captures/current.png");
+  assert.equal(coordinator.isCurrent(annotate), false);
+  assert.ok(coordinator.begin("/captures/current.png", "copy"));
+});

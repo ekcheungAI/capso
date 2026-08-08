@@ -1,3 +1,4 @@
+mod annotation;
 mod auth;
 mod capture;
 mod clipboard;
@@ -446,6 +447,7 @@ pub fn run() {
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
         .manage(Mutex::new(system::PermissionRuntime::default()))
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
+        .manage(Mutex::new(annotation::AnnotationRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
         .manage(drain::DrainCoordinator::default())
@@ -459,7 +461,7 @@ pub fn run() {
                         .get_webview_window("main")
                         .and_then(|window| window.is_focused().ok())
                         .unwrap_or(false);
-                    if settings_are_focused {
+                    if settings_are_focused || annotation::is_active(app) {
                         return;
                     }
                     let action = app
@@ -488,7 +490,11 @@ pub fn run() {
             overlay::overlay_copy_capture,
             overlay::overlay_save_capture,
             overlay::overlay_start_drag,
-            overlay::overlay_dismiss
+            overlay::overlay_dismiss,
+            annotation::open_annotation_editor,
+            annotation::get_annotation_capture,
+            annotation::cancel_annotation_editor,
+            annotation::save_annotation_editor
         ])
         .setup(|app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
@@ -582,7 +588,13 @@ pub fn run() {
             // Closing the popover hides it — the app lives in the menu bar.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.label() == annotation::ANNOTATION_LABEL {
+                    if annotation::cancel_from_window_close(window.app_handle()) {
+                        let _ = window.hide();
+                    }
+                } else {
+                    let _ = window.hide();
+                }
             } else if let tauri::WindowEvent::Focused(true) = event {
                 let app = window.app_handle();
                 if let Ok(status) = current_system_status(app) {

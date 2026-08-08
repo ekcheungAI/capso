@@ -241,7 +241,7 @@ export function AnnotateEditor({
     // neither a half-drawn shape nor editor chrome can be baked into the image.
     repaint(false);
     try {
-      await onSave(canvas.toDataURL("image/jpeg", 0.9), redacts(marks));
+      await onSave(canvas.toDataURL("image/png"), redacts(marks));
     } finally {
       setSaving(false);
     }

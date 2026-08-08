@@ -2,12 +2,31 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import CaptureOverlay from "./CaptureOverlay";
+import AnnotationEditor from "./AnnotationEditor";
+import { color, type Scheme } from "@capso/shared/tokens";
 
-const surface = new URLSearchParams(window.location.search).get("surface");
+const parameters = new URLSearchParams(window.location.search);
+const surface = parameters.get("surface");
 document.documentElement.dataset.surface = surface ?? "settings";
+
+// Browser-only visual QA can force either canonical token scheme. The native
+// app continues to follow macOS through `prefers-color-scheme`.
+const previewScheme = parameters.get("theme");
+if (!("__TAURI_INTERNALS__" in window) && (previewScheme === "light" || previewScheme === "dark")) {
+  document.documentElement.style.colorScheme = previewScheme;
+  for (const [name, value] of Object.entries(color[previewScheme as Scheme])) {
+    document.documentElement.style.setProperty(`--${name}`, value);
+  }
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {surface === "overlay" ? <CaptureOverlay /> : <App />}
+    {surface === "overlay" ? (
+      <CaptureOverlay />
+    ) : surface === "annotate" ? (
+      <AnnotationEditor />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );

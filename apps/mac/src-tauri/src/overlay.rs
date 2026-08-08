@@ -434,6 +434,110 @@ fn current_capture_path(
         .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
 }
 
+pub(crate) fn annotation_candidate(
+    runtime: &OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+) -> Result<(PathBuf, OverlaySource), String> {
+    runtime
+        .current
+        .as_ref()
+        .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
+        .map(|capture| (PathBuf::from(&capture.path), capture.source))
+        .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
+}
+
+pub(crate) fn hide_for_annotation(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let runtime = app.state::<Mutex<OverlayRuntime>>();
+    let runtime = runtime
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    current_capture_path(&runtime, path, presentation_id)?;
+    window
+        .hide()
+        .map_err(|error| format!("Could not hide the capture overlay for editing: {error}"))
+}
+
+pub(crate) fn restore_after_annotation(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let runtime = app.state::<Mutex<OverlayRuntime>>();
+    let runtime = runtime
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    current_capture_path(&runtime, path, presentation_id)?;
+    window
+        .show()
+        .map_err(|error| format!("Could not restore the capture overlay: {error}"))
+}
+
+fn annotation_refresh_payload(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    clipboard: Option<&ClipboardStatus>,
+) -> Result<(OverlayCapture, OverlayCapture), String> {
+    let previous = runtime
+        .current
+        .as_ref()
+        .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
+        .cloned()
+        .ok_or_else(|| "The annotated capture is no longer active in the overlay.".to_string())?;
+    let payload = runtime.next_capture(
+        path.into(),
+        clipboard
+            .cloned()
+            .unwrap_or_else(|| previous.clipboard.clone()),
+        previous.source,
+    );
+    Ok((previous, payload))
+}
+
+pub(crate) fn refresh_after_annotation(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+    clipboard: Option<&ClipboardStatus>,
+) -> Result<OverlayStatus, String> {
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Err("The capture overlay window is unavailable after annotation.".into());
+    };
+    let state = app.state::<Mutex<OverlayRuntime>>();
+    let position = window.outer_position().ok();
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    let (previous, payload) =
+        annotation_refresh_payload(&mut runtime, path, presentation_id, clipboard)?;
+    window
+        .hide()
+        .map_err(|error| format!("Could not reset the annotated capture preview: {error}"))?;
+    runtime.replace(payload.clone());
+    if let Err(error) = app.emit_to(OVERLAY_LABEL, "overlay-capture", payload) {
+        runtime.replace(previous);
+        let _ = window.show();
+        return Err(format!(
+            "Could not refresh the annotated capture preview: {error}"
+        ));
+    }
+    Ok(OverlayStatus::Prepared {
+        x: position.as_ref().map(|position| position.x).unwrap_or(0),
+        y: position.as_ref().map(|position| position.y).unwrap_or(0),
+    })
+}
+
 fn begin_drag_transition(
     runtime: &mut OverlayRuntime,
     path: &str,
@@ -555,6 +659,12 @@ fn prepare_capture_overlay_transaction(
     path: &Path,
     clipboard: &ClipboardStatus,
 ) -> OverlayStatus {
+    if crate::annotation::is_active(app) {
+        return overlay_failure(
+            "overlay_annotation_active",
+            "Quick Access is still protecting the capture open in Annotate.",
+        );
+    }
     let (window, display) = match overlay_window_and_display(app, mode) {
         Ok(target) => target,
         Err(status) => return status,
@@ -573,26 +683,39 @@ fn prepare_capture_overlay_transaction(
 /// The clipboard status is deliberately `unchanged`: selecting history only
 /// presents the original and Copy remains an explicit user action.
 pub(crate) fn prepare_history_overlay(app: &AppHandle, path: &Path) -> OverlayStatus {
+    if crate::annotation::is_active(app) {
+        return overlay_failure(
+            "overlay_annotation_active",
+            "Finish or cancel the open annotation before restoring another capture.",
+        );
+    }
     let (window, display) = match overlay_window_and_display(app, CaptureMode::Region) {
         Ok(target) => target,
         Err(status) => return status,
     };
     match crate::clipboard::publish_restored_capture(app, path.to_path_buf(), |clipboard| {
-        prepare_overlay(
+        let status = prepare_overlay(
             app,
             &window,
             display,
             path,
             &clipboard,
             OverlaySource::History,
-        )
+        );
+        match status {
+            OverlayStatus::Prepared { .. } => Ok(status),
+            OverlayStatus::Failed { .. } => Err(status),
+        }
     }) {
         Ok(status) => status,
-        Err(ClipboardStatus::Failed { code, message }) => overlay_failure(code, message),
-        Err(_) => overlay_failure(
+        Err(crate::clipboard::RestoredCapturePublicationError::Clipboard(
+            ClipboardStatus::Failed { code, message },
+        )) => overlay_failure(code, message),
+        Err(crate::clipboard::RestoredCapturePublicationError::Clipboard(_)) => overlay_failure(
             "clipboard_restore_failed",
             "Could not prepare that recent capture for copying.",
         ),
+        Err(crate::clipboard::RestoredCapturePublicationError::Publication(status)) => status,
     }
 }
 
@@ -629,6 +752,26 @@ fn prepare_overlay(
             )
         }
     };
+    // Keep this guard until publication commits. An editor may read the old
+    // overlay before we enter this transition, but it cannot establish its
+    // annotation session until the new payload is current. Its later exact
+    // overlay validation will then reject and roll back that stale open.
+    let annotation_state = app.state::<Mutex<crate::annotation::AnnotationRuntime>>();
+    let annotation_runtime = match annotation_state.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return overlay_failure(
+                "overlay_annotation_state_failed",
+                "The annotation editor state is temporarily unavailable.",
+            )
+        }
+    };
+    if annotation_runtime.is_active() {
+        return overlay_failure(
+            "overlay_annotation_active",
+            "Quick Access is still protecting the capture open in Annotate.",
+        );
+    }
     let payload = runtime.next_capture(
         path.to_string_lossy().into_owned(),
         clipboard.clone(),
@@ -653,6 +796,7 @@ fn prepare_overlay(
         return overlay_failure("overlay_event_failed", message);
     }
 
+    drop(annotation_runtime);
     OverlayStatus::Prepared { x, y }
 }
 
@@ -969,6 +1113,14 @@ pub(crate) fn overlay_dismiss(
     presentation_id: u64,
     reason: DismissReason,
 ) -> Result<bool, String> {
+    let annotation_protected = app
+        .state::<Mutex<crate::annotation::AnnotationRuntime>>()
+        .lock()
+        .map_err(|_| "The annotation editor state is temporarily unavailable.".to_string())?
+        .protects_overlay(&path, presentation_id);
+    if annotation_protected {
+        return Ok(false);
+    }
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
@@ -1002,11 +1154,11 @@ pub(crate) fn overlay_dismiss(
 #[cfg(test)]
 mod tests {
     use super::{
-        begin_drag_transition, bottom_right_position, capture_display, capture_matches,
-        current_capture_path, dismiss_transition, display_at_cursor, export_capture,
-        fail_transition, prepare_transition, reveal_transition, DismissTransition, DisplayGeometry,
-        DragGestureState, OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayRuntime,
-        OverlaySource, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
+        annotation_refresh_payload, begin_drag_transition, bottom_right_position, capture_display,
+        capture_matches, current_capture_path, dismiss_transition, display_at_cursor,
+        export_capture, fail_transition, prepare_transition, reveal_transition, DismissTransition,
+        DisplayGeometry, DragGestureState, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
+        OverlayRuntime, OverlaySource, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
         OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
@@ -1213,6 +1365,47 @@ mod tests {
 
         assert_eq!(first.presentation_id, 1);
         assert_eq!(second.presentation_id, 2);
+    }
+
+    #[test]
+    fn annotation_cancel_and_save_refresh_to_a_new_timer_generation() {
+        let path = "/tmp/capso/current.png";
+        let mut cancel_runtime = OverlayRuntime::default();
+        let current = cancel_runtime.next_capture(
+            path.into(),
+            ClipboardStatus::Copied { bytes: 42 },
+            OverlaySource::Capture,
+        );
+        cancel_runtime.replace(current.clone());
+        let (cancel_previous, cancel_payload) =
+            annotation_refresh_payload(&mut cancel_runtime, path, current.presentation_id, None)
+                .expect("cancel refresh");
+        assert_eq!(cancel_previous, current);
+        assert_eq!(cancel_payload.presentation_id, 2);
+        assert_eq!(
+            cancel_payload.clipboard,
+            ClipboardStatus::Copied { bytes: 42 }
+        );
+
+        let mut save_runtime = OverlayRuntime::default();
+        let current = save_runtime.next_capture(
+            path.into(),
+            ClipboardStatus::Unchanged,
+            OverlaySource::Capture,
+        );
+        save_runtime.replace(current.clone());
+        let (_, save_payload) = annotation_refresh_payload(
+            &mut save_runtime,
+            path,
+            current.presentation_id,
+            Some(&ClipboardStatus::Copied { bytes: 84 }),
+        )
+        .expect("save refresh");
+        assert_eq!(save_payload.presentation_id, 2);
+        assert_eq!(
+            save_payload.clipboard,
+            ClipboardStatus::Copied { bytes: 84 }
+        );
     }
 
     #[test]

@@ -36,6 +36,17 @@ html[data-surface="overlay"] #root {
   background: var(--surface);
 }
 
+html[data-surface="annotate"],
+html[data-surface="annotate"] body,
+html[data-surface="annotate"] #root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background);
+}
+
 .capture-overlay {
   width: 100%;
   height: 100%;
@@ -315,6 +326,296 @@ html[data-surface="overlay"] #root {
 
   .capture-overlay__action[data-busy="true"] svg {
     animation: none;
+  }
+}
+
+/* Native four-tool editor. The canvas owns the pixels; everything around it is
+   deliberately ordinary Mac chrome so the capture remains the visual focus. */
+.annotation-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.annotation-loading {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.annotation-toolbar {
+  min-height: 4.4rem;
+  padding: 1.55rem 0.9rem 0.7rem 5.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-app-region: drag;
+}
+
+.annotation-toolbar button {
+  -webkit-app-region: no-drag;
+}
+
+.annotation-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.46rem;
+  padding-right: 0.35rem;
+  white-space: nowrap;
+}
+
+.annotation-brand > span {
+  width: 1rem;
+  height: 1rem;
+  border: 4px solid var(--foreground);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--surface);
+}
+
+.annotation-brand strong {
+  font-size: 0.76rem;
+  font-weight: 660;
+  letter-spacing: -0.01em;
+}
+
+.annotation-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.18rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.72rem;
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+}
+
+.annotation-tool,
+.annotation-icon-button,
+.annotation-cancel,
+.annotation-save {
+  border: 0;
+  border-radius: 0.52rem;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-press) ease,
+    color var(--dur-press) ease,
+    opacity var(--dur-press) ease,
+    transform var(--dur-press) var(--ease-out-strong);
+}
+
+.annotation-tool {
+  min-height: 2rem;
+  padding: 0 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: capitalize;
+}
+
+.annotation-tool svg,
+.annotation-icon-button svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.annotation-tool:hover,
+.annotation-tool:focus-visible,
+.annotation-icon-button:hover:not(:disabled),
+.annotation-icon-button:focus-visible {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+  outline: none;
+}
+
+.annotation-tool[aria-pressed="true"] {
+  background: var(--foreground);
+  color: var(--background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.16);
+}
+
+.annotation-colors {
+  min-width: 7.8rem;
+  padding: 0 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  transition: opacity var(--dur-press) ease;
+}
+
+.annotation-colors[data-hidden="true"] {
+  pointer-events: none;
+  opacity: 0.22;
+}
+
+.annotation-colors button {
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+
+.annotation-colors button[aria-pressed="true"] {
+  border-color: var(--surface);
+  outline: 2px solid var(--foreground);
+  outline-offset: 1px;
+}
+
+.annotation-spacer {
+  flex: 1 1 auto;
+}
+
+.annotation-icon-button {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--muted);
+}
+
+.annotation-cancel,
+.annotation-save {
+  min-height: 2rem;
+  padding: 0.35rem 0.72rem;
+  font-size: 0.69rem;
+  font-weight: 630;
+}
+
+.annotation-cancel {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--foreground);
+}
+
+.annotation-save {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.annotation-icon-button:active:not(:disabled),
+.annotation-cancel:active:not(:disabled),
+.annotation-save:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.annotation-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.annotation-workspace {
+  min-width: 0;
+  min-height: 0;
+  padding: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--surface) 68%, transparent), transparent 56%),
+    var(--organise-surface);
+}
+
+.annotation-canvas-frame {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.annotation-canvas-frame canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100vh - 10rem);
+  border-radius: 0.55rem;
+  background: var(--surface);
+  cursor: crosshair;
+  touch-action: none;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--foreground) 12%, transparent),
+    0 1.4rem 4.5rem rgb(0 0 0 / 0.24),
+    0 0.25rem 1rem rgb(0 0 0 / 0.12);
+}
+
+.annotation-canvas-frame input {
+  position: absolute;
+  z-index: 2;
+  width: 11.5rem;
+  min-height: 2.15rem;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid var(--foreground);
+  border-radius: 0.45rem;
+  outline: 3px solid color-mix(in srgb, var(--foreground) 18%, transparent);
+  background: var(--surface);
+  color: var(--foreground);
+  font: 0.75rem var(--font-ui);
+  box-shadow: 0 0.5rem 1.6rem rgb(0 0 0 / 0.2);
+  transform: translateY(-0.15rem);
+}
+
+.annotation-status {
+  min-height: 2.2rem;
+  padding: 0.55rem 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.annotation-status[data-error="true"] span:first-child {
+  color: var(--danger);
+}
+
+.annotation-status span:last-child {
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .annotation-brand strong,
+  .annotation-tool span {
+    display: none;
+  }
+
+  .annotation-tool {
+    width: 2rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .annotation-colors {
+    min-width: 0;
   }
 }
 

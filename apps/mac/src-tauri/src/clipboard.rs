@@ -17,6 +17,12 @@ pub(crate) enum ClipboardStatus {
     Failed { code: &'static str, message: String },
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum RestoredCapturePublicationError<E> {
+    Clipboard(ClipboardStatus),
+    Publication(E),
+}
+
 pub(crate) trait ClipboardWriter {
     fn write_png(&mut self, png: &[u8]) -> Result<(), String>;
 }
@@ -77,13 +83,29 @@ impl ClipboardRuntime {
         Ok(self.next_ticket(path))
     }
 
-    fn publish_restored_capture<T>(
+    fn publish_restored_capture<T, E>(
         &mut self,
         path: PathBuf,
-        publish: impl FnOnce(ClipboardStatus) -> T,
-    ) -> Result<T, ClipboardStatus> {
-        self.activate_restored_capture(path)?;
-        Ok(publish(ClipboardStatus::Unchanged))
+        publish: impl FnOnce(ClipboardStatus) -> Result<T, E>,
+    ) -> Result<T, RestoredCapturePublicationError<E>> {
+        if self.new_capture_transaction.is_some() {
+            return Err(RestoredCapturePublicationError::Clipboard(
+                clipboard_failure(
+                    "clipboard_capture_in_flight",
+                    "Wait for the new capture to finish copying before restoring history.",
+                ),
+            ));
+        }
+
+        // The caller keeps this runtime locked while it arbitrates overlay and
+        // annotation ownership. Commit clipboard identity only after that
+        // publication wins; a losing or failed publication leaves the previous
+        // capture copyable by both Annotate Save and Quick Access Copy.
+        let published = publish(ClipboardStatus::Unchanged)
+            .map_err(RestoredCapturePublicationError::Publication)?;
+        self.activate_restored_capture(path)
+            .map_err(RestoredCapturePublicationError::Clipboard)?;
+        Ok(published)
     }
 
     fn ticket_for_current(&self, path: &Path) -> Result<ClipboardTicket, ClipboardStatus> {
@@ -290,17 +312,17 @@ pub(crate) fn complete_new_capture_transaction(app: &AppHandle, path: &Path) {
 /// Makes history clipboard identity and overlay publication one lock-held
 /// transaction. A fresh capture either registers first and rejects history, or
 /// waits until history is visible before superseding both clipboard and overlay.
-pub(crate) fn publish_restored_capture<T>(
+pub(crate) fn publish_restored_capture<T, E>(
     app: &AppHandle,
     path: PathBuf,
-    publish: impl FnOnce(ClipboardStatus) -> T,
-) -> Result<T, ClipboardStatus> {
+    publish: impl FnOnce(ClipboardStatus) -> Result<T, E>,
+) -> Result<T, RestoredCapturePublicationError<E>> {
     let state = app.state::<Mutex<ClipboardRuntime>>();
     let mut runtime = state.lock().map_err(|_| {
-        clipboard_failure(
+        RestoredCapturePublicationError::Clipboard(clipboard_failure(
             "clipboard_state_failed",
             "The clipboard state is temporarily unavailable.",
-        )
+        ))
     })?;
     runtime.publish_restored_capture(path, publish)
 }
@@ -328,8 +350,9 @@ pub(crate) async fn recopy_current_capture_to_general_pasteboard(
 mod tests {
     use super::{
         commit_registered_payload, copy_png_file, ClipboardRuntime, ClipboardStatus,
-        ClipboardWriter, PNG_SIGNATURE,
+        ClipboardWriter, RestoredCapturePublicationError, PNG_SIGNATURE,
     };
+    use crate::annotation::AnnotationRuntime;
     use std::{
         fs,
         path::Path,
@@ -616,7 +639,7 @@ mod tests {
                     history_events
                         .send(PublicationEvent::HistoryPublished)
                         .expect("report history publication");
-                    status
+                    Ok::<ClipboardStatus, ()>(status)
                 })
                 .expect("history restore publishes")
         });
@@ -671,6 +694,85 @@ mod tests {
 
         let runtime = runtime.lock().expect("inspect final runtime");
         assert!(runtime.ticket_for_current(&fresh_path).is_ok());
+    }
+
+    #[test]
+    fn annotation_winning_during_history_publication_preserves_fresh_clipboard_identity() {
+        let clipboard = Arc::new(Mutex::new(ClipboardRuntime::default()));
+        let annotation = Arc::new(Mutex::new(AnnotationRuntime::default()));
+        let fresh_path = PathBuf::from("/tmp/capso/fresh.png");
+        let history_path = PathBuf::from("/tmp/capso/history.png");
+        let fresh_ticket = {
+            let mut runtime = clipboard.lock().expect("lock initial clipboard");
+            let ticket = runtime.register_capture(fresh_path.clone());
+            assert!(runtime.complete_new_capture_transaction(&fresh_path));
+            ticket
+        };
+        let (history_entered_sender, history_entered_receiver) = mpsc::sync_channel(1);
+        let (annotation_won_sender, annotation_won_receiver) = mpsc::sync_channel(1);
+
+        let history_clipboard = Arc::clone(&clipboard);
+        let history_annotation = Arc::clone(&annotation);
+        let expected_history_path = history_path.clone();
+        let history = thread::spawn(move || {
+            history_clipboard
+                .lock()
+                .expect("lock history clipboard")
+                .publish_restored_capture(expected_history_path, |status| {
+                    history_entered_sender
+                        .send(())
+                        .expect("report history arbitration");
+                    annotation_won_receiver
+                        .recv()
+                        .expect("wait for annotation winner");
+                    if history_annotation
+                        .lock()
+                        .expect("inspect annotation winner")
+                        .is_active()
+                    {
+                        Err("overlay_annotation_active")
+                    } else {
+                        Ok(status)
+                    }
+                })
+        });
+
+        history_entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("history reaches overlay arbitration");
+        annotation
+            .lock()
+            .expect("activate annotation")
+            .begin(
+                "018f22c4-cada-7c6b-9d5b-fc35f7f9227a".into(),
+                fresh_path.to_string_lossy().into_owned(),
+                7,
+            )
+            .expect("annotation wins the overlay");
+        annotation_won_sender
+            .send(())
+            .expect("release losing history publication");
+
+        assert_eq!(
+            history.join().expect("history worker completes"),
+            Err(RestoredCapturePublicationError::Publication(
+                "overlay_annotation_active"
+            ))
+        );
+        let runtime = clipboard.lock().expect("inspect final clipboard");
+        assert_eq!(
+            runtime
+                .ticket_for_current(&fresh_path)
+                .expect("fresh annotation capture remains copyable"),
+            fresh_ticket
+        );
+        assert!(matches!(
+            runtime.ticket_for_current(&history_path),
+            Err(ClipboardStatus::Failed {
+                code: "clipboard_stale_capture",
+                ..
+            })
+        ));
     }
 
     #[cfg(target_os = "macos")]

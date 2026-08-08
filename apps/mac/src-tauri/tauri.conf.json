@@ -42,6 +42,24 @@
         "shadow": true,
         "acceptFirstMouse": true,
         "dragDropEnabled": false
+      },
+      {
+        "label": "annotation-editor",
+        "title": "Annotate — Capso",
+        "url": "index.html?surface=annotate",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 540,
+        "visible": false,
+        "focus": true,
+        "focusable": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

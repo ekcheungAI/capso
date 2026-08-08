@@ -74,6 +74,15 @@ function CopyIcon() {
   );
 }
 
+function AnnotateIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="m4 16 3.1-.7L15.4 7a1.7 1.7 0 0 0-2.4-2.4l-8.3 8.3L4 16Z" />
+      <path d="m11.8 5.8 2.4 2.4" />
+    </svg>
+  );
+}
+
 function SaveIcon() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -300,6 +309,28 @@ export default function CaptureOverlay() {
     }
   }
 
+  async function annotateCapture() {
+    if (!nativeRuntime || !capture?.path || capture.source === "history") return;
+    const path = capture.path;
+    const presentationId = capture.presentationId;
+    const action = actionCoordinator.current?.begin(path, "annotate");
+    if (!action) return;
+    setBusyAction("annotate");
+    setNoticeIsWarning(false);
+    let opened = false;
+    try {
+      await invoke("open_annotation_editor", { path, presentationId });
+      opened = true;
+    } catch (error) {
+      if (actionCoordinator.current?.isCurrent(action)) {
+        setNotice(`Annotate failed: ${String(error)}`);
+        setNoticeIsWarning(true);
+      }
+    } finally {
+      if (!opened && actionCoordinator.current?.finish(action)) setBusyAction(null);
+    }
+  }
+
   async function saveCapture() {
     if (!nativeRuntime || !capture?.path) return;
     const path = capture.path;
@@ -365,7 +396,9 @@ export default function CaptureOverlay() {
     return <main className="capture-overlay capture-overlay--waiting" aria-hidden="true" />;
   }
 
-  const source = nativeRuntime && capture.path ? convertFileSrc(capture.path) : null;
+  const source = nativeRuntime && capture.path
+    ? `${convertFileSrc(capture.path)}?presentation=${capture.presentationId}`
+    : null;
   const clipboardCopy =
     capture.clipboard.status === "copied"
       ? "Copied to clipboard"
@@ -462,6 +495,17 @@ export default function CaptureOverlay() {
           </small>
         </span>
         <span className="capture-overlay__actions" role="toolbar" aria-label="Capture actions">
+          <button
+            type="button"
+            className="capture-overlay__action"
+            aria-label="Annotate capture"
+            title={isHistory ? "Annotation is available immediately after capture" : "Annotate"}
+            data-busy={busyAction === "annotate"}
+            disabled={busyAction !== null || imageFailed || isHistory}
+            onClick={() => void annotateCapture()}
+          >
+            <AnnotateIcon />
+          </button>
           <button
             type="button"
             className="capture-overlay__action"
