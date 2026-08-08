@@ -86,9 +86,11 @@ production-compiled single-flight drain coordinator with exact-ID acknowledgemen
 error-safe wake handoff proofs. `c3278ba` now adds a strict native PKCE callback seam and
 shared authenticated-ingest request/ack/error contract without caller-supplied ownership.
 Production identity/linking, deep-link registration, Supabase exchange, Keychain storage,
-and real upload remain owner-gated/unwired. The next independent implementation objective
-is ANN-01a, reusing the four-tool editor from the native overlay and flattening before the
-eventual upload. CAP-02b's 20-capture latency proof remains a foreground manual gate. A
+and real upload remain owner-gated/unwired. `42fcfbf` now connects a native four-tool
+annotation editor, preserves the first original, atomically flattens the durable PNG, and
+keeps queue/clipboard/overlay identity aligned across save and retry. The next independent
+implementation objective is ANN-01b, an exact native redaction and flattened-pixel proof.
+CAP-02b's 20-capture latency proof remains a foreground manual gate. A
 real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
 server-side processing remain hard prerequisites before a native capture can learn with
 every browser closed.
@@ -114,8 +116,11 @@ copy-only native macOS drag using an isolated friendly-name proxy and bounded pr
 stale, released, re-pressed, and concurrent gestures are rejected without mutating the
 durable UUID original. Every new capture is now file-and-directory synced before an atomic
 JSON queue handoff; restart restores FIFO work, reconciles safe orphan UUID PNGs, and keeps
-retry/poison/idempotency state without deleting local pixels. Annotate and the actual queue
-drain transport/authenticated upload remain unwired. A production-compiled coordinator now
+retry/poison/idempotency state without deleting local pixels. Quick Access now opens a
+native arrow/box/text/irreversible-pixelate editor that preserves the first original,
+atomically replaces the canonical PNG, records flattened queue pixels, re-copies them, and
+refreshes the exact overlay presentation. The actual queue drain transport/authenticated
+upload remains unwired. A production-compiled coordinator now
 proves exact-ID completion, no-attempt offline/auth holds, FIFO healthy-work isolation,
 single-flight overlap, restart idempotency, and error-safe wake handoff against a fake
 transport. A compiled PKCE/ingest boundary now rejects forged/replayed callbacks, keeps
@@ -130,8 +135,9 @@ Known blockers:
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
    display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
    recent restore, native drag-out, durable local queue, fake-transport drain coordinator,
-   and strict auth/ingest contract are tested, but Annotate and the production authenticated
-   transport/connectivity wake path do not exist. Physical shortcut, recent-menu
+   strict auth/ingest contract, and native four-tool annotation/flattening are tested, but
+   the production authenticated transport/connectivity wake path does not exist. Physical
+   shortcut, recent-menu, annotation pixel/save/copy/relaunch,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
 2. **Mac identity + background worker** — the PKCE/ingest boundary is compiled but browser
@@ -151,10 +157,10 @@ Known blockers:
 | P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; strict Mac auth contract is compiled, but production session wiring, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; jobs/cron worker, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, durable local queue, fake-transport drain coordinator, and authenticated-ingest contract; annotation, production auth/transport/wake wiring, offline drill, and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, fake-transport drain coordinator, and authenticated-ingest contract; production auth/transport/wake wiring, offline drill, and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; server worker and embeddings do not |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
 | P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |
-| P7 Polish + dogfood gate | 🟡 partial | web annotation and native menu/login/permission guidance exist; full onboarding, native QA, signed DMG and five-day dogfood remain |
+| P7 Polish + dogfood gate | 🟡 partial | web/native annotation and native menu/login/permission guidance exist; full onboarding, native QA, signed DMG and five-day dogfood remain |
 | P8 Billing | 🅿 parked | build only when external users exist |
