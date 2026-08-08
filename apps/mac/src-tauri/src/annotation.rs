@@ -792,11 +792,68 @@ mod tests {
         persist_flattened_png_with_hierarchy_sync, validated_tools, AnnotationRuntime,
         AnnotationTool, WindowCloseDisposition, ANNOTATION_LABEL,
     };
+    use crate::{
+        clipboard::{copy_png_file, ClipboardStatus, ClipboardWriter},
+        drain::{
+            DrainCoordinator, DrainWake, TransportAvailability, UploadAcknowledgement,
+            UploadResult, UploadTransport, WakeResult,
+        },
+        queue::{DurableUploadQueue, QueueSource},
+    };
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     use image::{ImageBuffer, Rgba};
-    use std::{cell::RefCell, fs, path::Path};
+    use serde::Deserialize;
+    use std::{cell::RefCell, fs, path::Path, sync::Mutex};
 
     const ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f9227a";
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SharedRedactionFixture {
+        width: u32,
+        height: u32,
+        original_rgba: Vec<u8>,
+        flattened_rgba: Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct ExactClipboard {
+        payload: Vec<u8>,
+    }
+
+    impl ClipboardWriter for ExactClipboard {
+        fn write_png(&mut self, png: &[u8]) -> Result<(), String> {
+            self.payload = png.to_vec();
+            Ok(())
+        }
+    }
+
+    struct ExactUploadTransport {
+        expected: Vec<u8>,
+        uploads: Mutex<Vec<String>>,
+    }
+
+    impl UploadTransport for ExactUploadTransport {
+        fn availability(&self) -> TransportAvailability {
+            TransportAvailability::Ready
+        }
+
+        fn upload(&self, item: &crate::queue::QueueItem) -> UploadResult {
+            assert!(item.annotated, "the transport must see redaction metadata");
+            assert_eq!(
+                fs::read(&item.file_path).expect("read transport payload"),
+                self.expected,
+                "the transport must consume the flattened canonical PNG",
+            );
+            self.uploads
+                .lock()
+                .expect("record transport upload")
+                .push(item.id.clone());
+            UploadResult::Confirmed(UploadAcknowledgement {
+                capture_id: item.id.clone(),
+            })
+        }
+    }
 
     fn png(color: [u8; 4]) -> Vec<u8> {
         let image = ImageBuffer::from_pixel(8, 6, Rgba(color));
@@ -807,6 +864,19 @@ mod tests {
                 image::ImageFormat::Png,
             )
             .expect("encode fixture PNG");
+        bytes
+    }
+
+    fn fixture_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+        let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba.to_vec())
+            .expect("fixture dimensions match RGBA pixels");
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode shared redaction fixture");
         bytes
     }
 
@@ -852,6 +922,89 @@ mod tests {
         );
         assert_eq!(
             fs::read(&first.original_path).expect("read original again"),
+            original
+        );
+    }
+
+    #[test]
+    fn shared_redaction_pixels_survive_save_clipboard_queue_and_restart_exactly() {
+        let fixture: SharedRedactionFixture = serde_json::from_str(include_str!(
+            "../../../../packages/shared/fixtures/annotation-redaction.json"
+        ))
+        .expect("shared redaction fixture");
+        let original = fixture_png(fixture.width, fixture.height, &fixture.original_rgba);
+        let flattened = fixture_png(fixture.width, fixture.height, &fixture.flattened_rgba);
+        assert_ne!(original, flattened);
+        let flattened_data_url = format!("data:image/png;base64,{}", STANDARD.encode(&flattened));
+        let validated_flattened =
+            decode_png_data_url(&flattened_data_url).expect("validate editor PNG data URL");
+        assert_eq!(validated_flattened, flattened);
+        assert_eq!(
+            validated_tools(vec![AnnotationTool::Blur], true).expect("validate redaction record"),
+            vec![AnnotationTool::Blur]
+        );
+
+        let root = tempfile::tempdir().expect("app data");
+        let captures = root.path().join("captures");
+        let originals = root.path().join("capture-originals");
+        let store = root.path().join("upload-queue.json");
+        let source = write_capture(&captures, &original);
+        let mut before_restart =
+            DurableUploadQueue::open(&store, &captures, 100).expect("open upload queue");
+        before_restart
+            .enqueue(&source, QueueSource::Region, 100)
+            .expect("queue unannotated capture");
+
+        let stored = persist_flattened_png(&source, &captures, &originals, &validated_flattened)
+            .expect("persist actual flattened pixels");
+        assert_eq!(fs::read(&source).expect("read canonical PNG"), flattened);
+        assert_eq!(
+            fs::read(&stored.original_path).expect("read protected original"),
+            original
+        );
+        assert_eq!(
+            image::load_from_memory(&fs::read(&source).expect("read flattened PNG"))
+                .expect("decode flattened PNG")
+                .to_rgba8()
+                .into_raw(),
+            fixture.flattened_rgba
+        );
+
+        let mut clipboard = ExactClipboard::default();
+        assert_eq!(
+            copy_png_file(&source, &mut clipboard),
+            ClipboardStatus::Copied {
+                bytes: flattened.len()
+            }
+        );
+        assert_eq!(clipboard.payload, flattened);
+
+        // Model a crash after pixels and clipboard commit but before the queue's
+        // annotation bit commits. Restart must infer the protected-original
+        // difference and hand the exact flattened bytes to the drain boundary.
+        drop(before_restart);
+        let restarted =
+            DurableUploadQueue::open(&store, &captures, 200).expect("restart upload queue");
+        assert!(restarted.item(ID).expect("recovered queue item").annotated);
+        let queue = Mutex::new(restarted);
+        let transport = ExactUploadTransport {
+            expected: flattened.clone(),
+            uploads: Mutex::new(Vec::new()),
+        };
+        let result = DrainCoordinator::default()
+            .wake(DrainWake::Startup, &queue, &transport, 200)
+            .expect("drain recovered annotation");
+        assert!(matches!(result, WakeResult::Ran(report) if report.uploaded == 1));
+        assert_eq!(
+            *transport.uploads.lock().expect("inspect transport uploads"),
+            vec![ID.to_string()]
+        );
+        assert_eq!(
+            fs::read(&source).expect("canonical survives upload"),
+            flattened
+        );
+        assert_eq!(
+            fs::read(originals.join(format!("{ID}.png"))).expect("original survives upload"),
             original
         );
     }
