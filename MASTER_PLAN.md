@@ -93,9 +93,12 @@ exact cross-language golden proof that irreversible redaction survives local sav
 clipboard, queue restart recovery, and drain consumption without restoring source detail.
 `e0b1020` completes HIS-01a's code slice with durable queue timestamps, bounded native
 thumbnails, exact local restore, and an explicit production-library route. The next
-ordered code item is PKG-01a, but changing the permanent reverse-DNS identity and
-entitlement manifest requires owner approval. CAP-02b's 20-capture latency proof remains
-a foreground manual gate. A
+ordered CAP-02b slice, `ec43534`, now records a privacy-safe rolling set of 20 successful
+process-completion-to-native-show durations and surfaces strict `<1s` progress, p50, p90,
+and maximum evidence in the tray. The physical 20-capture perceived-latency and native
+pasteboard run remains the next foreground gate. The next identity code item is PKG-01a,
+but changing the permanent reverse-DNS identity and entitlement manifest requires owner
+approval. A
 real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
 server-side processing remain hard prerequisites before a native capture can learn with
 every browser closed.
@@ -114,7 +117,11 @@ AppKit clipboard write, with cancellation, concurrency, and recoverable failure 
 tested. Completed captures now also prepare a hidden-until-decode, always-on-top,
 nonfocusable overlay on the correct display through the same direct/tray/global path.
 That overlay now has generation-safe Copy, atomic Save As, Close, and hover/action-paused
-auto-dismiss actions. A native Recent Captures submenu now discovers the five newest
+auto-dismiss actions. Successful fresh presentations now also add a privacy-safe
+process-completion-to-native-show duration to a restart-safe rolling set of 20, while the
+tray reports progress and exact p50/p90/maximum values without storing capture identity or
+pixels. This remains instrumentation rather than the physical CAP-02 proof. A native
+Recent Captures submenu now discovers the five newest
 valid durable PNGs, keeps their queue-originated capture time stable across annotation,
 renders bounded native thumbnails, restores an exact item to the cursor display without
 changing the pasteboard until Copy, and explicitly opens the production web library. The
@@ -146,8 +153,9 @@ Known blockers:
    thumbnail history, exact recent restore, Open Library, native drag-out, durable local
    queue, fake-transport drain coordinator,
    strict auth/ingest contract, native four-tool annotation/flattening, and the exact local
-   redaction pixel chain are tested, but
-   the production authenticated transport/connectivity wake path does not exist. Physical
+   redaction pixel chain are tested. A latest-20 overlay speed instrument is also wired,
+   but the physical 20-capture perceived-latency proof remains. The production
+   authenticated transport/connectivity wake path does not exist. Physical
    shortcut, recent-menu thumbnail/relaunch/click/focus, physical annotation
    save/copy/relaunch, downloaded cloud-object,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and

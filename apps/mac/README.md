@@ -60,7 +60,29 @@ The action footer can re-copy the exact durable PNG, export its exact bytes thro
 
 The overlay auto-dismisses eight seconds after decode; hovering or opening an action, including a native drag session, pauses the remaining duration rather than restarting it. Presentation/action generations prevent delayed UI responses from changing a newer preview, while native path/presentation identities make each drag single-flight and exact. The original mouse-down counter must also remain unchanged through off-thread preview preparation, so release or release-then-repress cannot revive a stale drag. The shared clipboard generation is revalidated at the AppKit mutation point so an older manual copy cannot replace newer captured pixels. Save As streams through a same-directory temporary file and atomic rename, so even destination aliases cannot truncate the Application Support PNG. Dismiss, export, and drag failures leave those durable pixels untouched and remain retryable.
 
-OVL-01a placement/configuration/ordering/failure proof remains green. OVL-01b1 adds automated exact-action, exact-byte export, failure-retry, and deterministic pause/reset timer proof; OVL-01b2 adds durable recent restore and native drag-out. Native focus preservation, real Copy/Save/Finder drag behavior, cancel/drop proxy lifecycle, two-display placement with mixed scale factors, and perceived appearance latency remain manual QA. Annotate remains after the durable-queue ownership seam.
+OVL-01a placement/configuration/ordering/failure proof remains green. OVL-01b1 adds automated exact-action, exact-byte export, failure-retry, and deterministic pause/reset timer proof; OVL-01b2 adds durable recent restore and native drag-out. Native focus preservation, real Copy/Save/Finder drag behavior, cancel/drop proxy lifecycle, two-display placement with mixed scale factors, and a physical 20-capture perceived-latency run remain manual QA. Annotate remains after the durable-queue ownership seam.
+
+## Overlay speed evidence
+
+Each successful fresh capture records the duration from the return of the native
+`screencapture` process until the exact decoded image is successfully shown by the native
+overlay. That boundary includes persistence, queue handoff, clipboard delivery, frontend
+decode, and native show work. It is the earliest robust command-line boundary available
+without requesting Accessibility monitoring; it does not claim to measure the user's raw
+mouse-release moment.
+
+Capso keeps only capture mode and duration for the latest 20 successful fresh
+presentations. The rolling store is atomically written to
+`$APPDATA/overlay-latency.json`; it contains no capture ID, path, timestamp, or image data.
+Missing or corrupt evidence recovers safely and produces a generic warning. Stale
+presentations, Recent Captures restores, annotation refreshes, decode failures, and native
+show failures do not create samples.
+
+The tray's **Overlay Speed Check** submenu shows progress plus nearest-rank p50, p90, and
+maximum latency. It passes only when all 20 of the latest 20 samples are strictly below
+1,000 ms. This is instrumentation for CAP-02b, not CAP-02 proof by itself: the foreground
+20-capture perceived-latency run and real general-pasteboard copy/paste test still have to
+pass on the bundled app.
 
 ## Recent captures
 
