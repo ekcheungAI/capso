@@ -3,9 +3,9 @@
 #![allow(dead_code)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt, io::Read, time::Duration};
 use url::Url;
 
 pub(crate) const AUTH_CALLBACK_URI: &str = "capso://auth/callback";
@@ -107,6 +107,453 @@ impl fmt::Display for AuthContractError {
 }
 
 impl Error for AuthContractError {}
+
+const MAX_AUTH_RESPONSE_BYTES: usize = 64 * 1_024;
+const MAX_STORED_SESSION_BYTES: usize = 32 * 1_024;
+const ACCESS_TOKEN_REFRESH_SKEW_MS: u64 = 60_000;
+const MAX_TOKEN_BYTES: usize = 16 * 1_024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SupabaseAuthConfig {
+    pub(crate) url: String,
+    pub(crate) publishable_key: String,
+}
+
+impl SupabaseAuthConfig {
+    fn validate(mut self) -> Result<Self, AuthContractError> {
+        let parsed = Url::parse(&self.url).map_err(|_| {
+            AuthContractError::new(
+                "auth_config_invalid",
+                "Capso's Supabase URL is not a valid secure origin.",
+            )
+        })?;
+        if parsed.scheme() != "https"
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !matches!(parsed.path(), "" | "/")
+            || !(8..=1_024).contains(&self.publishable_key.len())
+            || !self
+                .publishable_key
+                .bytes()
+                .all(|byte| (b'!'..=b'~').contains(&byte))
+        {
+            return Err(AuthContractError::new(
+                "auth_config_invalid",
+                "Capso's public Supabase configuration is incomplete or unsafe.",
+            ));
+        }
+        self.url = self.url.trim_end_matches('/').into();
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthSession {
+    access_token: String,
+    refresh_token: String,
+    user_id: String,
+    expires_at_ms: u64,
+}
+
+impl fmt::Debug for AuthSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthSession")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("user_id", &self.user_id)
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+impl AuthSession {
+    fn validate(&self) -> Result<(), AuthContractError> {
+        if !valid_secret_token(&self.access_token)
+            || !valid_secret_token(&self.refresh_token)
+            || !canonical_uuid(&self.user_id)
+            || self.expires_at_ms == 0
+        {
+            return Err(AuthContractError::new(
+                "auth_session_invalid",
+                "Supabase returned an invalid session; Capso did not save it.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    pub(crate) fn expires_at_ms(&self) -> u64 {
+        self.expires_at_ms
+    }
+
+    pub(crate) fn usable_access_token(&self, now_ms: u64) -> Option<&str> {
+        (self.expires_at_ms.saturating_sub(now_ms) > ACCESS_TOKEN_REFRESH_SKEW_MS)
+            .then_some(self.access_token.as_str())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        access_token: &str,
+        refresh_token: &str,
+        user_id: &str,
+        expires_at_ms: u64,
+    ) -> Self {
+        Self {
+            access_token: access_token.into(),
+            refresh_token: refresh_token.into(),
+            user_id: user_id.into(),
+            expires_at_ms,
+        }
+    }
+}
+
+fn valid_secret_token(value: &str) -> bool {
+    (8..=MAX_TOKEN_BYTES).contains(&value.len())
+        && value.bytes().all(|byte| (b'!'..=b'~').contains(&byte))
+}
+
+fn canonical_uuid(value: &str) -> bool {
+    uuid::Uuid::parse_str(value)
+        .map(|id| id.to_string() == value && (1..=8).contains(&id.get_version_num()))
+        .unwrap_or(false)
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct AuthHttpRequest {
+    pub(crate) method: &'static str,
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) body: Vec<u8>,
+}
+
+impl fmt::Debug for AuthHttpRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthHttpRequest")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("header_names", &self.headers.keys().collect::<Vec<_>>())
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct AuthHttpResponse {
+    pub(crate) status: u16,
+    pub(crate) body: Vec<u8>,
+}
+
+impl fmt::Debug for AuthHttpResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthHttpResponse")
+            .field("status", &self.status)
+            .field("body", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub(crate) trait AuthHttpClient: Send + Sync {
+    fn execute(&self, request: AuthHttpRequest) -> Result<AuthHttpResponse, String>;
+}
+
+#[derive(Debug)]
+pub(crate) struct ReqwestAuthHttpClient {
+    client: reqwest::blocking::Client,
+}
+
+impl ReqwestAuthHttpClient {
+    pub(crate) fn new() -> Result<Self, AuthContractError> {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map(|client| Self { client })
+            .map_err(|_| {
+                AuthContractError::new(
+                    "auth_client_unavailable",
+                    "Capso could not prepare its secure sign-in connection.",
+                )
+            })
+    }
+}
+
+impl AuthHttpClient for ReqwestAuthHttpClient {
+    fn execute(&self, request: AuthHttpRequest) -> Result<AuthHttpResponse, String> {
+        let method = reqwest::Method::from_bytes(request.method.as_bytes())
+            .map_err(|_| "Capso prepared an invalid sign-in request.".to_string())?;
+        let mut builder = self.client.request(method, request.url);
+        for (name, value) in request.headers {
+            builder = builder.header(name, value);
+        }
+        let response = builder
+            .body(request.body)
+            .send()
+            .map_err(|_| "Capso could not reach Supabase Auth.".to_string())?;
+        let status = response.status().as_u16();
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_AUTH_RESPONSE_BYTES as u64)
+        {
+            return Err("Supabase Auth returned an oversized response.".into());
+        }
+        let body = read_bounded(response, MAX_AUTH_RESPONSE_BYTES)?;
+        Ok(AuthHttpResponse { status, body })
+    }
+}
+
+fn read_bounded(reader: impl Read, max_bytes: usize) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(max_bytes.min(8 * 1_024));
+    reader
+        .take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Capso could not read the Supabase Auth response.".to_string())?;
+    if bytes.len() > max_bytes {
+        return Err("Supabase Auth returned an oversized response.".into());
+    }
+    Ok(bytes)
+}
+
+#[derive(Deserialize)]
+struct TokenUser {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    refresh_token: String,
+    token_type: String,
+    expires_in: u64,
+    user: TokenUser,
+}
+
+#[derive(Debug)]
+pub(crate) struct SupabaseAuthClient<C> {
+    config: SupabaseAuthConfig,
+    http: C,
+}
+
+impl<C> SupabaseAuthClient<C> {
+    pub(crate) fn new(config: SupabaseAuthConfig, http: C) -> Result<Self, AuthContractError> {
+        Ok(Self {
+            config: config.validate()?,
+            http,
+        })
+    }
+
+    #[cfg(test)]
+    fn http(&self) -> &C {
+        &self.http
+    }
+}
+
+impl<C: AuthHttpClient> SupabaseAuthClient<C> {
+    pub(crate) fn exchange(
+        &self,
+        exchange: &AuthCodeExchange,
+        now_ms: u64,
+    ) -> Result<AuthSession, AuthContractError> {
+        self.token_request(
+            "pkce",
+            serde_json::json!({
+                "auth_code": exchange.code(),
+                "code_verifier": exchange.code_verifier(),
+            }),
+            now_ms,
+            None,
+        )
+    }
+
+    pub(crate) fn refresh(
+        &self,
+        session: &AuthSession,
+        now_ms: u64,
+    ) -> Result<AuthSession, AuthContractError> {
+        self.token_request(
+            "refresh_token",
+            serde_json::json!({ "refresh_token": session.refresh_token }),
+            now_ms,
+            Some(session.user_id()),
+        )
+    }
+
+    fn token_request(
+        &self,
+        grant: &'static str,
+        body: serde_json::Value,
+        now_ms: u64,
+        expected_user: Option<&str>,
+    ) -> Result<AuthSession, AuthContractError> {
+        let response = self
+            .http
+            .execute(AuthHttpRequest {
+                method: "POST",
+                url: format!("{}/auth/v1/token?grant_type={grant}", self.config.url),
+                headers: BTreeMap::from([
+                    ("apikey".into(), self.config.publishable_key.clone()),
+                    ("content-type".into(), "application/json".into()),
+                    ("accept".into(), "application/json".into()),
+                ]),
+                body: serde_json::to_vec(&body).expect("auth request JSON is serializable"),
+            })
+            .map_err(|_| {
+                AuthContractError::new(
+                    "auth_network_failed",
+                    "Capso could not reach Supabase Auth; try again when online.",
+                )
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(AuthContractError::new(
+                "auth_exchange_rejected",
+                "Supabase rejected the sign-in exchange; start sign-in again.",
+            ));
+        }
+        let token = serde_json::from_slice::<TokenResponse>(&response.body).map_err(|_| {
+            AuthContractError::new(
+                "auth_response_invalid",
+                "Supabase returned an invalid session; Capso did not save it.",
+            )
+        })?;
+        if !token.token_type.eq_ignore_ascii_case("bearer")
+            || !(1..=7 * 24 * 60 * 60).contains(&token.expires_in)
+        {
+            return Err(AuthContractError::new(
+                "auth_response_invalid",
+                "Supabase returned an invalid session; Capso did not save it.",
+            ));
+        }
+        let session = AuthSession {
+            access_token: token.access_token,
+            refresh_token: token.refresh_token,
+            user_id: token.user.id,
+            expires_at_ms: now_ms.saturating_add(token.expires_in.saturating_mul(1_000)),
+        };
+        session.validate()?;
+        if expected_user.is_some_and(|expected| expected != session.user_id()) {
+            return Err(AuthContractError::new(
+                "auth_user_changed",
+                "Supabase refreshed a different account; Capso kept the existing library locked.",
+            ));
+        }
+        Ok(session)
+    }
+}
+
+pub(crate) trait SessionVault: Send + Sync {
+    fn store(&self, bytes: &[u8]) -> Result<(), String>;
+    fn load(&self) -> Result<Option<Vec<u8>>, String>;
+    fn delete(&self) -> Result<(), String>;
+}
+
+#[derive(Debug)]
+pub(crate) struct SessionRepository<V> {
+    vault: V,
+}
+
+impl<V> SessionRepository<V> {
+    pub(crate) fn new(vault: V) -> Self {
+        Self { vault }
+    }
+
+    #[cfg(test)]
+    fn vault(&self) -> &V {
+        &self.vault
+    }
+}
+
+impl<V: SessionVault> SessionRepository<V> {
+    pub(crate) fn save(&self, session: &AuthSession) -> Result<(), String> {
+        session.validate().map_err(|error| error.to_string())?;
+        let bytes = serde_json::to_vec(session)
+            .map_err(|_| "Capso could not encode its secure session.".to_string())?;
+        if bytes.len() > MAX_STORED_SESSION_BYTES {
+            return Err("Capso's secure session exceeded its storage limit.".into());
+        }
+        self.vault.store(&bytes)
+    }
+
+    pub(crate) fn load(&self) -> Result<Option<AuthSession>, String> {
+        let Some(bytes) = self.vault.load()? else {
+            return Ok(None);
+        };
+        if bytes.len() > MAX_STORED_SESSION_BYTES {
+            return Err("Capso's saved session is invalid; sign in again.".into());
+        }
+        let session = serde_json::from_slice::<AuthSession>(&bytes)
+            .map_err(|_| "Capso's saved session is invalid; sign in again.".to_string())?;
+        session
+            .validate()
+            .map_err(|_| "Capso's saved session is invalid; sign in again.".to_string())?;
+        Ok(Some(session))
+    }
+
+    pub(crate) fn delete(&self) -> Result<(), String> {
+        self.vault.delete()
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct KeychainSessionVault;
+
+#[cfg(target_os = "macos")]
+impl SessionVault for KeychainSessionVault {
+    fn store(&self, bytes: &[u8]) -> Result<(), String> {
+        security_framework::passwords::set_generic_password(
+            "Capso Supabase Session",
+            "active-session",
+            bytes,
+        )
+        .map_err(|error| {
+            format!(
+                "Capso could not save its Keychain session ({}).",
+                error.code()
+            )
+        })
+    }
+
+    fn load(&self) -> Result<Option<Vec<u8>>, String> {
+        match security_framework::passwords::get_generic_password(
+            "Capso Supabase Session",
+            "active-session",
+        ) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
+                Ok(None)
+            }
+            Err(error) => Err(format!(
+                "Capso could not read its Keychain session ({}).",
+                error.code()
+            )),
+        }
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        match security_framework::passwords::delete_generic_password(
+            "Capso Supabase Session",
+            "active-session",
+        ) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == security_framework_sys::base::errSecItemNotFound => {
+                Ok(())
+            }
+            Err(error) => Err(format!(
+                "Capso could not delete its Keychain session ({}).",
+                error.code()
+            )),
+        }
+    }
+}
 
 impl AuthRuntime {
     pub(crate) fn begin(&mut self, now_ms: u64) -> Result<AuthStart, AuthContractError> {
@@ -256,7 +703,12 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthRuntime, AuthStart, AUTH_CALLBACK_URI, HANDOFF_TTL_MS};
+    use super::{
+        AuthHttpClient, AuthHttpRequest, AuthHttpResponse, AuthRuntime, AuthSession, AuthStart,
+        SessionRepository, SessionVault, SupabaseAuthClient, SupabaseAuthConfig, AUTH_CALLBACK_URI,
+        HANDOFF_TTL_MS,
+    };
+    use std::{collections::VecDeque, sync::Mutex};
 
     const STATE: &str = "state_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const VERIFIER: &str =
@@ -404,5 +856,222 @@ mod tests {
             .complete_callback(&callback(next_state), 1_003)
             .expect("new flow remains valid");
         assert_eq!(exchange.code_verifier(), next_verifier);
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingAuthHttp {
+        requests: Mutex<Vec<AuthHttpRequest>>,
+        responses: Mutex<VecDeque<Result<AuthHttpResponse, String>>>,
+    }
+
+    impl RecordingAuthHttp {
+        fn responding(response: AuthHttpResponse) -> Self {
+            Self {
+                responses: Mutex::new(VecDeque::from([Ok(response)])),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl AuthHttpClient for RecordingAuthHttp {
+        fn execute(&self, request: AuthHttpRequest) -> Result<AuthHttpResponse, String> {
+            self.requests.lock().expect("request lock").push(request);
+            self.responses
+                .lock()
+                .expect("response lock")
+                .pop_front()
+                .expect("scripted auth response")
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct MemoryVault {
+        bytes: Mutex<Option<Vec<u8>>>,
+    }
+
+    impl SessionVault for MemoryVault {
+        fn store(&self, bytes: &[u8]) -> Result<(), String> {
+            *self.bytes.lock().expect("vault lock") = Some(bytes.to_vec());
+            Ok(())
+        }
+
+        fn load(&self) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.bytes.lock().expect("vault lock").clone())
+        }
+
+        fn delete(&self) -> Result<(), String> {
+            *self.bytes.lock().expect("vault lock") = None;
+            Ok(())
+        }
+    }
+
+    fn auth_config() -> SupabaseAuthConfig {
+        SupabaseAuthConfig {
+            url: "https://capso-test.supabase.co".into(),
+            publishable_key: "sb_publishable_capso_test".into(),
+        }
+    }
+
+    fn token_response(status: u16) -> AuthHttpResponse {
+        AuthHttpResponse {
+            status,
+            body: br#"{
+              "access_token":"header.payload.signature",
+              "token_type":"bearer",
+              "expires_in":3600,
+              "refresh_token":"refresh_0123456789abcdef",
+              "user":{"id":"018f22c4-cada-7c6b-9d5b-fc35f7f92279"}
+            }"#
+            .to_vec(),
+        }
+    }
+
+    fn code_exchange() -> super::AuthCodeExchange {
+        let mut runtime = AuthRuntime::default();
+        begin(&mut runtime, 1_000);
+        runtime
+            .complete_callback(&callback(STATE), 1_001)
+            .expect("valid code exchange")
+    }
+
+    #[test]
+    fn pkce_exchange_sends_only_public_config_and_returns_a_redacted_bounded_session() {
+        let http = RecordingAuthHttp::responding(token_response(200));
+        let client = SupabaseAuthClient::new(auth_config(), http).expect("auth client");
+        let session = client
+            .exchange(&code_exchange(), 10_000)
+            .expect("PKCE token exchange");
+
+        assert_eq!(session.user_id(), "018f22c4-cada-7c6b-9d5b-fc35f7f92279");
+        assert_eq!(session.expires_at_ms(), 3_610_000);
+        assert_eq!(
+            session.usable_access_token(3_549_999),
+            Some("header.payload.signature")
+        );
+        assert_eq!(session.usable_access_token(3_550_000), None);
+        let debug = format!("{session:?}");
+        assert!(!debug.contains("header.payload.signature"));
+        assert!(!debug.contains("refresh_0123456789abcdef"));
+        assert!(debug.contains("REDACTED"));
+
+        let requests = client.http().requests.lock().expect("request lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(
+            requests[0].url,
+            "https://capso-test.supabase.co/auth/v1/token?grant_type=pkce"
+        );
+        assert_eq!(
+            requests[0].headers.get("apikey").map(String::as_str),
+            Some("sb_publishable_capso_test")
+        );
+        assert!(!requests[0].headers.contains_key("authorization"));
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[0].body).expect("request JSON");
+        assert_eq!(body["auth_code"], CODE);
+        assert_eq!(body["code_verifier"], VERIFIER);
+        assert_eq!(body.as_object().expect("object").len(), 2);
+        let request_debug = format!("{:?}", requests[0]);
+        assert!(!request_debug.contains(CODE));
+        assert!(!request_debug.contains(VERIFIER));
+        let verifier_bytes = VERIFIER
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(!request_debug.contains(&verifier_bytes));
+        let response_debug = format!("{:?}", token_response(200));
+        assert!(!response_debug.contains("header.payload.signature"));
+        assert!(!response_debug.contains("refresh_0123456789abcdef"));
+        let refresh_bytes = "refresh_0123456789abcdef"
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(!response_debug.contains(&refresh_bytes));
+    }
+
+    #[test]
+    fn refresh_rotates_the_session_and_accepts_any_successful_2xx_status() {
+        let http = RecordingAuthHttp::responding(token_response(201));
+        let client = SupabaseAuthClient::new(auth_config(), http).expect("auth client");
+        let old = AuthSession::for_test(
+            "old.access.token",
+            "old_refresh_token",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            10,
+        );
+        let refreshed = client.refresh(&old, 20_000).expect("refresh session");
+        assert_eq!(refreshed.expires_at_ms(), 3_620_000);
+
+        let requests = client.http().requests.lock().expect("request lock");
+        assert_eq!(
+            requests[0].url,
+            "https://capso-test.supabase.co/auth/v1/token?grant_type=refresh_token"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[0].body).expect("refresh JSON");
+        assert_eq!(
+            body,
+            serde_json::json!({ "refresh_token": "old_refresh_token" })
+        );
+    }
+
+    #[test]
+    fn provider_failures_and_malformed_tokens_never_expose_remote_bodies_or_partial_sessions() {
+        let secret = "SUPER_SECRET_PROVIDER_BODY";
+        let client = SupabaseAuthClient::new(
+            auth_config(),
+            RecordingAuthHttp::responding(AuthHttpResponse {
+                status: 400,
+                body: secret.as_bytes().to_vec(),
+            }),
+        )
+        .expect("auth client");
+        let error = client
+            .exchange(&code_exchange(), 10_000)
+            .expect_err("provider rejection");
+        assert!(!error.to_string().contains(secret));
+
+        let malformed = SupabaseAuthClient::new(
+            auth_config(),
+            RecordingAuthHttp::responding(AuthHttpResponse {
+                status: 200,
+                body: br#"{"access_token":"x","refresh_token":"y","expires_in":0,"token_type":"bearer","user":{"id":"attacker"}}"#.to_vec(),
+            }),
+        )
+        .expect("auth client");
+        assert!(malformed.exchange(&code_exchange(), 10_000).is_err());
+    }
+
+    #[test]
+    fn session_repository_round_trips_exact_secrets_and_rejects_corrupt_keychain_data() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        let session = AuthSession::for_test(
+            "header.payload.signature",
+            "refresh_0123456789abcdef",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            3_610_000,
+        );
+        repository.save(&session).expect("save session");
+        assert_eq!(repository.load().expect("load session"), Some(session));
+        repository.delete().expect("delete session");
+        assert_eq!(repository.load().expect("deleted session"), None);
+
+        repository
+            .vault()
+            .store(br#"{"access_token":"leaked-but-corrupt"}"#)
+            .expect("seed corrupt record");
+        let error = repository.load().expect_err("corrupt record rejected");
+        assert!(!error.contains("leaked-but-corrupt"));
+    }
+
+    #[test]
+    fn chunked_auth_responses_are_stopped_before_crossing_the_memory_limit() {
+        assert_eq!(
+            super::read_bounded(std::io::Cursor::new(b"exact"), 5).expect("exact bound"),
+            b"exact"
+        );
+        assert!(super::read_bounded(std::io::Cursor::new(b"oversized"), 8).is_err());
     }
 }

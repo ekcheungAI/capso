@@ -51,7 +51,7 @@ authenticated native ingest and browser-independent processing are complete.
 **Tasks:**
 - [x] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas) <!-- loop 01; Next 16.2.12 shipped by create-next-app, see BUILD_LOG deviation -->
 - [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed <!-- partial: .env.example done (loop 01); project creation BLOCKED on owner, STOP rules 3+4 -->
-- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves a strict native-origin PKCE callback and shared authenticated-ingest contract; the native client now compiles a real JWT-authenticated Storage/RPC adapter, but deep-link registration, Supabase exchange, Keychain session, anonymous-library linking, production apply, and runtime instantiation remain -->
+- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves the strict native-origin callback/contract; the native core now performs bounded PKCE exchange + rotating refresh, persists the exact redacted session through macOS Keychain, and supplies only fresh JWTs to the Storage/RPC adapter. Identity choice, email/provider UI, deep-link registration/delivery, Keychain runtime instantiation, anonymous-library linking, and production apply remain -->
 - [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
 
 - [x] Vercel deploy of `apps/web` <!-- production deployed in BUILD_LOG loop 20; real app, not empty shell -->

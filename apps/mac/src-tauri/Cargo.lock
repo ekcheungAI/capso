@@ -2195,6 +2195,8 @@ dependencies = [
  "objc2-foundation",
  "objc2-service-management",
  "reqwest",
+ "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "sha2",

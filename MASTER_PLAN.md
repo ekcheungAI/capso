@@ -100,15 +100,17 @@ pasteboard run remains the next foreground gate. The next identity code item is 
 but changing the permanent reverse-DNS identity and entitlement manifest requires owner
 approval. The native client now has a locally verified authenticated Storage/RPC
 transport and an unapplied owner-derived ingest function that atomically produces the
-background job. Supabase code exchange, Keychain session storage, transport/wake
-instantiation, the reconnect drill, and production migration/deployment remain hard
-prerequisites before a native capture can learn with every browser closed. Loop 47
+background job. The macOS core now also performs bounded PKCE code exchange and refresh,
+stores the rotating session through a Keychain adapter, and converts only a fresh access
+token into upload credentials. Deep-link/UI delivery, owner identity selection,
+transport/wake instantiation, the reconnect drill, and production migration/deployment
+remain hard prerequisites before a native capture can learn with every browser closed. Loop 47
 supplies the locally verified one-job Edge worker and unapplied atomic jobs migration;
 no migration, function, secret, or schedule has been changed in production.
 
 ## 8. Status ledger (update after every loop)
 
-**Current status (2026-08-08):** the web/Supabase demo track advanced far beyond this
+**Current status (2026-08-09):** the web/Supabase demo track advanced far beyond this
 ledger's original 2026-07-31 snapshot. Web capture/import, Storage-backed persistence,
 real MiniMax classification, correction few-shot context, projects, review, memory,
 thread chat, lexical retrieval, annotation, and the Chrome extension are implemented.
@@ -180,7 +182,7 @@ Known blockers:
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; strict Mac auth contract is compiled, but production session wiring, CI and telemetry remain |
+| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; native PKCE exchange/refresh and Keychain persistence are locally verified, but identity UI/deep-link/runtime wiring, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; unapplied jobs + authenticated native-ingest migrations and local Edge worker core exist; production apply, Vault/Cron, generated types and integration proof remain |
 | P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, drain coordinator, and locally verified real Storage/RPC transport; production auth session/transport/wake instantiation, offline drill, and native QA remain |

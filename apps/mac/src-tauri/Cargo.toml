@@ -54,6 +54,10 @@ objc2-service-management = { version = "0.3.2", default-features = false, featur
 # Small native drag-session adapter maintained by the Tauri ecosystem. Its
 # macOS dependency family is already present through Tauri/objc2.
 drag = "2.1.1"
+# Small secrets such as the rotating Supabase refresh token belong in the
+# user's encrypted login Keychain, never JSON under Application Support.
+security-framework = "3.7.0"
+security-framework-sys = "2.17.0"
 
 [dev-dependencies]
 tempfile = "3"

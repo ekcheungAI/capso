@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::{
+    auth::{AuthSession, SupabaseAuthConfig},
     drain::{TransportAvailability, UploadAcknowledgement, UploadResult, UploadTransport},
     ingest::{
         IngestFailureDisposition, NativeApiErrorEnvelope, NativeIngestRequest,
@@ -17,11 +18,26 @@ const MAX_ORIGINAL_BYTES: u64 = 25 * 1_024 * 1_024;
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct UploadSession {
+pub(crate) struct UploadSession {
     supabase_url: String,
     publishable_key: String,
     access_token: String,
     user_id: String,
+}
+
+impl UploadSession {
+    pub(crate) fn from_auth(
+        config: &SupabaseAuthConfig,
+        session: &AuthSession,
+        now_ms: u64,
+    ) -> Option<Self> {
+        Some(Self {
+            supabase_url: config.url.clone(),
+            publishable_key: config.publishable_key.clone(),
+            access_token: session.usable_access_token(now_ms)?.into(),
+            user_id: session.user_id().into(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,12 +59,12 @@ trait HttpClient: Send + Sync {
 }
 
 #[derive(Debug)]
-struct ReqwestHttpClient {
+pub(crate) struct ReqwestHttpClient {
     client: reqwest::blocking::Client,
 }
 
 impl ReqwestHttpClient {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
@@ -89,13 +105,13 @@ impl HttpClient for ReqwestHttpClient {
 }
 
 #[derive(Debug)]
-struct AuthenticatedUploadTransport<C> {
+pub(crate) struct AuthenticatedUploadTransport<C> {
     client: C,
     session: Option<UploadSession>,
 }
 
 impl<C> AuthenticatedUploadTransport<C> {
-    fn new(client: C, session: Option<UploadSession>) -> Self {
+    pub(crate) fn new(client: C, session: Option<UploadSession>) -> Self {
         Self { client, session }
     }
 
@@ -351,6 +367,7 @@ mod tests {
         AuthenticatedUploadTransport, HttpClient, HttpRequest, HttpResponse, UploadSession,
     };
     use crate::{
+        auth::{AuthSession, SupabaseAuthConfig},
         drain::{TransportAvailability, UploadResult, UploadTransport},
         queue::{QueueItem, QueueItemStatus, QueueSource},
     };
@@ -434,6 +451,28 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn fresh_auth_session_becomes_upload_credentials_but_expiring_session_does_not() {
+        let config = SupabaseAuthConfig {
+            url: "https://capso-test.supabase.co".into(),
+            publishable_key: "sb_publishable_capso_test".into(),
+        };
+        let session = AuthSession::for_test(
+            "header.payload.signature",
+            "refresh_0123456789abcdef",
+            USER_ID,
+            120_001,
+        );
+        let upload =
+            UploadSession::from_auth(&config, &session, 60_000).expect("fresh access token");
+        assert_eq!(upload.supabase_url, config.url);
+        assert_eq!(upload.publishable_key, config.publishable_key);
+        assert_eq!(upload.access_token, "header.payload.signature");
+        assert_eq!(upload.user_id, USER_ID);
+
+        assert!(UploadSession::from_auth(&config, &session, 60_001).is_none());
     }
 
     #[test]
