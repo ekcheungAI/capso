@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{self, Read},
     path::{Path, PathBuf},
@@ -10,6 +11,10 @@ use tauri::{AppHandle, Manager, Runtime};
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const RECENT_CAPTURE_LIMIT: usize = 5;
 const RECENT_MENU_PREFIX: &str = "recent-capture:";
+const MENU_THUMBNAIL_WIDTH: u32 = 48;
+const MENU_THUMBNAIL_HEIGHT: u32 = 32;
+pub(crate) const OPEN_LIBRARY_MENU_ID: &str = "open-library";
+pub(crate) const LIBRARY_URL: &str = "https://capso-cyan.vercel.app/library";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,13 +25,19 @@ pub(crate) struct RecentCapture {
     pub(crate) bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct RecentCaptureMenuEntry {
+    pub(crate) capture: RecentCapture,
+    pub(crate) thumbnail: tauri::image::Image<'static>,
+}
+
 fn canonical_capture_id(value: &str) -> Option<String> {
     let parsed = uuid::Uuid::parse_str(value).ok()?;
     let canonical = parsed.to_string();
     (canonical == value).then_some(canonical)
 }
 
-fn png_is_decodable(path: &Path) -> io::Result<bool> {
+fn png_has_signature(path: &Path) -> io::Result<bool> {
     let mut file = File::open(path)?;
     let mut signature = [0_u8; PNG_SIGNATURE.len()];
     let signature_matches = match file.read_exact(&mut signature) {
@@ -34,10 +45,45 @@ fn png_is_decodable(path: &Path) -> io::Result<bool> {
         Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(false),
         Err(error) => return Err(error),
     };
-    if !signature_matches {
-        return Ok(false);
+    Ok(signature_matches)
+}
+
+fn decode_png(path: &Path) -> io::Result<image::DynamicImage> {
+    if !png_has_signature(path)? {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capture does not have a PNG signature",
+        ));
     }
-    Ok(tauri::image::Image::from_path(path).is_ok())
+    image::open(path).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn menu_thumbnail(path: &Path) -> io::Result<tauri::image::Image<'static>> {
+    let resized = decode_png(path)?
+        .resize(
+            MENU_THUMBNAIL_WIDTH,
+            MENU_THUMBNAIL_HEIGHT,
+            image::imageops::FilterType::Triangle,
+        )
+        .to_rgba8();
+    let width = resized.width();
+    let height = resized.height();
+    let x_offset = (MENU_THUMBNAIL_WIDTH - width) / 2;
+    let y_offset = (MENU_THUMBNAIL_HEIGHT - height) / 2;
+    let mut rgba = vec![0_u8; (MENU_THUMBNAIL_WIDTH * MENU_THUMBNAIL_HEIGHT * 4) as usize];
+    let source = resized.as_raw();
+    for row in 0..height {
+        let source_start = (row * width * 4) as usize;
+        let source_end = source_start + (width * 4) as usize;
+        let target_start = (((row + y_offset) * MENU_THUMBNAIL_WIDTH + x_offset) * 4) as usize;
+        let target_end = target_start + (width * 4) as usize;
+        rgba[target_start..target_end].copy_from_slice(&source[source_start..source_end]);
+    }
+    Ok(tauri::image::Image::new_owned(
+        rgba,
+        MENU_THUMBNAIL_WIDTH,
+        MENU_THUMBNAIL_HEIGHT,
+    ))
 }
 
 fn capture_metadata_from_path(
@@ -93,7 +139,16 @@ fn newest_five(captures: Vec<RecentCapture>) -> Vec<RecentCapture> {
         .collect()
 }
 
-pub(crate) fn scan_recent_captures(directory: &Path) -> io::Result<Vec<RecentCapture>> {
+#[cfg(test)]
+fn scan_recent_captures(directory: &Path) -> io::Result<Vec<RecentCapture>> {
+    scan_recent_menu_entries(directory, &HashMap::new())
+        .map(|entries| entries.into_iter().map(|entry| entry.capture).collect())
+}
+
+pub(crate) fn scan_recent_menu_entries(
+    directory: &Path,
+    captured_at_by_id: &HashMap<String, u64>,
+) -> io::Result<Vec<RecentCaptureMenuEntry>> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -107,12 +162,24 @@ pub(crate) fn scan_recent_captures(directory: &Path) -> io::Result<Vec<RecentCap
                 .ok()
                 .flatten()
         })
+        .map(|mut capture| {
+            if let Some(captured_at_ms) = captured_at_by_id.get(&capture.id) {
+                capture.captured_at_ms = *captured_at_ms;
+            }
+            capture
+        })
         .collect::<Vec<_>>();
-    Ok(ordered_newest(captures)
-        .into_iter()
-        .filter(|capture| png_is_decodable(&capture.path).unwrap_or(false))
-        .take(RECENT_CAPTURE_LIMIT)
-        .collect())
+    let mut menu_entries = Vec::with_capacity(RECENT_CAPTURE_LIMIT);
+    for capture in ordered_newest(captures) {
+        let Ok(thumbnail) = menu_thumbnail(&capture.path) else {
+            continue;
+        };
+        menu_entries.push(RecentCaptureMenuEntry { capture, thumbnail });
+        if menu_entries.len() == RECENT_CAPTURE_LIMIT {
+            break;
+        }
+    }
+    Ok(menu_entries)
 }
 
 pub(crate) fn resolve_recent_capture(directory: &Path, id: &str) -> Result<RecentCapture, String> {
@@ -122,11 +189,8 @@ pub(crate) fn resolve_recent_capture(directory: &Path, id: &str) -> Result<Recen
     let capture = capture_metadata_from_path(&path, Some(&canonical))
         .map_err(|error| format!("Could not inspect that recent capture: {error}"))?
         .ok_or_else(|| "That recent capture is missing or no longer a valid PNG.".to_string())?;
-    if !png_is_decodable(&capture.path)
-        .map_err(|error| format!("Could not decode that recent capture: {error}"))?
-    {
-        return Err("That recent capture is missing or no longer a valid PNG.".into());
-    }
+    decode_png(&capture.path)
+        .map_err(|error| format!("Could not decode that recent capture: {error}"))?;
     Ok(capture)
 }
 
@@ -147,11 +211,12 @@ pub(crate) fn capture_directory<R: Runtime>(app: &AppHandle<R>) -> Result<PathBu
         .map_err(|error| format!("Could not locate Capso's capture history: {error}"))
 }
 
-pub(crate) fn recent_captures_for_app<R: Runtime>(
+pub(crate) fn recent_menu_entries_for_app<R: Runtime>(
     app: &AppHandle<R>,
-) -> Result<Vec<RecentCapture>, String> {
+) -> Result<Vec<RecentCaptureMenuEntry>, String> {
     let directory = capture_directory(app)?;
-    scan_recent_captures(&directory)
+    let captured_at_by_id = crate::queue::capture_timestamps_for_app(app).unwrap_or_default();
+    scan_recent_menu_entries(&directory, &captured_at_by_id)
         .map_err(|error| format!("Could not inspect Capso's recent captures: {error}"))
 }
 
@@ -186,13 +251,27 @@ pub(crate) fn recent_capture_label(capture: &RecentCapture, now: SystemTime) -> 
     format!("{age} · {size}")
 }
 
+fn open_library_with<F, E>(opener: F) -> Result<(), String>
+where
+    F: FnOnce(&str) -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    opener(LIBRARY_URL).map_err(|error| format!("Could not open Capso's library: {error}"))
+}
+
+pub(crate) fn open_library() -> Result<(), String> {
+    open_library_with(|url| tauri_plugin_opener::open_url(url, None::<&str>))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        newest_five, parse_recent_menu_id, recent_capture_label, recent_menu_id,
-        resolve_recent_capture, scan_recent_captures, RecentCapture, PNG_SIGNATURE,
+        newest_five, open_library_with, parse_recent_menu_id, recent_capture_label, recent_menu_id,
+        resolve_recent_capture, scan_recent_captures, scan_recent_menu_entries, RecentCapture,
+        LIBRARY_URL, PNG_SIGNATURE,
     };
-    use std::{fs, path::Path, time::SystemTime};
+    use image::{Rgba, RgbaImage};
+    use std::{cell::RefCell, collections::HashMap, fs, path::Path, time::SystemTime};
 
     const PNG: &[u8] = &[
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
@@ -357,5 +436,61 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(1_120_000);
 
         assert_eq!(recent_capture_label(&item, now), "2 min ago · 1.5 MB");
+    }
+
+    #[test]
+    fn queue_timestamps_keep_recent_order_stable_after_pixels_change() {
+        let root = tempfile::tempdir().expect("capture directory");
+        let older = "018f22c4-cada-7c6b-9d5b-fc35f7f9227a";
+        let newer = "018f22c4-cada-7c6b-9d5b-fc35f7f9227b";
+        write_capture(root.path(), newer, PNG);
+        write_capture(root.path(), older, PNG);
+        let stable_times = HashMap::from([(older.to_string(), 1_000), (newer.to_string(), 2_000)]);
+
+        let entries = scan_recent_menu_entries(root.path(), &stable_times)
+            .expect("scan queue-backed menu entries");
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.capture.id.as_str(), entry.capture.captured_at_ms))
+                .collect::<Vec<_>>(),
+            vec![(newer, 2_000), (older, 1_000)]
+        );
+    }
+
+    #[test]
+    fn menu_thumbnail_is_bounded_and_letterboxed_without_cropping() {
+        let root = tempfile::tempdir().expect("capture directory");
+        let id = "018f22c4-cada-7c6b-9d5b-fc35f7f9227a";
+        let source = RgbaImage::from_pixel(80, 40, Rgba([210, 30, 40, 255]));
+        source
+            .save(root.path().join(format!("{id}.png")))
+            .expect("write landscape PNG");
+
+        let entries = scan_recent_menu_entries(root.path(), &HashMap::new())
+            .expect("scan visual menu entries");
+        let thumbnail = &entries[0].thumbnail;
+
+        assert_eq!((thumbnail.width(), thumbnail.height()), (48, 32));
+        let top_left = &thumbnail.rgba()[..4];
+        let image_pixel = &thumbnail.rgba()[4 * 48 * 4..4 * 48 * 4 + 4];
+        assert_eq!(top_left, &[0, 0, 0, 0]);
+        assert_eq!(image_pixel, &[210, 30, 40, 255]);
+    }
+
+    #[test]
+    fn library_opens_only_the_fixed_production_route_and_maps_failures() {
+        let opened = RefCell::new(Vec::new());
+        open_library_with(|url| {
+            opened.borrow_mut().push(url.to_string());
+            Ok::<(), &'static str>(())
+        })
+        .expect("open library route");
+        assert_eq!(opened.into_inner(), vec![LIBRARY_URL]);
+
+        let failure = open_library_with(|_| Err::<(), _>("browser unavailable"))
+            .expect_err("surface opener failure");
+        assert!(failure.contains("browser unavailable"));
     }
 }

@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::OsStr,
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 
 const QUEUE_SCHEMA_VERSION: u32 = 1;
 pub(crate) const RETRY_DELAYS_MS: [u64; 3] = [5_000, 30_000, 120_000];
@@ -359,6 +359,14 @@ impl DurableUploadQueue {
         self.document.entries.iter().find(|item| item.id == id)
     }
 
+    pub(crate) fn capture_timestamps(&self) -> HashMap<String, u64> {
+        self.document
+            .entries
+            .iter()
+            .map(|item| (item.id.clone(), item.created_at_ms))
+            .collect()
+    }
+
     pub(crate) fn summary(&self) -> QueueSummary {
         let mut summary = QueueSummary {
             total: self.document.entries.len(),
@@ -685,6 +693,13 @@ impl QueueRuntime {
         }
     }
 
+    pub(crate) fn capture_timestamps(&self) -> Result<HashMap<String, u64>, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::capture_timestamps)
+            .ok_or_else(|| self.unavailable_message())
+    }
+
     fn unavailable_message(&self) -> String {
         self.warning
             .clone()
@@ -822,6 +837,15 @@ pub(crate) fn current_status(app: &AppHandle) -> Result<QueueRuntimeStatus, Stri
         .lock()
         .map(|runtime| runtime.status())
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".into())
+}
+
+pub(crate) fn capture_timestamps_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<HashMap<String, u64>, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .capture_timestamps()
 }
 
 pub(crate) async fn enqueue_capture(
@@ -1058,6 +1082,29 @@ mod tests {
         assert!(
             first.exists(),
             "queue completion must not delete local pixels"
+        );
+    }
+
+    #[test]
+    fn history_timestamps_survive_status_changes_and_restart() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        let source = capture(&captures, FIRST_ID);
+        queue
+            .enqueue(&source, QueueSource::Region, 1_234)
+            .expect("enqueue capture");
+        queue.claim_next(2_000).expect("claim").expect("item");
+        queue.mark_uploaded(FIRST_ID).expect("complete upload");
+        drop(queue);
+
+        let restored =
+            DurableUploadQueue::open(&store, &captures, 3_000).expect("restore completed queue");
+
+        assert_eq!(
+            restored.capture_timestamps(),
+            std::collections::HashMap::from([(FIRST_ID.to_string(), 1_234)])
         );
     }
 

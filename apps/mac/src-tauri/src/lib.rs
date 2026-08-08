@@ -14,7 +14,7 @@ mod system;
 use serde::Serialize;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{
-    menu::{Menu, MenuBuilder, MenuItem, SubmenuBuilder},
+    menu::{IconMenuItemBuilder, Menu, MenuBuilder, MenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
 };
@@ -222,7 +222,7 @@ fn build_tray_menu<R: Runtime>(
     }
 
     let mut recent_builder = SubmenuBuilder::with_id(app, "recent-captures", "Recent Captures");
-    match history::recent_captures_for_app(app) {
+    match history::recent_menu_entries_for_app(app) {
         Ok(captures) if captures.is_empty() => {
             let empty = MenuItem::with_id(
                 app,
@@ -235,11 +235,14 @@ fn build_tray_menu<R: Runtime>(
         }
         Ok(captures) => {
             let now = std::time::SystemTime::now();
-            for capture in captures {
-                recent_builder = recent_builder.text(
-                    history::recent_menu_id(&capture.id),
-                    history::recent_capture_label(&capture, now),
-                );
+            for entry in captures {
+                let item = IconMenuItemBuilder::with_id(
+                    history::recent_menu_id(&entry.capture.id),
+                    history::recent_capture_label(&entry.capture, now),
+                )
+                .icon(entry.thumbnail)
+                .build(app)?;
+                recent_builder = recent_builder.item(&item);
             }
         }
         Err(_) => {
@@ -254,7 +257,17 @@ fn build_tray_menu<R: Runtime>(
         }
     }
     let recent_submenu = recent_builder.build()?;
-    menu_builder = menu_builder.separator().item(&recent_submenu);
+    let open_library = MenuItem::with_id(
+        app,
+        history::OPEN_LIBRARY_MENU_ID,
+        "Open Library…",
+        true,
+        None::<&str>,
+    )?;
+    menu_builder = menu_builder
+        .separator()
+        .item(&open_library)
+        .item(&recent_submenu);
 
     if let Some(label) = queue_menu_label(queue_status) {
         let queue_item = MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
@@ -556,6 +569,14 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     if let Some(action) = shortcuts::action_for_menu_id(event.id().as_ref()) {
                         launch_capture(app.clone(), action);
+                    } else if event.id() == history::OPEN_LIBRARY_MENU_ID {
+                        if let Err(error) = history::open_library() {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not open library; {error}"
+                                )));
+                            }
+                        }
                     } else if let Some(id) = history::parse_recent_menu_id(event.id().as_ref()) {
                         if let Err(error) = restore_recent_capture(app, &id) {
                             if let Some(tray) = app.tray_by_id("main") {
