@@ -76,7 +76,7 @@ authenticated native ingest and browser-independent processing are complete.
 - [ ] Migration implementing full schema from `10_DATA_MODEL.md` (screenshots, projects, threads, messages, jobs, corrections, embeddings via pgvector; links/PDF columns schema-ready but unused)
 - [x] RLS policies: owner-only access on every table (single-user MVP, but enforce anyway) <!-- migration 0001; applied per BUILD_LOG loop 12 -->
 - [x] Storage buckets: `originals`, `thumbs`, private, RLS-scoped <!-- migration 0002; remote store shipped -->
-- [ ] Jobs table + `pg_cron` tick + Edge Function worker skeleton: claim job (`FOR UPDATE SKIP LOCKED`), execute, mark done/failed, retry with backoff, `attempts` cap → `poisoned` status
+- [ ] Jobs table + `pg_cron` tick + Edge Function worker skeleton: claim job (`FOR UPDATE SKIP LOCKED`), execute, mark done/failed, retry with backoff, `attempts` cap → terminal status <!-- partial: Loop 47 adds the unapplied jobs migration plus a locally verified one-job MiniMax worker with exact leases, bounded retries/context, service-role-only RPCs, and 18 Deno tests; job production, Vault/Cron, production apply/deploy, and live integration proof remain -->
 - [ ] Generated TS types from schema into `packages/shared`
 - [ ] Seed script for local dev (1 project, 3 fake screenshot rows)
 
@@ -122,9 +122,9 @@ loop.
 **Entry criteria:** P2 upload path produces `process_screenshot` jobs reliably.
 
 **Tasks:**
-- [ ] Edge Function worker: fetch image → vision call → validate against zod schema `{ocr_text, summary, type, intent, project_suggestion, confidence, why_saved}` → write to `screenshots` row
+- [ ] Edge Function worker: fetch image → vision call → validate against zod schema `{ocr_text, summary, type, intent, project_suggestion, confidence, why_saved}` → write to `screenshots` row <!-- partial: Loop 47 implements and locally verifies the worker core, exact owner/path/context boundaries, one repair retry, confidence routing, atomic settlement, and MiniMax adapter; it is not deployed or fed by production jobs -->
 - [ ] Embedding generation (summary + ocr_text) → pgvector column
-- [ ] JSON schema validation with one repair-retry on invalid output; invalid twice → job failed (retryable)
+- [x] JSON schema validation with one repair-retry on invalid output; invalid twice → bounded job retry/terminal handling <!-- Loop 47 local worker contract; hosted integration remains under the worker item above -->
 - [ ] Idempotency: reprocessing same screenshot overwrites, never duplicates
 - [ ] Confidence routing fields persisted (≥0.8 auto / 0.5–0.8 suggest / <0.5 inbox) — routing consumed in P4
 - [ ] Screenshot detail view (web): image, OCR text, summary, type/intent chips, why_saved

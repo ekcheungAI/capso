@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./annotate": "./src/annotate.ts",
     "./capture": "./src/capture.ts",
+    "./classification": "./src/classification.ts",
     "./native": "./src/native.ts",
     "./tokens": "./src/tokens.ts",
     "./tokens.json": "./src/tokens.json"

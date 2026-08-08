@@ -1,0 +1,8 @@
+[functions.v1-process-screenshot]
+enabled = true
+# pg_cron calls this internal worker with a Vault-held CAPSO_WORKER_SECRET.
+# The function performs its own constant-time header check before any DB access;
+# no browser/client JWT is accepted by this endpoint.
+verify_jwt = false
+import_map = "./functions/v1-process-screenshot/deno.json"
+entrypoint = "./functions/v1-process-screenshot/index.ts"

@@ -10,9 +10,9 @@
 | Status | READY |
 | Active lease | none |
 | Branch | `codex/capso-cleanshot-replacement` |
-| Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
-| Current phase | Native capture vertical slice |
-| Next objective | CAP-02b foreground 20-capture run using the native Overlay Speed Check; PKG-01a permanent identity/entitlement and AI-01a library-linking remain owner gates |
+| Baseline commit | `e8dd7e22adaf93ee1f023dcc0d1c58b4c038360d` |
+| Current phase | Native capture plus browser-independent processing |
+| Next objective | CAP-02b foreground 20-capture run; AI-01b2 job production, Vault/Cron and hosted integration after production approval; PKG-01a identity/entitlements and AI-01a library linking remain owner gates |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 10:59 HKT | CAP-02b1 APPROVED on the first submission | Physical 20-capture latency and pasteboard proof |
+| capso-cleanshot-replacement | hourly | 2026-08-08 22:56 HKT | AI-01b1 APPROVED after 1 repair | Production job producer/Cron integration and no-browser E2E proof |
 
 ## Gate scoreboard
 
@@ -49,7 +49,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor and durable flatten path; `4651859` proves one cross-language golden redaction fixture byte-for-byte through production pixelation, editor input validation, canonical/original save, clipboard, queue crash recovery, and drain consumption; 129 Rust + 98 workspace tests pass | Physical four-tool editor/save/copy/relaunch QA plus a downloaded remote-object pixel comparison |
 | DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels, atomic restart FIFO/orphan recovery, exact backoff, poison isolation, idempotency, corrupt-store preservation, and zero deletion; `b3b9641` proves a production-compiled single-flight coordinator; `c3278ba` adds the exact authenticated-ingest request/ack/error contract | Real auth/HTTP transport plus connectivity/retry wake sources, then the three-capture offline/restart/reconnect drill |
 | HIS-01 reliable history | IN_PROGRESS | `8bd0888` provides exact-ID local restore without touching the pasteboard; `e0b1020` orders by durable queue capture time, attaches bounded 48×32 native thumbnails, and adds an explicit verified production-library route while retaining full-decode/path checks | Native relaunch/menu thumbnail/click/focus proof plus queued end-to-end cloud persistence |
-| AI-01 browser-independent processing | BLOCKED | `c3278ba` proves a strict single-use PKCE callback and authenticated ingest contract, but the Mac has no production session/transport and classification remains browser-only | Owner identity/linking decision, real auth adapter, authenticated upload, and server worker |
+| AI-01 browser-independent processing | BLOCKED | `c3278ba` proves a strict PKCE/ingest contract; Loop 47 adds a locally verified one-job Edge worker, MiniMax adapter, exact Storage/owner boundaries, bounded prompt/context, atomic settlement, and unapplied jobs migration. No production session/transport, job producer, migration apply, deploy, Vault/Cron schedule, or live database proof exists | Owner identity/linking and production-change approval; real auth/upload/job producer; apply/deploy/Cron; no-browser E2E proof |
 | LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
 | RET-01 retrieval | IN_PROGRESS | Lexical retrieval passes; pgvector path absent | Hybrid search golden evaluation |
 | PKG-01 signed installer | BLOCKED | Local `.app`/`.dmg` build; ad-hoc signature fails Gatekeeper | Fix identifier; Developer ID/notarization owner gate |
@@ -73,7 +73,7 @@ outcome that fits the run budget.
 | 9 | ✅ DUR-01a — synced capture durability plus atomic restart-safe local queue state machine (`a5c5e80`) | CAP-01a | none |
 | 10 | ✅ DUR-01b1 — idempotent single-flight drain coordinator with fake transport, exact acknowledgements, no-attempt holds, and error-safe wake handoff (`b3b9641`); DUR-01b2 real transport/wake wiring plus three-capture offline/restart/reconnect drill remains | DUR-01a, AI-01a for authenticated transport | network toggle QA only for the final drill |
 | 11 | AI-01a — Mac identity/auth handoff and authenticated ingest contract <!-- partial: `c3278ba` compiles the strict PKCE callback plus authenticated request/ack/error contract; deep-link registration, Supabase exchange, Keychain session, real upload, and anonymous-library linking remain --> | DUR-01a | production identity/linking decision required |
-| 12 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
+| 12 | AI-01b — server-side worker so processing continues with every browser closed <!-- partial: Loop 47 adds the locally verified one-job worker core and unapplied atomic jobs migration; AI-01b2 must add job production, Vault/Cron, production apply/deploy, and live integration proof --> | AI-01a | production/migration approval before apply |
 | 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
 | 14 | ✅ ANN-01a — native four-tool editor, protected first original, atomic flatten, queue reservation/recovery, clipboard re-copy, and overlay refresh (`42fcfbf`) | OVL-01b, DUR-01a | annotation QA |
 | 15 | ✅ ANN-01b — exact irreversible redaction and flattened pixels through save, clipboard, queue restart, and drain (`4651859`) | ANN-01a | physical/cloud-object QA remains under ANN-01 |
@@ -111,12 +111,13 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 08:48 | capso-cleanshot-replacement | ANN-01b exact irreversible redaction and flattened-pixel chain | APPROVED | `4651859` | A shared 4×4 golden fixture proves production pixelation collapses 16 source values to one exact RGBA value, and the native test carries those exact flattened bytes through editor data-URL validation, canonical/original persistence, clipboard, queue crash-window recovery, restart reconciliation, and drain consumption. 129/129 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no blocking findings. Remote-object and physical native QA remain; next: HIS-01a. |
 | 2026-08-08 10:28 | capso-cleanshot-replacement | HIS-01a queue-timestamped thumbnail history and Open Library | APPROVED | `e0b1020` | The five-item native menu now uses stable queue capture timestamps, fully decoded fixed 48×32 aspect-preserving thumbnails, exact UUID restore, and an explicit `https://capso-cyan.vercel.app/library` action. 133/133 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, live route 200, loop validation, and diff checks pass. Checker approved submission 1 with no P0–P2 findings. Native menu/relaunch/focus QA and cloud persistence remain; next: PKG-01a owner decision. |
 | 2026-08-08 10:59 | capso-cleanshot-replacement | CAP-02b1 durable overlay speed evidence | APPROVED | `ec43534` | The latest 20 successful fresh process-completion-to-native-show durations survive restart without capture identifiers, paths, timestamps, or pixels; stale/history/annotation/decode/show failures are excluded, and the tray reports progress plus exact p50/p90/max with strict 20/20 `<1s` gating. 140/140 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no P0–P2 findings. Physical perceived latency and general-pasteboard QA remain. |
+| 2026-08-08 22:56 | capso-cleanshot-replacement | AI-01b1 browser-independent one-job worker core | APPROVED after 1 repair | this commit | A service-role-only Edge worker claims one owner-serial job, loads the exact bounded PNG plus owner-scoped projects/corrections, calls MiniMax with one schema repair and a 48 KB prompt ceiling, and atomically settles with bounded retry/lease recovery. Checker repair 1 closed a cross-owner correction join and bounded response/prompt memory. 18/18 Deno and 98/98 workspace tests, Deno check/info (3.87 MB), full typecheck/lint/build, loop validation, and diff checks pass. Migration execution, model/live DB integration, deploy, job producer, Vault/Cron, Mac auth/upload, and embeddings remain. |
 
 ## Discovered technical debt
 
 | Priority | Area | Debt | Disposition |
 |---|---|---|---|
-| P0 | Processing | Native captures cannot classify without an open browser tab. | AI-01b before dogfood. |
+| P0 | Processing | A locally verified Edge worker core exists, but native captures still cannot create/upload a hosted job and no production worker/Cron is active. | AI-01b2 plus AI-01a transport before dogfood. |
 | P0 | Identity | Browser anonymous auth cannot be transferred safely to the Mac app; the PKCE/ingest seam is compiled but unwired. | AI-01a production adapter; owner identity/linking decision required. |
 | P1 | Distribution | Bundle id ends in `.app`; build is ad-hoc signed and fails Gatekeeper. | PKG-01a. |
 | P1 | Permissions | Preflight/guidance and capture gating are implemented, but Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 manual QA. |

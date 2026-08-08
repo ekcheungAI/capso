@@ -27,6 +27,7 @@ CREATE TYPE processing_status AS ENUM ('pending', 'processing', 'processed', 'un
 CREATE TYPE capture_intent AS ENUM ('design_inspiration','ux_bug','competitor','marketing_hook','content_idea','reference','other');
 CREATE TYPE suggestion_outcome AS ENUM ('auto_assigned','confirmed','ignored','overridden','pending');
 CREATE TYPE message_role AS ENUM ('user','assistant','system','tool');
+CREATE TYPE job_status AS ENUM ('pending','processing','done','failed');
 ```
 
 ## Tables
@@ -103,6 +104,37 @@ Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`;
 - **`storage_path NOT NULL` was wrong.** It assumed a row is only written after its bytes reach Storage. Two shipped behaviours contradict that: M3's pipeline is "capture → local queue → Storage + row" and must survive offline (04 Table 1), so a queued capture is a real row whose bytes have not uploaded yet; and seeded fixtures have no image at all, drawing a deterministic placeholder instead. NULL now means "no bytes in Storage (yet)", which the UI already handles via its placeholder path.
 
 **Derived, deliberately not stored:** the client type's `hue` and `aspect` have no columns and should not gain any. `aspect` follows from `width`/`height`, and `hue` is a deterministic hash of `id` — both are display-only, and storing a value derivable from its inputs invites the two disagreeing.
+
+### jobs
+
+The browser-independent worker queue. Migration
+`20260808032950_background_processing_jobs.sql` is committed but deliberately not
+applied until the owner approves the production schema change.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | bigint identity PK | Stable worker acknowledgement identity |
+| user_id | uuid NOT NULL FK → `auth.users` CASCADE | Current core schema has no profile `users` table yet |
+| kind | text | `process_capture \| embed`; this loop implements only `process_capture` |
+| payload | jsonb | `process_capture` requires a `screenshot_id` |
+| status | job_status DEFAULT `pending` | Active states are `pending` and `processing` |
+| attempts / max_attempts | int | Incremented only when a lease is claimed; maximum 1–10, default 3 |
+| run_after | timestamptz | Retry eligibility |
+| locked_at / locked_by | timestamptz / text | Ten-minute worker lease identity |
+| last_error | text | Bounded generic code only; never provider text or screenshot data |
+| created_at | timestamptz | FIFO tiebreaker after `run_after` |
+
+Indexes: due jobs by `(status, run_after, id)`; one active `process_capture` job per
+screenshot. Claiming is `FOR UPDATE SKIP LOCKED`, at most one job per invocation and one
+processing job per owner. Completion validates the exact worker lease and atomically
+writes the classification plus `done`; failures retry at 5s/30s/2m and become `failed`
+without exceeding `max_attempts`. Stale exhausted leases become terminal instead of
+triggering another paid call.
+
+Authenticated owners may read only non-payload job status columns through RLS. All claim,
+complete, and fail mutations are `SECURITY DEFINER` RPCs revoked from `PUBLIC`, `anon`,
+and `authenticated`, then granted only to `service_role`. The Edge handler separately
+requires a constant-time worker-secret check before using that role.
 
 ### capture_events
 Append-only audit of the capture lifecycle (funnel analytics + undo trail).
@@ -194,6 +226,7 @@ Seed rows: `free` (30 chat turns, no digests), `pro` ($9, unlimited, digests).
 erDiagram
     users ||--o{ project_threads : owns
     users ||--o{ screenshots : owns
+    users ||--o{ jobs : owns
     users ||--|| billing_plans : "on plan"
     project_threads ||--o{ screenshots : contains
     project_threads ||--o{ conversation_messages : has
@@ -209,7 +242,7 @@ erDiagram
 
 ## RLS (requirement)
 
-Enable RLS on **every** table above, even in single-user MVP. Uniform policy: `USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())` for select/insert/update/delete. `billing_plans` is read-only for `authenticated`. Edge Function workers use the service-role key (bypasses RLS) — never shipped to clients. This makes multi-tenant SaaS a config change, not a migration.
+Enable RLS on **every** table above, even in single-user MVP. Uniform policy: `USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())` for select/insert/update/delete. `billing_plans` is read-only for `authenticated`. `jobs` is the deliberate exception to uniform mutation access: owners can read bounded status metadata, while only the service-role worker RPCs can mutate it. Edge Function workers use the service-role key (bypasses RLS) — never shipped to clients. This makes multi-tenant SaaS a config change, not a migration.
 
 ## Retention & deletion (requirement)
 
