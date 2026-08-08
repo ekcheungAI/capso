@@ -211,7 +211,7 @@ loop.
 **Entry criteria:** P2–P6 done criteria all green.
 
 **Tasks:**
-- [ ] Annotation editor on overlay/detail: arrow, box, text, blur; flattened annotated PNG uploaded as the stored version (AC-ANN-01) <!-- partial: `42fcfbf` adds the native four-tool editor, protected first original, atomic flattened PNG, queue reservation/recovery, clipboard re-copy, and overlay refresh; exact native pixel QA and production upload remain -->
+- [ ] Annotation editor on overlay/detail: arrow, box, text, blur; flattened annotated PNG uploaded as the stored version (AC-ANN-01) <!-- partial: `42fcfbf` adds the native four-tool editor and durable flatten path; `4651859` proves exact golden redaction pixels through local save/original protection, clipboard, queue restart recovery, and drain consumption. Physical all-tool QA and a downloaded production object comparison remain. -->
 - [ ] Onboarding: permission walkthrough, hotkey setup, first-capture nudge
 - [ ] Empty states: library, inbox, thread, search-no-results
 - [ ] PostHog events per specs/event_schema.md; Sentry release tagging both apps

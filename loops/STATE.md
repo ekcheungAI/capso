@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | ANN-01b: add an exact native redaction/flattened-pixel proof across save, clipboard, queue, and restart; AI-01a production auth/linking remains an owner gate and CAP-02b remains a foreground manual proof |
+| Next objective | HIS-01a: add thumbnail-backed Recent Captures and a full-library deep link while preserving exact local restore; AI-01a production auth/linking remains an owner gate and CAP-02b remains a foreground manual proof |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 08:33 HKT | ANN-01a APPROVED on the first resubmission after the prior failed run | ANN-01b native redaction/flattened-pixel proof |
+| capso-cleanshot-replacement | hourly | 2026-08-08 08:48 HKT | ANN-01b APPROVED on the first submission | HIS-01a thumbnails and full-library deep link |
 
 ## Gate scoreboard
 
@@ -46,7 +46,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | CAP-01 native capture modes | IN_PROGRESS | `01c05d1` command seam + `056801e` defaults/tray fallbacks + `d4d2bff` persisted editable bindings with reconciled rollback; 23 Rust tests | Manual physical recording, relaunch, from-any-app, real conflict, rollback-message, and picker QA |
 | CAP-02 clipboard + <1s overlay | IN_PROGRESS | `3496c82` persists first and writes exact PNG bytes through AppKit; `91e6643` prepares the native overlay only after persistence/clipboard delivery; `8923e90` adds generation-ordered re-copy so stale manual writes cannot replace a newer capture; 59 Rust tests cover byte identity, delayed writes, overlay ordering, and failure isolation | Native general-pasteboard copy/paste QA plus the 20-capture latency proof |
 | OVL-01 overlay experience | IN_PROGRESS | `91e6643` adds the hidden-until-decode 252×194 display-correct overlay; `8923e90` adds exact-current Copy, atomic Save As, Close, and one-shot eight-second hover/action-paused dismissal; `8bd0888` restores recent durable PNGs; `db0ab1e` adds exact copy-only native drag-out; `42fcfbf` connects the native Annotate action and protects its overlay session | Native focus, mixed-scale multi-display, interaction, relaunch-restore, drag/drop, annotation, and latency QA |
-| ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor, shared renderer, protected first original, atomic dimension-matched PNG flatten, queue reservation/recovery, re-copy, overlay refresh, and deterministic annotation/history clipboard arbitration; 128 Rust + 97 workspace tests and browser visual QA pass | Exact native redaction/flattened-pixel proof plus physical editor/save/copy/relaunch QA |
+| ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor and durable flatten path; `4651859` proves one cross-language golden redaction fixture byte-for-byte through production pixelation, editor input validation, canonical/original save, clipboard, queue crash recovery, and drain consumption; 129 Rust + 98 workspace tests pass | Physical four-tool editor/save/copy/relaunch QA plus a downloaded remote-object pixel comparison |
 | DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels, atomic restart FIFO/orphan recovery, exact backoff, poison isolation, idempotency, corrupt-store preservation, and zero deletion; `b3b9641` proves a production-compiled single-flight coordinator; `c3278ba` adds the exact authenticated-ingest request/ack/error contract | Real auth/HTTP transport plus connectivity/retry wake sources, then the three-capture offline/restart/reconnect drill |
 | HIS-01 reliable history | IN_PROGRESS | `8bd0888` scans the five newest valid durable UUID PNGs at launch and exposes exact-ID native Recent Captures restore without touching the pasteboard | Native relaunch/menu interaction proof, thumbnails, full-library deep links, and queued end-to-end persistence |
 | AI-01 browser-independent processing | BLOCKED | `c3278ba` proves a strict single-use PKCE callback and authenticated ingest contract, but the Mac has no production session/transport and classification remains browser-only | Owner identity/linking decision, real auth adapter, authenticated upload, and server worker |
@@ -76,7 +76,7 @@ outcome that fits the run budget.
 | 12 | AI-01b — server-side worker so processing continues with every browser closed | AI-01a | production/migration approval before apply |
 | 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
 | 14 | ✅ ANN-01a — native four-tool editor, protected first original, atomic flatten, queue reservation/recovery, clipboard re-copy, and overlay refresh (`42fcfbf`) | OVL-01b, DUR-01a | annotation QA |
-| 15 | ANN-01b — irreversible blur and flattened-pixel proof | ANN-01a | none |
+| 15 | ✅ ANN-01b — exact irreversible redaction and flattened pixels through save, clipboard, queue restart, and drain (`4651859`) | ANN-01a | physical/cloud-object QA remains under ANN-01 |
 | 16 | HIS-01a — recent captures menu and full library deep links <!-- partial: `8bd0888` completes the five-item text menu and exact-ID local restore; thumbnails, full-library deep links, and native QA remain --> | DUR-01a | history QA |
 | 17 | LRN-01a — scripted three-corrections-to-fourth-capture evaluation | AI-01b | model calls approved under existing config |
 | 18 | RET-01a — pgvector + keyword retrieval implementation | AI-01b | embedding-provider decision if unresolved |
@@ -108,6 +108,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 07:23 | capso-cleanshot-replacement | AI-01a1 native PKCE and authenticated-ingest contract | APPROVED after 2 repairs | `c3278ba` | 113/113 Rust and 95/95 workspace tests prove exact raw callback shape, opaque codes, S256/state expiry/replay/redaction, strict shared/Rust ingest boundaries, no caller ownership, exact acknowledgement, and safe error dispositions; strict Clippy, full build/lint/typecheck, fresh arm64 `.app`, loop validator, and diff/scope checks pass. No production session, upload, or worker exists; identity/linking is an owner gate. Next independent code objective: ANN-01a. |
 | 2026-08-08 08:21 | capso-cleanshot-replacement | ANN-01a native four-tool editor and flattened queue pixels | FAILED after 2 repairs | — | The uncommitted WIP reached 127/127 Rust and 97/97 workspace tests, strict Clippy, full build/lint/typecheck, loop validation, light/dark/min-window QA, and an arm64 debug `.app`. Checker passes repaired close/retry deadlocks, timeout, capture/annotation mutual exclusion, atomic overlay publication, and original fsync recovery, but final review found history changes clipboard ownership before its overlay publication wins. If Annotate wins, Save/Copy become stale. No rejected source was committed. Next run: make history clipboard activation and overlay publication one transaction with rollback/deferred commit, add the losing-history interleaving test, and resubmit ANN-01a. |
 | 2026-08-08 08:33 | capso-cleanshot-replacement | ANN-01a transactional history repair and native four-tool editor resubmission | APPROVED | `42fcfbf` | Clipboard identity now commits only after history overlay publication wins; a deterministic history-versus-real-AnnotationRuntime interleaving proves losing history leaves the fresh capture copyable. 128/128 Rust and 97/97 workspace tests, strict Clippy, format, lint, typecheck, full builds, fresh debug `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no P0–P2 findings. Native pixel/physical QA remains; next: ANN-01b. |
+| 2026-08-08 08:48 | capso-cleanshot-replacement | ANN-01b exact irreversible redaction and flattened-pixel chain | APPROVED | `4651859` | A shared 4×4 golden fixture proves production pixelation collapses 16 source values to one exact RGBA value, and the native test carries those exact flattened bytes through editor data-URL validation, canonical/original persistence, clipboard, queue crash-window recovery, restart reconciliation, and drain consumption. 129/129 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no blocking findings. Remote-object and physical native QA remain; next: HIS-01a. |
 
 ## Discovered technical debt
 

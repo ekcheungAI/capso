@@ -88,9 +88,12 @@ shared authenticated-ingest request/ack/error contract without caller-supplied o
 Production identity/linking, deep-link registration, Supabase exchange, Keychain storage,
 and real upload remain owner-gated/unwired. `42fcfbf` now connects a native four-tool
 annotation editor, preserves the first original, atomically flattens the durable PNG, and
-keeps queue/clipboard/overlay identity aligned across save and retry. The next independent
-implementation objective is ANN-01b, an exact native redaction and flattened-pixel proof.
-CAP-02b's 20-capture latency proof remains a foreground manual gate. A
+keeps queue/clipboard/overlay identity aligned across save and retry. `4651859` adds an
+exact cross-language golden proof that irreversible redaction survives local save,
+clipboard, queue restart recovery, and drain consumption without restoring source detail.
+The next independent implementation objective is HIS-01a, thumbnail-backed Recent
+Captures plus a full-library deep link. CAP-02b's 20-capture latency proof remains a
+foreground manual gate. A
 real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
 server-side processing remain hard prerequisites before a native capture can learn with
 every browser closed.
@@ -119,7 +122,9 @@ JSON queue handoff; restart restores FIFO work, reconciles safe orphan UUID PNGs
 retry/poison/idempotency state without deleting local pixels. Quick Access now opens a
 native arrow/box/text/irreversible-pixelate editor that preserves the first original,
 atomically replaces the canonical PNG, records flattened queue pixels, re-copies them, and
-refreshes the exact overlay presentation. The actual queue drain transport/authenticated
+refreshes the exact overlay presentation. A shared/native golden fixture now proves the
+exact irreversible pixels survive command validation, save, clipboard, restart recovery,
+and the drain boundary. The actual queue drain transport/authenticated
 upload remains unwired. A production-compiled coordinator now
 proves exact-ID completion, no-attempt offline/auth holds, FIFO healthy-work isolation,
 single-flight overlap, restart idempotency, and error-safe wake handoff against a fake
@@ -135,9 +140,10 @@ Known blockers:
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
    display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
    recent restore, native drag-out, durable local queue, fake-transport drain coordinator,
-   strict auth/ingest contract, and native four-tool annotation/flattening are tested, but
+   strict auth/ingest contract, native four-tool annotation/flattening, and the exact local
+   redaction pixel chain are tested, but
    the production authenticated transport/connectivity wake path does not exist. Physical
-   shortcut, recent-menu, annotation pixel/save/copy/relaunch,
+   shortcut, recent-menu, physical annotation save/copy/relaunch, downloaded cloud-object,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
 2. **Mac identity + background worker** — the PKCE/ingest boundary is compiled but browser
