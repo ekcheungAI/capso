@@ -6,6 +6,7 @@ mod dragout;
 mod drain;
 mod history;
 mod ingest;
+mod latency;
 mod overlay;
 mod queue;
 mod shortcuts;
@@ -161,6 +162,7 @@ fn tray_tooltip(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
     queue_status: &queue::QueueRuntimeStatus,
+    latency_report: &latency::OverlayLatencyReport,
 ) -> &'static str {
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
         "Capso — Screen Recording needed for Window and Fullscreen"
@@ -172,8 +174,66 @@ fn tray_tooltip(
         "Capso — shortcut settings warning; defaults are active"
     } else if queue_status.summary.queued() > 0 {
         "Capso — captures saved locally and waiting to sync"
+    } else if latency_report.warning.is_some() {
+        "Capso — overlay timing evidence unavailable; captures are unaffected"
     } else {
         "Capso"
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct LatencyMenuCopy {
+    title: String,
+    status: String,
+    statistics: Option<String>,
+}
+
+fn latency_menu_copy(report: &latency::OverlayLatencyReport) -> LatencyMenuCopy {
+    if report.warning.is_some() {
+        return LatencyMenuCopy {
+            title: "Overlay Speed Check — unavailable".into(),
+            status: "Timing evidence could not be saved; captures are unaffected".into(),
+            statistics: None,
+        };
+    }
+
+    let statistics = report.max_ms.map(|maximum| {
+        format!(
+            "p50 {} ms · p90 {} ms · max {maximum} ms",
+            report.p50_ms.unwrap_or(maximum),
+            report.p90_ms.unwrap_or(maximum),
+        )
+    });
+    if !report.complete {
+        return LatencyMenuCopy {
+            title: format!(
+                "Overlay Speed Check — {}/{}",
+                report.sample_count, report.required_samples
+            ),
+            status: format!(
+                "Make {} more real {} to verify under 1 second",
+                report.required_samples - report.sample_count,
+                if report.required_samples - report.sample_count == 1 {
+                    "capture"
+                } else {
+                    "captures"
+                }
+            ),
+            statistics,
+        };
+    }
+
+    LatencyMenuCopy {
+        title: if report.passes {
+            "Overlay Speed Check — PASS".into()
+        } else {
+            "Overlay Speed Check — needs attention".into()
+        },
+        status: format!(
+            "{}/{} latest real captures under 1 second",
+            report.under_sla_count, report.required_samples
+        ),
+        statistics,
     }
 }
 
@@ -206,6 +266,7 @@ fn build_tray_menu<R: Runtime>(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
     queue_status: &queue::QueueRuntimeStatus,
+    latency_report: &latency::OverlayLatencyReport,
 ) -> tauri::Result<Menu<R>> {
     let mut menu_builder = MenuBuilder::new(app);
     for definition in shortcuts::definitions() {
@@ -269,6 +330,29 @@ fn build_tray_menu<R: Runtime>(
         .item(&open_library)
         .item(&recent_submenu);
 
+    let latency_copy = latency_menu_copy(latency_report);
+    let mut latency_builder =
+        SubmenuBuilder::with_id(app, "overlay-speed-check", latency_copy.title);
+    let latency_status = MenuItem::with_id(
+        app,
+        "overlay-speed-status",
+        latency_copy.status,
+        false,
+        None::<&str>,
+    )?;
+    latency_builder = latency_builder.item(&latency_status);
+    if let Some(statistics) = latency_copy.statistics {
+        let latency_statistics = MenuItem::with_id(
+            app,
+            "overlay-speed-statistics",
+            statistics,
+            false,
+            None::<&str>,
+        )?;
+        latency_builder = latency_builder.item(&latency_statistics);
+    }
+    menu_builder = menu_builder.item(&latency_builder.build()?);
+
     if let Some(label) = queue_menu_label(queue_status) {
         let queue_item = MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
         menu_builder = menu_builder.item(&queue_item);
@@ -321,16 +405,24 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
     let shortcut_status = current_shortcut_status(app)?;
     let system_status = current_system_status(app)?;
     let queue_status = current_queue_status(app)?;
+    let latency_report = latency::current_report(app)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(
-            build_tray_menu(app, &shortcut_status, &system_status, &queue_status)
-                .map_err(|error| error.to_string())?,
+            build_tray_menu(
+                app,
+                &shortcut_status,
+                &system_status,
+                &queue_status,
+                &latency_report,
+            )
+            .map_err(|error| error.to_string())?,
         ))
         .map_err(|error| error.to_string())?;
         tray.set_tooltip(Some(tray_tooltip(
             &shortcut_status,
             &system_status,
             &queue_status,
+            &latency_report,
         )))
         .map_err(|error| error.to_string())?;
     }
@@ -463,6 +555,7 @@ pub fn run() {
         .manage(Mutex::new(annotation::AnnotationRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
+        .manage(Mutex::new(latency::OverlayLatencyRuntime::default()))
         .manage(drain::DrainCoordinator::default())
         .manage(Mutex::new(auth::AuthRuntime::default()))
         .plugin(tauri_plugin_dialog::init())
@@ -520,6 +613,8 @@ pub fn run() {
 
             let queue_status = queue::initialize_for_app(app.handle())
                 .map_err(|error| format!("Could not initialize upload queue state: {error}"))?;
+            let latency_report = latency::initialize_for_app(app.handle())
+                .map_err(|error| format!("Could not initialize overlay timing state: {error}"))?;
 
             // The panel remains non-focusable but accepts deliberate Quick
             // Access clicks without activating Capso or blocking outside it.
@@ -558,11 +653,22 @@ pub fn run() {
 
             let system_status = current_system_status(app.handle())
                 .map_err(|error| format!("Could not initialize system status: {error}"))?;
-            let menu = build_tray_menu(app.handle(), &status, &system_status, &queue_status)?;
+            let menu = build_tray_menu(
+                app.handle(),
+                &status,
+                &system_status,
+                &queue_status,
+                &latency_report,
+            )?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip(tray_tooltip(&status, &system_status, &queue_status))
+                .tooltip(tray_tooltip(
+                    &status,
+                    &system_status,
+                    &queue_status,
+                    &latency_report,
+                ))
                 .menu(&menu)
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
@@ -632,7 +738,28 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture, clipboard, overlay, queue};
+    use super::{capture, clipboard, latency, overlay, queue};
+
+    fn latency_report(
+        sample_count: usize,
+        under_sla_count: usize,
+        p50_ms: Option<u64>,
+        p90_ms: Option<u64>,
+        max_ms: Option<u64>,
+        warning: Option<&str>,
+    ) -> latency::OverlayLatencyReport {
+        latency::OverlayLatencyReport {
+            sample_count,
+            required_samples: 20,
+            under_sla_count,
+            p50_ms,
+            p90_ms,
+            max_ms,
+            complete: sample_count == 20,
+            passes: sample_count == 20 && under_sla_count == 20,
+            warning: warning.map(str::to_string),
+        }
+    }
 
     fn event_json(
         result: Result<capture::CaptureOutcome, capture::CaptureFailure>,
@@ -732,6 +859,66 @@ mod tests {
         assert_eq!(
             super::queue_menu_label(&failed).as_deref(),
             Some("2 captures need manual retry")
+        );
+    }
+
+    #[test]
+    fn overlay_speed_menu_never_claims_pass_before_twenty_real_samples() {
+        assert_eq!(
+            super::latency_menu_copy(&latency_report(
+                19,
+                19,
+                Some(410),
+                Some(730),
+                Some(890),
+                None,
+            )),
+            super::LatencyMenuCopy {
+                title: "Overlay Speed Check — 19/20".into(),
+                status: "Make 1 more real capture to verify under 1 second".into(),
+                statistics: Some("p50 410 ms · p90 730 ms · max 890 ms".into()),
+            }
+        );
+
+        assert_eq!(
+            super::latency_menu_copy(&latency_report(
+                20,
+                20,
+                Some(420),
+                Some(760),
+                Some(940),
+                None,
+            )),
+            super::LatencyMenuCopy {
+                title: "Overlay Speed Check — PASS".into(),
+                status: "20/20 latest real captures under 1 second".into(),
+                statistics: Some("p50 420 ms · p90 760 ms · max 940 ms".into()),
+            }
+        );
+
+        assert_eq!(
+            super::latency_menu_copy(&latency_report(
+                20,
+                18,
+                Some(500),
+                Some(990),
+                Some(1_140),
+                None,
+            ))
+            .title,
+            "Overlay Speed Check — needs attention"
+        );
+        assert_eq!(
+            super::latency_menu_copy(&latency_report(
+                0,
+                0,
+                None,
+                None,
+                None,
+                Some("private disk error"),
+            ))
+            .status,
+            "Timing evidence could not be saved; captures are unaffected"
         );
     }
 

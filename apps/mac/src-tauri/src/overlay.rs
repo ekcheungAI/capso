@@ -9,6 +9,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Mutex,
+    time::Instant,
 };
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow};
 
@@ -83,12 +84,19 @@ pub(crate) struct OverlayRuntime {
     last_failure: Option<OverlayFailureRecord>,
     presentation_generation: u64,
     active_drag: Option<OverlayDragIdentity>,
+    pending_latency: Option<PendingOverlayLatency>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OverlayDragIdentity {
     path: String,
     presentation_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingOverlayLatency {
+    presentation_id: u64,
+    start: crate::latency::OverlayLatencyStart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,11 +109,13 @@ impl OverlayRuntime {
     fn reset(&mut self) {
         self.current = None;
         self.last_failure = None;
+        self.pending_latency = None;
     }
 
     fn replace(&mut self, capture: OverlayCapture) {
         self.current = Some(capture);
         self.last_failure = None;
+        self.pending_latency = None;
     }
 
     fn next_capture(
@@ -155,6 +165,7 @@ impl OverlayRuntime {
         }
 
         self.current = None;
+        self.pending_latency = None;
         Some(self.record_failure(path, presentation_id, code, message))
     }
 
@@ -219,7 +230,7 @@ impl OverlayWindowOps for WebviewWindow {
 #[derive(Debug, PartialEq)]
 enum RevealTransition {
     Stale,
-    Shown,
+    Shown(Option<crate::latency::OverlayLatencySample>),
     Failed(OverlayFailureRecord),
 }
 
@@ -324,6 +335,7 @@ fn prepare_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     capture: OverlayCapture,
+    latency_start: Option<crate::latency::OverlayLatencyStart>,
     x: i32,
     y: i32,
 ) -> Result<(), OverlayFailureRecord> {
@@ -352,6 +364,10 @@ fn prepare_transition(
     }
 
     runtime.replace(capture);
+    runtime.pending_latency = latency_start.map(|start| PendingOverlayLatency {
+        presentation_id,
+        start,
+    });
     Ok(())
 }
 
@@ -361,12 +377,27 @@ fn reveal_transition(
     path: &str,
     presentation_id: u64,
 ) -> RevealTransition {
+    reveal_transition_with_clock(runtime, window, path, presentation_id, Instant::now)
+}
+
+fn reveal_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    now: impl FnOnce() -> Instant,
+) -> RevealTransition {
     if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return RevealTransition::Stale;
     }
 
     match window.show_overlay() {
-        Ok(()) => RevealTransition::Shown,
+        Ok(()) => {
+            let sample = runtime.pending_latency.take().and_then(|pending| {
+                (pending.presentation_id == presentation_id).then(|| pending.start.finish(now()))
+            });
+            RevealTransition::Shown(sample)
+        }
         Err(error) => {
             let failure = runtime
                 .fail_if_current(
@@ -647,8 +678,9 @@ pub(crate) fn prepare_capture_overlay(
     mode: CaptureMode,
     path: &Path,
     clipboard: &ClipboardStatus,
+    latency_start: crate::latency::OverlayLatencyStart,
 ) -> OverlayStatus {
-    let status = prepare_capture_overlay_transaction(app, mode, path, clipboard);
+    let status = prepare_capture_overlay_transaction(app, mode, path, clipboard, latency_start);
     crate::clipboard::complete_new_capture_transaction(app, path);
     status
 }
@@ -658,6 +690,7 @@ fn prepare_capture_overlay_transaction(
     mode: CaptureMode,
     path: &Path,
     clipboard: &ClipboardStatus,
+    latency_start: crate::latency::OverlayLatencyStart,
 ) -> OverlayStatus {
     if crate::annotation::is_active(app) {
         return overlay_failure(
@@ -676,6 +709,7 @@ fn prepare_capture_overlay_transaction(
         path,
         clipboard,
         OverlaySource::Capture,
+        Some(latency_start),
     )
 }
 
@@ -701,6 +735,7 @@ pub(crate) fn prepare_history_overlay(app: &AppHandle, path: &Path) -> OverlaySt
             path,
             &clipboard,
             OverlaySource::History,
+            None,
         );
         match status {
             OverlayStatus::Prepared { .. } => Ok(status),
@@ -740,6 +775,7 @@ fn prepare_overlay(
     path: &Path,
     clipboard: &ClipboardStatus,
     source: OverlaySource,
+    latency_start: Option<crate::latency::OverlayLatencyStart>,
 ) -> OverlayStatus {
     let (x, y) = bottom_right_position(display);
     let state = app.state::<Mutex<OverlayRuntime>>();
@@ -778,7 +814,9 @@ fn prepare_overlay(
         source,
     );
 
-    if let Err(failure) = prepare_transition(&mut runtime, window, payload.clone(), x, y) {
+    if let Err(failure) =
+        prepare_transition(&mut runtime, window, payload.clone(), latency_start, x, y)
+    {
         return overlay_failure(failure.code, failure.message);
     }
 
@@ -829,7 +867,21 @@ pub(crate) fn overlay_image_ready(
 
     match transition {
         RevealTransition::Stale => Ok(false),
-        RevealTransition::Shown => Ok(true),
+        RevealTransition::Shown(sample) => {
+            if let Some(sample) = sample {
+                if let Err(error) = crate::latency::record_for_app(&app, sample) {
+                    if let Some(tray) = app.tray_by_id("main") {
+                        let _ = tray.set_tooltip(Some(format!(
+                            "Capso — overlay shown; timing evidence unavailable: {error}"
+                        )));
+                    }
+                }
+                if let Err(error) = crate::refresh_tray_status(&app) {
+                    eprintln!("Could not refresh Capso overlay timing status: {error}");
+                }
+            }
+            Ok(true)
+        }
         RevealTransition::Failed(failure) => {
             report_overlay_failure(&app, &failure);
             Err(failure.message)
@@ -1156,10 +1208,11 @@ mod tests {
     use super::{
         annotation_refresh_payload, begin_drag_transition, bottom_right_position, capture_display,
         capture_matches, current_capture_path, dismiss_transition, display_at_cursor,
-        export_capture, fail_transition, prepare_transition, reveal_transition, DismissTransition,
-        DisplayGeometry, DragGestureState, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
-        OverlayRuntime, OverlaySource, OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect,
-        OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        export_capture, fail_transition, prepare_transition, reveal_transition,
+        reveal_transition_with_clock, DismissTransition, DisplayGeometry, DragGestureState,
+        OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayRuntime, OverlaySource,
+        OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect, OVERLAY_HEIGHT_LOGICAL,
+        OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
@@ -1365,6 +1418,102 @@ mod tests {
 
         assert_eq!(first.presentation_id, 1);
         assert_eq!(second.presentation_id, 2);
+    }
+
+    #[test]
+    fn only_exact_fresh_capture_reveal_finishes_overlay_latency() {
+        let path = "/tmp/capso/fresh.png";
+        let started_at = std::time::Instant::now();
+        let visible_at = started_at + std::time::Duration::from_millis(742);
+        let window = FakeWindow::default();
+        let mut runtime = OverlayRuntime::default();
+
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture_with_id(path, 1),
+            Some(crate::latency::OverlayLatencyStart::new(
+                CaptureMode::Region,
+                started_at,
+            )),
+            120,
+            240,
+        )
+        .expect("fresh capture prepares");
+
+        assert_eq!(
+            reveal_transition_with_clock(&mut runtime, &window, path, 2, || visible_at),
+            RevealTransition::Stale
+        );
+        assert_eq!(
+            reveal_transition_with_clock(&mut runtime, &window, path, 1, || visible_at),
+            RevealTransition::Shown(Some(crate::latency::OverlayLatencySample::new(
+                CaptureMode::Region,
+                742,
+            )))
+        );
+        assert_eq!(
+            reveal_transition_with_clock(&mut runtime, &window, path, 1, || visible_at),
+            RevealTransition::Shown(None),
+            "one visible presentation contributes at most one sample"
+        );
+    }
+
+    #[test]
+    fn history_and_decode_failure_never_contribute_latency_samples() {
+        let history_path = "/tmp/capso/history.png";
+        let window = FakeWindow::default();
+        let mut history_runtime = OverlayRuntime::default();
+        let history = OverlayCapture {
+            path: history_path.into(),
+            presentation_id: 1,
+            clipboard: ClipboardStatus::Unchanged,
+            source: OverlaySource::History,
+        };
+        prepare_transition(&mut history_runtime, &window, history, None, 120, 240)
+            .expect("history prepares");
+        assert_eq!(
+            reveal_transition_with_clock(
+                &mut history_runtime,
+                &window,
+                history_path,
+                1,
+                || panic!("history has no capture latency clock"),
+            ),
+            RevealTransition::Shown(None)
+        );
+
+        let failed_path = "/tmp/capso/decode-failed.png";
+        let started_at = std::time::Instant::now();
+        let mut failed_runtime = OverlayRuntime::default();
+        prepare_transition(
+            &mut failed_runtime,
+            &window,
+            capture_with_id(failed_path, 2),
+            Some(crate::latency::OverlayLatencyStart::new(
+                CaptureMode::Window,
+                started_at,
+            )),
+            120,
+            240,
+        )
+        .expect("fresh capture prepares");
+        assert!(fail_transition(
+            &mut failed_runtime,
+            &window,
+            failed_path,
+            2,
+            "overlay_decode_failed",
+            "decode failed",
+        )
+        .is_some());
+        assert!(failed_runtime.pending_latency.is_none());
+        assert_eq!(
+            reveal_transition_with_clock(&mut failed_runtime, &window, failed_path, 2, || {
+                started_at
+            },),
+            RevealTransition::Stale
+        );
     }
 
     #[test]
@@ -1616,9 +1765,9 @@ mod tests {
         runtime.replace(capture(old_path));
         assert_eq!(
             reveal_transition(&mut runtime, &window, old_path, 1),
-            RevealTransition::Shown
+            RevealTransition::Shown(None)
         );
-        prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
+        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
             .expect("new capture prepares");
         assert!(!window.visible.get());
         assert_eq!(runtime.current, Some(capture(new_path)));
@@ -1628,7 +1777,7 @@ mod tests {
         let window = FakeWindow::default();
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(old_path));
-        prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
+        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
             .expect("new capture prepares");
         assert_eq!(
             reveal_transition(&mut runtime, &window, old_path, 1),
@@ -1657,11 +1806,11 @@ mod tests {
             "old failed",
         )
         .is_some());
-        prepare_transition(&mut runtime, &window, capture(new_path), 120, 240)
+        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
             .expect("new capture prepares");
         assert_eq!(
             reveal_transition(&mut runtime, &window, new_path, 1),
-            RevealTransition::Shown
+            RevealTransition::Shown(None)
         );
         assert!(window.visible.get());
 
@@ -1672,7 +1821,7 @@ mod tests {
         runtime.replace(capture(new_path));
         assert_eq!(
             reveal_transition(&mut runtime, &window, new_path, 1),
-            RevealTransition::Shown
+            RevealTransition::Shown(None)
         );
         assert!(fail_transition(
             &mut runtime,
@@ -1693,7 +1842,18 @@ mod tests {
         let window = FakeWindow::default();
         window.fail_show.set(true);
         let mut runtime = OverlayRuntime::default();
-        runtime.replace(capture(path));
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture(path),
+            Some(crate::latency::OverlayLatencyStart::new(
+                CaptureMode::Fullscreen,
+                std::time::Instant::now(),
+            )),
+            120,
+            240,
+        )
+        .expect("fresh capture prepares");
 
         let RevealTransition::Failed(failure) = reveal_transition(&mut runtime, &window, path, 1)
         else {
@@ -1703,9 +1863,13 @@ mod tests {
         assert_eq!(failure.code, "overlay_show_failed");
         assert!(failure.message.contains("native show rejected"));
         assert!(runtime.current.is_none());
+        assert!(runtime.pending_latency.is_none());
         assert_eq!(runtime.last_failure, Some(failure));
         assert!(!window.visible.get());
-        assert_eq!(*window.transitions.borrow(), vec!["show", "hide"]);
+        assert_eq!(
+            *window.transitions.borrow(),
+            vec!["hide", "position", "show", "hide"]
+        );
     }
 
     #[test]

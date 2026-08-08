@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
 };
 use tauri::{AppHandle, Manager};
 
@@ -14,7 +15,7 @@ pub(crate) fn is_capture_in_progress() -> bool {
     CAPTURE_IN_PROGRESS.load(Ordering::Acquire)
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CaptureMode {
     Region,
@@ -24,7 +25,10 @@ pub(crate) enum CaptureMode {
 
 #[derive(Clone, Debug, PartialEq)]
 enum StoredCaptureOutcome {
-    Captured { path: PathBuf },
+    Captured {
+        path: PathBuf,
+        overlay_latency_start: crate::latency::OverlayLatencyStart,
+    },
     Cancelled,
 }
 
@@ -71,6 +75,8 @@ impl Drop for CaptureLease<'_> {
 struct CaptureEvidence<'a> {
     output_bytes: Option<u64>,
     stderr: &'a str,
+    mode: CaptureMode,
+    selection_completed_at: Instant,
 }
 
 #[derive(Debug)]
@@ -145,6 +151,7 @@ fn run_capture_with_durability<R: CaptureRunner, D: CaptureDurability>(
             code: "capture_unavailable",
             message: format!("Could not start macOS screen capture: {error}"),
         })?;
+    let selection_completed_at = Instant::now();
 
     let output_bytes = match fs::metadata(&output) {
         Ok(metadata) => Some(metadata.len()),
@@ -162,6 +169,8 @@ fn run_capture_with_durability<R: CaptureRunner, D: CaptureDurability>(
         CaptureEvidence {
             output_bytes,
             stderr: &process.stderr,
+            mode,
+            selection_completed_at,
         },
     )?;
     if matches!(outcome, StoredCaptureOutcome::Captured { .. }) {
@@ -188,6 +197,10 @@ fn classify_capture(
     if evidence.output_bytes.is_some_and(|bytes| bytes > 0) {
         return Ok(StoredCaptureOutcome::Captured {
             path: output.to_path_buf(),
+            overlay_latency_start: crate::latency::OverlayLatencyStart::new(
+                evidence.mode,
+                evidence.selection_completed_at,
+            ),
         });
     }
 
@@ -287,12 +300,21 @@ pub(crate) async fn capture_screen(
 
     match stored {
         StoredCaptureOutcome::Cancelled => Ok(CaptureOutcome::Cancelled),
-        StoredCaptureOutcome::Captured { path } => {
+        StoredCaptureOutcome::Captured {
+            path,
+            overlay_latency_start,
+        } => {
             let queue = crate::queue::enqueue_capture(app.clone(), path.clone(), mode.into()).await;
             let clipboard =
                 crate::clipboard::copy_new_capture_to_general_pasteboard(app.clone(), path.clone())
                     .await;
-            let overlay = crate::overlay::prepare_capture_overlay(&app, mode, &path, &clipboard);
+            let overlay = crate::overlay::prepare_capture_overlay(
+                &app,
+                mode,
+                &path,
+                &clipboard,
+                overlay_latency_start,
+            );
             if let Err(error) = crate::refresh_tray_status(&app) {
                 eprintln!("Could not refresh Capso after capture: {error}");
             }
@@ -322,6 +344,7 @@ mod tests {
         fs, io,
         path::Path,
         sync::atomic::{AtomicBool, Ordering},
+        time::Instant,
     };
 
     struct WritingRunner;
@@ -352,6 +375,38 @@ mod tests {
                 io::ErrorKind::PermissionDenied,
                 "runner denied",
             ))
+        }
+    }
+
+    #[derive(Default)]
+    struct BoundaryRunner {
+        returning_at: RefCell<Option<Instant>>,
+    }
+
+    impl CaptureRunner for BoundaryRunner {
+        fn run(&self, args: &[OsString]) -> io::Result<ProcessResult> {
+            let output = Path::new(args.last().expect("output path").as_os_str());
+            fs::write(output, b"fake png bytes")?;
+            self.returning_at.replace(Some(Instant::now()));
+            Ok(ProcessResult {
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct BoundaryDurability {
+        file_sync_started_at: RefCell<Option<Instant>>,
+    }
+
+    impl CaptureDurability for BoundaryDurability {
+        fn sync_file(&self, _path: &Path) -> io::Result<()> {
+            self.file_sync_started_at.replace(Some(Instant::now()));
+            Ok(())
+        }
+
+        fn sync_directory(&self, _path: &Path) -> io::Result<()> {
+            Ok(())
         }
     }
 
@@ -454,6 +509,7 @@ mod tests {
     #[test]
     fn missing_output_without_a_diagnostic_is_a_silent_cancel() {
         let output = Path::new("/tmp/capso/cancelled.png");
+        let selection_completed_at = Instant::now();
 
         assert_eq!(
             classify_capture(
@@ -461,6 +517,8 @@ mod tests {
                 CaptureEvidence {
                     output_bytes: None,
                     stderr: "",
+                    mode: CaptureMode::Region,
+                    selection_completed_at,
                 },
             ),
             Ok(StoredCaptureOutcome::Cancelled)
@@ -470,6 +528,7 @@ mod tests {
     #[test]
     fn non_empty_output_is_a_completed_capture() {
         let output = Path::new("/tmp/capso/captured.png");
+        let selection_completed_at = Instant::now();
 
         assert_eq!(
             classify_capture(
@@ -477,10 +536,16 @@ mod tests {
                 CaptureEvidence {
                     output_bytes: Some(42),
                     stderr: "",
+                    mode: CaptureMode::Window,
+                    selection_completed_at,
                 },
             ),
             Ok(StoredCaptureOutcome::Captured {
                 path: output.to_path_buf(),
+                overlay_latency_start: crate::latency::OverlayLatencyStart::new(
+                    CaptureMode::Window,
+                    selection_completed_at,
+                ),
             })
         );
     }
@@ -565,6 +630,7 @@ mod tests {
     #[test]
     fn missing_output_with_a_diagnostic_is_an_actionable_failure() {
         let output = Path::new("/tmp/capso/denied.png");
+        let selection_completed_at = Instant::now();
 
         assert_eq!(
             classify_capture(
@@ -572,6 +638,8 @@ mod tests {
                 CaptureEvidence {
                     output_bytes: None,
                     stderr: "screen capture permission denied\n",
+                    mode: CaptureMode::Window,
+                    selection_completed_at,
                 },
             ),
             Err(super::CaptureFailure {
@@ -584,6 +652,7 @@ mod tests {
     #[test]
     fn zero_byte_output_is_never_reported_as_a_capture_or_cancel() {
         let output = Path::new("/tmp/capso/empty.png");
+        let selection_completed_at = Instant::now();
 
         assert_eq!(
             classify_capture(
@@ -591,6 +660,8 @@ mod tests {
                 CaptureEvidence {
                     output_bytes: Some(0),
                     stderr: "",
+                    mode: CaptureMode::Fullscreen,
+                    selection_completed_at,
                 },
             ),
             Err(super::CaptureFailure {
@@ -618,18 +689,49 @@ mod tests {
             &WritingRunner,
         );
 
-        assert_eq!(
-            result,
-            Ok(StoredCaptureOutcome::Captured {
-                path: expected.clone(),
-            })
-        );
+        let StoredCaptureOutcome::Captured { path, .. } = result.expect("stored capture") else {
+            panic!("expected completed capture");
+        };
+        assert_eq!(path, expected);
         assert_eq!(
             fs::read(&expected).expect("stored capture"),
             b"fake png bytes"
         );
 
         fs::remove_dir_all(app_data).expect("clean test capture directory");
+    }
+
+    #[test]
+    fn overlay_latency_starts_after_picker_completion_and_before_durability_work() {
+        let app_data = tempfile::tempdir().expect("temporary app data");
+        let runner = BoundaryRunner::default();
+        let durability = BoundaryDurability::default();
+
+        let outcome = super::run_capture_with_durability(
+            app_data.path(),
+            CaptureMode::Region,
+            "018f22c4-cada-7c6b-9d5b-fc35f7f9227a",
+            &runner,
+            &durability,
+        )
+        .expect("capture succeeds");
+        let StoredCaptureOutcome::Captured {
+            overlay_latency_start,
+            ..
+        } = outcome
+        else {
+            panic!("expected completed capture");
+        };
+        let selection_completed_at = overlay_latency_start.selection_completed_at();
+
+        assert!(selection_completed_at >= runner.returning_at.borrow().expect("runner boundary"));
+        assert!(
+            selection_completed_at
+                <= durability
+                    .file_sync_started_at
+                    .borrow()
+                    .expect("durability boundary")
+        );
     }
 
     #[test]
