@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `d3fd58f2a25efbf3d4c1596ed9ae8fb1127c2aba` |
 | Current phase | Native capture vertical slice |
-| Next objective | HIS-01a: add thumbnail-backed Recent Captures and a full-library deep link while preserving exact local restore; AI-01a production auth/linking remains an owner gate and CAP-02b remains a foreground manual proof |
+| Next objective | PKG-01a owner gate: approve a permanent reverse-DNS bundle identity and entitlement manifest before implementation; AI-01a identity/linking also remains owner-gated, while CAP-02b and native history QA are foreground manual proofs |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -34,7 +34,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-08 08:48 HKT | ANN-01b APPROVED on the first submission | HIS-01a thumbnails and full-library deep link |
+| capso-cleanshot-replacement | hourly | 2026-08-08 10:28 HKT | HIS-01a APPROVED on the first submission | PKG-01a permanent bundle identity decision |
 
 ## Gate scoreboard
 
@@ -48,7 +48,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | OVL-01 overlay experience | IN_PROGRESS | `91e6643` adds the hidden-until-decode 252×194 display-correct overlay; `8923e90` adds exact-current Copy, atomic Save As, Close, and one-shot eight-second hover/action-paused dismissal; `8bd0888` restores recent durable PNGs; `db0ab1e` adds exact copy-only native drag-out; `42fcfbf` connects the native Annotate action and protects its overlay session | Native focus, mixed-scale multi-display, interaction, relaunch-restore, drag/drop, annotation, and latency QA |
 | ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor and durable flatten path; `4651859` proves one cross-language golden redaction fixture byte-for-byte through production pixelation, editor input validation, canonical/original save, clipboard, queue crash recovery, and drain consumption; 129 Rust + 98 workspace tests pass | Physical four-tool editor/save/copy/relaunch QA plus a downloaded remote-object pixel comparison |
 | DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels, atomic restart FIFO/orphan recovery, exact backoff, poison isolation, idempotency, corrupt-store preservation, and zero deletion; `b3b9641` proves a production-compiled single-flight coordinator; `c3278ba` adds the exact authenticated-ingest request/ack/error contract | Real auth/HTTP transport plus connectivity/retry wake sources, then the three-capture offline/restart/reconnect drill |
-| HIS-01 reliable history | IN_PROGRESS | `8bd0888` scans the five newest valid durable UUID PNGs at launch and exposes exact-ID native Recent Captures restore without touching the pasteboard | Native relaunch/menu interaction proof, thumbnails, full-library deep links, and queued end-to-end persistence |
+| HIS-01 reliable history | IN_PROGRESS | `8bd0888` provides exact-ID local restore without touching the pasteboard; `e0b1020` orders by durable queue capture time, attaches bounded 48×32 native thumbnails, and adds an explicit verified production-library route while retaining full-decode/path checks | Native relaunch/menu thumbnail/click/focus proof plus queued end-to-end cloud persistence |
 | AI-01 browser-independent processing | BLOCKED | `c3278ba` proves a strict single-use PKCE callback and authenticated ingest contract, but the Mac has no production session/transport and classification remains browser-only | Owner identity/linking decision, real auth adapter, authenticated upload, and server worker |
 | LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
 | RET-01 retrieval | IN_PROGRESS | Lexical retrieval passes; pgvector path absent | Hybrid search golden evaluation |
@@ -77,11 +77,11 @@ outcome that fits the run budget.
 | 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
 | 14 | ✅ ANN-01a — native four-tool editor, protected first original, atomic flatten, queue reservation/recovery, clipboard re-copy, and overlay refresh (`42fcfbf`) | OVL-01b, DUR-01a | annotation QA |
 | 15 | ✅ ANN-01b — exact irreversible redaction and flattened pixels through save, clipboard, queue restart, and drain (`4651859`) | ANN-01a | physical/cloud-object QA remains under ANN-01 |
-| 16 | HIS-01a — recent captures menu and full library deep links <!-- partial: `8bd0888` completes the five-item text menu and exact-ID local restore; thumbnails, full-library deep links, and native QA remain --> | DUR-01a | history QA |
+| 16 | ✅ HIS-01a — exact local restore plus queue-timestamped five-item thumbnail menu and full-library deep link (`8bd0888`, `e0b1020`) | DUR-01a | native history QA |
 | 17 | LRN-01a — scripted three-corrections-to-fourth-capture evaluation | AI-01b | model calls approved under existing config |
 | 18 | RET-01a — pgvector + keyword retrieval implementation | AI-01b | embedding-provider decision if unresolved |
 | 19 | RET-01b — exact OCR and vague-memory golden query evaluation | RET-01a | real dogfood corpus |
-| 20 | PKG-01a — correct bundle identity and entitlement manifest | UX-01a | none |
+| 20 | PKG-01a — correct bundle identity and entitlement manifest | UX-01a | permanent reverse-DNS identity/entitlement approval required |
 | 21 | PKG-01b — Developer ID signing and notarization | PKG-01a | explicit credentials/distribution approval |
 | 22 | PKG-01c — fresh-user install and onboarding proof | PKG-01b | fresh macOS user QA |
 | 23 | DOG-01 — five-day, 50-capture replacement period | every scoreboard gate PASS | Elvin daily use |
@@ -109,6 +109,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | 2026-08-08 08:21 | capso-cleanshot-replacement | ANN-01a native four-tool editor and flattened queue pixels | FAILED after 2 repairs | — | The uncommitted WIP reached 127/127 Rust and 97/97 workspace tests, strict Clippy, full build/lint/typecheck, loop validation, light/dark/min-window QA, and an arm64 debug `.app`. Checker passes repaired close/retry deadlocks, timeout, capture/annotation mutual exclusion, atomic overlay publication, and original fsync recovery, but final review found history changes clipboard ownership before its overlay publication wins. If Annotate wins, Save/Copy become stale. No rejected source was committed. Next run: make history clipboard activation and overlay publication one transaction with rollback/deferred commit, add the losing-history interleaving test, and resubmit ANN-01a. |
 | 2026-08-08 08:33 | capso-cleanshot-replacement | ANN-01a transactional history repair and native four-tool editor resubmission | APPROVED | `42fcfbf` | Clipboard identity now commits only after history overlay publication wins; a deterministic history-versus-real-AnnotationRuntime interleaving proves losing history leaves the fresh capture copyable. 128/128 Rust and 97/97 workspace tests, strict Clippy, format, lint, typecheck, full builds, fresh debug `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no P0–P2 findings. Native pixel/physical QA remains; next: ANN-01b. |
 | 2026-08-08 08:48 | capso-cleanshot-replacement | ANN-01b exact irreversible redaction and flattened-pixel chain | APPROVED | `4651859` | A shared 4×4 golden fixture proves production pixelation collapses 16 source values to one exact RGBA value, and the native test carries those exact flattened bytes through editor data-URL validation, canonical/original persistence, clipboard, queue crash-window recovery, restart reconciliation, and drain consumption. 129/129 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, loop validation, and diff checks pass. Checker approved submission 1 with no blocking findings. Remote-object and physical native QA remain; next: HIS-01a. |
+| 2026-08-08 10:28 | capso-cleanshot-replacement | HIS-01a queue-timestamped thumbnail history and Open Library | APPROVED | `e0b1020` | The five-item native menu now uses stable queue capture timestamps, fully decoded fixed 48×32 aspect-preserving thumbnails, exact UUID restore, and an explicit `https://capso-cyan.vercel.app/library` action. 133/133 Rust and 98/98 workspace tests, strict Clippy, format, typecheck, lint, builds, fresh arm64 `.app`, live route 200, loop validation, and diff checks pass. Checker approved submission 1 with no P0–P2 findings. Native menu/relaunch/focus QA and cloud persistence remain; next: PKG-01a owner decision. |
 
 ## Discovered technical debt
 
@@ -122,7 +123,11 @@ is PASS; a skipped or unverified gate is not PASS.
 
 ## Blocked owner decisions
 
-- Developer ID signing/notarization credentials are required only when PKG-01a begins.
+- Approve the permanent reverse-DNS bundle identifier and entitlement manifest before
+  PKG-01a changes macOS identity; `com.capso.app` is temporary and unsuitable.
+- Developer ID signing/notarization credentials are required only after PKG-01a.
   Never read, export, or alter signing credentials without explicit owner approval.
+- Decide whether native sign-in adopts/migrates the current anonymous browser library or
+  starts a fresh authenticated library before AI-01a production wiring.
 - Changing production auth, applying database migrations, spending money, distributing a
   build, or changing CleanShot settings remains a STOP-and-ask action.

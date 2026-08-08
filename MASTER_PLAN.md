@@ -91,9 +91,11 @@ annotation editor, preserves the first original, atomically flattens the durable
 keeps queue/clipboard/overlay identity aligned across save and retry. `4651859` adds an
 exact cross-language golden proof that irreversible redaction survives local save,
 clipboard, queue restart recovery, and drain consumption without restoring source detail.
-The next independent implementation objective is HIS-01a, thumbnail-backed Recent
-Captures plus a full-library deep link. CAP-02b's 20-capture latency proof remains a
-foreground manual gate. A
+`e0b1020` completes HIS-01a's code slice with durable queue timestamps, bounded native
+thumbnails, exact local restore, and an explicit production-library route. The next
+ordered code item is PKG-01a, but changing the permanent reverse-DNS identity and
+entitlement manifest requires owner approval. CAP-02b's 20-capture latency proof remains
+a foreground manual gate. A
 real auth/upload transport, connectivity and retry wake sources, the reconnect drill, and
 server-side processing remain hard prerequisites before a native capture can learn with
 every browser closed.
@@ -113,9 +115,11 @@ tested. Completed captures now also prepare a hidden-until-decode, always-on-top
 nonfocusable overlay on the correct display through the same direct/tray/global path.
 That overlay now has generation-safe Copy, atomic Save As, Close, and hover/action-paused
 auto-dismiss actions. A native Recent Captures submenu now discovers the five newest
-valid durable PNGs across relaunches and restores an exact item to the cursor display
-without changing the pasteboard until Copy. The thumbnail now also starts an exact,
-copy-only native macOS drag using an isolated friendly-name proxy and bounded preview;
+valid durable PNGs, keeps their queue-originated capture time stable across annotation,
+renders bounded native thumbnails, restores an exact item to the cursor display without
+changing the pasteboard until Copy, and explicitly opens the production web library. The
+thumbnail also starts an exact, copy-only native macOS drag using an isolated friendly-name
+proxy and bounded preview;
 stale, released, re-pressed, and concurrent gestures are rejected without mutating the
 durable UUID original. Every new capture is now file-and-directory synced before an atomic
 JSON queue handoff; restart restores FIFO work, reconciles safe orphan UUID PNGs, and keeps
@@ -138,12 +142,14 @@ Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state
 Known blockers:
 1. **Native capture path** — the command seam, editable shortcuts, conflict-safe tray
    fallbacks, permission-aware menu lifecycle, persist-first AppKit clipboard path, and
-   display-correct overlay with Copy, Save As, Close, auto-dismiss, and durable five-item
-   recent restore, native drag-out, durable local queue, fake-transport drain coordinator,
+   display-correct overlay with Copy, Save As, Close, auto-dismiss, queue-timestamped
+   thumbnail history, exact recent restore, Open Library, native drag-out, durable local
+   queue, fake-transport drain coordinator,
    strict auth/ingest contract, native four-tool annotation/flattening, and the exact local
    redaction pixel chain are tested, but
    the production authenticated transport/connectivity wake path does not exist. Physical
-   shortcut, recent-menu, physical annotation save/copy/relaunch, downloaded cloud-object,
+   shortcut, recent-menu thumbnail/relaunch/click/focus, physical annotation
+   save/copy/relaunch, downloaded cloud-object,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
 2. **Mac identity + background worker** — the PKCE/ingest boundary is compiled but browser
@@ -153,7 +159,8 @@ Known blockers:
 3. **Native permission evidence** — Screen Recording and multi-display behavior have not
    passed end-to-end QA from the bundled app.
 4. **Distribution** — the local DMG is ad-hoc signed, not notarized, and its current bundle
-   identifier is unsuitable. Developer ID decisions remain an owner gate.
+   identifier is unsuitable. The permanent reverse-DNS identity/entitlement manifest and
+   later Developer ID decisions remain owner gates.
 5. **Retrieval** — current UI search is lexical; the planned pgvector hybrid path and
    embedding generation are incomplete.
 
