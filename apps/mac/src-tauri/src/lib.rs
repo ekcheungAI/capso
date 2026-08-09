@@ -10,11 +10,16 @@ mod latency;
 mod overlay;
 mod queue;
 mod shortcuts;
+mod sync;
 mod system;
 mod upload;
 
 use serde::Serialize;
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tauri::{
     menu::{IconMenuItemBuilder, Menu, MenuBuilder, MenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -85,6 +90,49 @@ fn capture_event(
     }
 }
 
+fn background_wake_for_capture(
+    result: &Result<capture::CaptureOutcome, capture::CaptureFailure>,
+) -> Option<drain::DrainWake> {
+    matches!(
+        result,
+        Ok(capture::CaptureOutcome::Captured {
+            queue: queue::CaptureQueueStatus::Enqueued { .. }
+                | queue::CaptureQueueStatus::AlreadyQueued { .. },
+            ..
+        })
+    )
+    .then_some(drain::DrainWake::CaptureEnqueued)
+}
+
+fn background_sync_now_ms() -> Result<u64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .map_err(|_| "Capso could not timestamp its background sync wake.".into())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
+    let _sync_task = tauri::async_runtime::spawn_blocking(move || {
+        let result = (|| {
+            let now_ms = background_sync_now_ms()?;
+            let sync_state = app.state::<Mutex<sync::ProductionSyncRuntime>>();
+            let sync = sync_state
+                .lock()
+                .map_err(|_| "Capso's background sync is temporarily unavailable.".to_string())?;
+            let coordinator = app.state::<drain::DrainCoordinator>();
+            let queue = app.state::<Mutex<queue::QueueRuntime>>();
+            sync.wake(wake, &coordinator, &*queue, now_ms)
+        })();
+        if let Err(error) = result {
+            eprintln!("Capso background sync wake failed safely: {error}");
+        }
+        if let Err(error) = refresh_tray_status(&app) {
+            eprintln!("Could not refresh Capso after background sync: {error}");
+        }
+    });
+}
+
 fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
     if system::permission_for_capture(action.mode(), system::screen_recording_granted())
         == system::CapturePermission::RequiresScreenRecording
@@ -123,6 +171,11 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
                 }
                 Ok(_) => {}
             }
+        }
+
+        if let Some(wake) = background_wake_for_capture(&result) {
+            #[cfg(target_os = "macos")]
+            spawn_background_sync(app.clone(), wake);
         }
 
         let _ = app.emit("capture-finished", capture_event(&result));
@@ -559,6 +612,7 @@ pub fn run() {
         .manage(Mutex::new(latency::OverlayLatencyRuntime::default()))
         .manage(drain::DrainCoordinator::default())
         .manage(Mutex::new(auth::AuthRuntime::default()))
+        .manage(Mutex::new(sync::ProductionSyncRuntime::from_embedded()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -710,6 +764,9 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            #[cfg(target_os = "macos")]
+            spawn_background_sync(app.handle().clone(), drain::DrainWake::Startup);
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -739,7 +796,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture, clipboard, latency, overlay, queue};
+    use super::{capture, clipboard, drain, latency, overlay, queue};
 
     fn latency_report(
         sample_count: usize,
@@ -831,6 +888,45 @@ mod tests {
                     "message": "Could not commit queue"
                 }
             })
+        );
+    }
+
+    #[test]
+    fn only_a_durably_queued_capture_requests_a_background_drain_wake() {
+        let captured = |queue| {
+            Ok(capture::CaptureOutcome::Captured {
+                path: "/tmp/capso/captured.png".into(),
+                clipboard: clipboard::ClipboardStatus::Copied { bytes: 42 },
+                overlay: overlay::OverlayStatus::Prepared { x: 1440, y: 900 },
+                queue,
+            })
+        };
+        assert_eq!(
+            super::background_wake_for_capture(&captured(queue::CaptureQueueStatus::Enqueued {
+                id: "018f22c4-cada-7c6b-9d5b-fc35f7f9227a".into(),
+                queued: 1,
+            })),
+            Some(drain::DrainWake::CaptureEnqueued)
+        );
+        assert_eq!(
+            super::background_wake_for_capture(&captured(
+                queue::CaptureQueueStatus::AlreadyQueued {
+                    id: "018f22c4-cada-7c6b-9d5b-fc35f7f9227a".into(),
+                    queued: 1,
+                }
+            )),
+            Some(drain::DrainWake::CaptureEnqueued)
+        );
+        assert_eq!(
+            super::background_wake_for_capture(&captured(queue::CaptureQueueStatus::Failed {
+                code: "queue_persist_failed",
+                message: "kept local".into(),
+            })),
+            None
+        );
+        assert_eq!(
+            super::background_wake_for_capture(&Ok(capture::CaptureOutcome::Cancelled)),
+            None
         );
     }
 

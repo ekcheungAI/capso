@@ -681,6 +681,9 @@ pub(crate) fn prepare_capture_overlay(
     latency_start: crate::latency::OverlayLatencyStart,
 ) -> OverlayStatus {
     let status = prepare_capture_overlay_transaction(app, mode, path, clipboard, latency_start);
+    if matches!(status, OverlayStatus::Failed { .. }) {
+        release_quick_access_capture(app, path);
+    }
     crate::clipboard::complete_new_capture_transaction(app, path);
     status
 }
@@ -817,6 +820,9 @@ fn prepare_overlay(
     if let Err(failure) =
         prepare_transition(&mut runtime, window, payload.clone(), latency_start, x, y)
     {
+        drop(annotation_runtime);
+        drop(runtime);
+        finish_quick_access_publication(app, None);
         return overlay_failure(failure.code, failure.message);
     }
 
@@ -831,11 +837,42 @@ fn prepare_overlay(
             "overlay_event_failed",
             &message,
         );
+        drop(annotation_runtime);
+        drop(runtime);
+        finish_quick_access_publication(app, None);
         return overlay_failure("overlay_event_failed", message);
     }
 
     drop(annotation_runtime);
+    drop(runtime);
+    let active_capture = (source == OverlaySource::Capture).then_some(path);
+    finish_quick_access_publication(app, active_capture);
     OverlayStatus::Prepared { x, y }
+}
+
+fn wake_after_quick_access_release(app: &AppHandle, released: Result<bool, String>) {
+    match released {
+        Ok(true) => {
+            #[cfg(target_os = "macos")]
+            crate::spawn_background_sync(app.clone(), crate::drain::DrainWake::CaptureEnqueued);
+        }
+        Ok(false) => {}
+        Err(error) => eprintln!("Could not update Capso's Quick Access upload hold: {error}"),
+    }
+}
+
+fn finish_quick_access_publication(app: &AppHandle, active_capture: Option<&Path>) {
+    wake_after_quick_access_release(
+        app,
+        crate::queue::publish_quick_access_for_app(app, active_capture),
+    );
+}
+
+fn release_quick_access_capture(app: &AppHandle, capture: &Path) {
+    wake_after_quick_access_release(
+        app,
+        crate::queue::release_quick_access_for_app(app, capture),
+    );
 }
 
 #[tauri::command]
@@ -883,6 +920,7 @@ pub(crate) fn overlay_image_ready(
             Ok(true)
         }
         RevealTransition::Failed(failure) => {
+            release_quick_access_capture(&app, Path::new(&path));
             report_overlay_failure(&app, &failure);
             Err(failure.message)
         }
@@ -916,6 +954,7 @@ pub(crate) fn overlay_image_failed(
         return Ok(false);
     };
 
+    release_quick_access_capture(&app, Path::new(&path));
     report_overlay_failure(&app, &failure);
     Ok(true)
 }
@@ -1186,6 +1225,7 @@ pub(crate) fn overlay_dismiss(
     match transition {
         DismissTransition::Stale => Ok(false),
         DismissTransition::Dismissed => {
+            release_quick_access_capture(&app, Path::new(&path));
             let _ = app.emit(
                 "capture-overlay-dismissed",
                 OverlayDismissed {

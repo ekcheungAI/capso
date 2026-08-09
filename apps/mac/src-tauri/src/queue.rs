@@ -658,11 +658,13 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 pub(crate) struct QueueRuntime {
     queue: Option<DurableUploadQueue>,
     warning: Option<String>,
+    quick_access_reservations: HashSet<String>,
     annotation_reservations: HashSet<String>,
 }
 
 impl QueueRuntime {
     fn initialize(&mut self, queue: Result<DurableUploadQueue, String>) {
+        self.quick_access_reservations.clear();
         self.annotation_reservations.clear();
         match queue {
             Ok(queue) => {
@@ -687,13 +689,17 @@ impl QueueRuntime {
                 .clone()
                 .unwrap_or_else(|| "Capso's upload queue is not initialized.".into())
         })?;
+        let id = capture_id_from_path(&queue.capture_directory, source)?;
         match queue.enqueue(source, capture_source, created_at_ms) {
             Ok(outcome) => {
                 self.warning = None;
-                let id = capture_id_from_path(&queue.capture_directory, source)?;
+                self.quick_access_reservations.insert(id.clone());
                 Ok((id, outcome, queue.summary()))
             }
             Err(error) => {
+                if queue.item(&id).is_some() {
+                    self.quick_access_reservations.insert(id);
+                }
                 self.warning = Some(error.clone());
                 Err(error)
             }
@@ -738,11 +744,42 @@ impl QueueRuntime {
     }
 
     pub(crate) fn claim_next(&mut self, now_ms: u64) -> Result<Option<QueueItem>, String> {
+        let reservations = self
+            .quick_access_reservations
+            .union(&self.annotation_reservations)
+            .cloned()
+            .collect();
         let result = match self.queue.as_mut() {
-            Some(queue) => queue.claim_next_excluding(now_ms, &self.annotation_reservations),
+            Some(queue) => queue.claim_next_excluding(now_ms, &reservations),
             None => Err(self.unavailable_message()),
         };
         self.record_drain_result(result)
+    }
+
+    pub(crate) fn publish_quick_access(&mut self, source: Option<&Path>) -> Result<bool, String> {
+        let active_id = match source {
+            Some(source) => {
+                let queue = self
+                    .queue
+                    .as_ref()
+                    .ok_or_else(|| self.unavailable_message())?;
+                Some(capture_id_from_path(&queue.capture_directory, source)?)
+            }
+            None => None,
+        };
+        let before = self.quick_access_reservations.len();
+        self.quick_access_reservations
+            .retain(|id| active_id.as_ref() == Some(id));
+        Ok(self.quick_access_reservations.len() != before)
+    }
+
+    pub(crate) fn release_quick_access(&mut self, source: &Path) -> Result<bool, String> {
+        let queue = self
+            .queue
+            .as_ref()
+            .ok_or_else(|| self.unavailable_message())?;
+        let id = capture_id_from_path(&queue.capture_directory, source)?;
+        Ok(self.quick_access_reservations.remove(&id))
     }
 
     pub(crate) fn begin_annotation(&mut self, source: &Path) -> Result<String, String> {
@@ -757,14 +794,20 @@ impl QueueRuntime {
         if item.status != QueueItemStatus::Pending || item.attempts != 0 {
             return Err("That capture can no longer be edited before upload.".into());
         }
-        if !self.annotation_reservations.insert(id.clone()) {
+        if self.annotation_reservations.contains(&id) {
             return Err("That capture is already open in the annotation editor.".into());
         }
+        if !self.quick_access_reservations.remove(&id) {
+            return Err("That capture is no longer reserved for editing before upload.".into());
+        }
+        self.annotation_reservations.insert(id.clone());
         Ok(id)
     }
 
     pub(crate) fn cancel_annotation(&mut self, id: &str) {
-        self.annotation_reservations.remove(id);
+        if self.annotation_reservations.remove(id) {
+            self.quick_access_reservations.insert(id.to_string());
+        }
     }
 
     pub(crate) fn record_annotation(&mut self, id: &str) -> Result<(), String> {
@@ -872,6 +915,26 @@ pub(crate) fn capture_timestamps_for_app<R: Runtime>(
         .lock()
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
         .capture_timestamps()
+}
+
+pub(crate) fn publish_quick_access_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+    active_capture: Option<&Path>,
+) -> Result<bool, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .publish_quick_access(active_capture)
+}
+
+pub(crate) fn release_quick_access_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+    capture: &Path,
+) -> Result<bool, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .release_quick_access(capture)
 }
 
 pub(crate) async fn enqueue_capture(
@@ -1007,7 +1070,15 @@ mod tests {
         DurableUploadQueue, EnqueueOutcome, QueueItemStatus, QueueRuntime, QueueSource,
         MAX_AUTOMATIC_ATTEMPTS, RETRY_DELAYS_MS,
     };
-    use std::{fs, path::Path};
+    use crate::drain::{
+        DrainCoordinator, DrainWake, TransportAvailability, UploadAcknowledgement, UploadResult,
+        UploadTransport, WakeResult,
+    };
+    use std::{
+        fs,
+        path::Path,
+        sync::{Arc, Mutex},
+    };
 
     const FIRST_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f92270";
     const SECOND_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f92271";
@@ -1140,12 +1211,12 @@ mod tests {
         let captures = root.path().join("captures");
         let store = root.path().join("upload-queue.json");
         let source = capture(&captures, FIRST_ID);
-        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
-        queue
-            .enqueue(&source, QueueSource::Region, 0)
-            .expect("enqueue capture");
+        let queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
         let mut runtime = QueueRuntime::default();
         runtime.initialize(Ok(queue));
+        runtime
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue capture");
 
         assert_eq!(
             runtime.begin_annotation(&source).expect("reserve"),
@@ -1177,23 +1248,114 @@ mod tests {
         );
     }
 
+    #[derive(Clone, Debug, Default)]
+    struct ImmediateAuthenticatedTransport {
+        uploaded_pixels: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl UploadTransport for ImmediateAuthenticatedTransport {
+        fn availability(&self) -> TransportAvailability {
+            TransportAvailability::Ready
+        }
+
+        fn upload(&self, item: &super::QueueItem) -> UploadResult {
+            self.uploaded_pixels
+                .lock()
+                .expect("uploaded pixels lock")
+                .push(fs::read(&item.file_path).expect("read exact queued pixels"));
+            UploadResult::Confirmed(UploadAcknowledgement {
+                capture_id: item.id.clone(),
+            })
+        }
+    }
+
     #[test]
-    fn cancelling_annotation_releases_the_unmodified_capture() {
+    fn quick_access_reservation_prevents_fast_upload_then_releases_flattened_pixels() {
         let root = tempfile::tempdir().expect("temporary app data");
         let captures = root.path().join("captures");
         let store = root.path().join("upload-queue.json");
         let source = capture(&captures, FIRST_ID);
-        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
-        queue
-            .enqueue(&source, QueueSource::Region, 0)
-            .expect("enqueue capture");
+        let queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
         let mut runtime = QueueRuntime::default();
         runtime.initialize(Ok(queue));
+        runtime
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue and reserve Quick Access");
+        let runtime = Mutex::new(runtime);
+        let transport = ImmediateAuthenticatedTransport::default();
+        let coordinator = DrainCoordinator::default();
+
+        let WakeResult::Ran(held) = coordinator
+            .wake(DrainWake::CaptureEnqueued, &runtime, &transport, 1)
+            .expect("fast authenticated wake")
+        else {
+            panic!("first wake must run")
+        };
+        assert_eq!(held.attempted, 0);
+        assert!(transport
+            .uploaded_pixels
+            .lock()
+            .expect("uploaded pixels lock")
+            .is_empty());
+
+        {
+            let mut runtime = runtime.lock().expect("queue runtime lock");
+            assert_eq!(
+                runtime
+                    .begin_annotation(&source)
+                    .expect("transfer reservation"),
+                FIRST_ID
+            );
+            fs::write(&source, b"\x89PNG\r\n\x1a\nflattened pixels")
+                .expect("write flattened pixels");
+            runtime
+                .record_annotation(FIRST_ID)
+                .expect("record flattened annotation");
+            runtime
+                .complete_annotation(FIRST_ID)
+                .expect("release annotation");
+        }
+
+        let WakeResult::Ran(drained) = coordinator
+            .wake(DrainWake::CaptureEnqueued, &runtime, &transport, 2)
+            .expect("wake after annotation")
+        else {
+            panic!("second wake must run")
+        };
+        assert_eq!(drained.uploaded, 1);
+        assert_eq!(
+            *transport
+                .uploaded_pixels
+                .lock()
+                .expect("uploaded pixels lock"),
+            vec![b"\x89PNG\r\n\x1a\nflattened pixels".to_vec()]
+        );
+    }
+
+    #[test]
+    fn cancelling_annotation_restores_quick_access_before_unmodified_upload() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let source = capture(&captures, FIRST_ID);
+        let queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        let mut runtime = QueueRuntime::default();
+        runtime.initialize(Ok(queue));
+        runtime
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue capture");
 
         let id = runtime.begin_annotation(&source).expect("reserve");
         runtime.cancel_annotation(&id);
-        let claimed = runtime
+        assert!(runtime
             .claim_next(1)
+            .expect("Quick Access remains reserved")
+            .is_none());
+        assert!(runtime
+            .release_quick_access(&source)
+            .expect("dismiss Quick Access"));
+        let claimed = runtime
+            .claim_next(2)
             .expect("claim queue")
             .expect("capture");
         assert!(!claimed.annotated);

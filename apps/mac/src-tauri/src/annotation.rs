@@ -733,6 +733,8 @@ pub(crate) async fn save_annotation_editor(
             "The image is safe locally, but its upload reservation could not be released: {error}"
         ));
     }
+    #[cfg(target_os = "macos")]
+    crate::spawn_background_sync(app.clone(), crate::drain::DrainWake::CaptureEnqueued);
     if let Some(window) = app.get_webview_window(ANNOTATION_LABEL) {
         let _ = window.hide();
     }

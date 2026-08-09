@@ -1,5 +1,6 @@
-// AI-01a1 lands the provider-neutral PKCE boundary before a production Supabase
-// adapter or URL-scheme registration is selected and approved.
+// Native auth keeps PKCE state, rotating Supabase sessions, and Keychain bytes
+// behind strict redacted boundaries. User-facing sign-in delivery remains a
+// separate surface from this background runtime.
 #![allow(dead_code)]
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -502,6 +503,71 @@ impl<V: SessionVault> SessionRepository<V> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct SessionCoordinator<C, V> {
+    config: SupabaseAuthConfig,
+    auth: SupabaseAuthClient<C>,
+    repository: SessionRepository<V>,
+}
+
+impl<C, V> SessionCoordinator<C, V> {
+    pub(crate) fn new(
+        config: SupabaseAuthConfig,
+        http: C,
+        repository: SessionRepository<V>,
+    ) -> Result<Self, AuthContractError> {
+        let auth = SupabaseAuthClient::new(config.clone(), http)?;
+        Ok(Self {
+            config,
+            auth,
+            repository,
+        })
+    }
+
+    pub(crate) fn config(&self) -> &SupabaseAuthConfig {
+        &self.config
+    }
+
+    #[cfg(test)]
+    fn http(&self) -> &C {
+        &self.auth.http
+    }
+
+    #[cfg(test)]
+    fn repository(&self) -> &SessionRepository<V> {
+        &self.repository
+    }
+}
+
+impl<C: AuthHttpClient, V: SessionVault> SessionCoordinator<C, V> {
+    pub(crate) fn fresh_session(
+        &self,
+        now_ms: u64,
+    ) -> Result<Option<AuthSession>, AuthContractError> {
+        let Some(session) = self.repository.load().map_err(|_| {
+            AuthContractError::new(
+                "auth_session_unavailable",
+                "Capso could not read its secure session; sign in again if this continues.",
+            )
+        })?
+        else {
+            return Ok(None);
+        };
+        if session.usable_access_token(now_ms).is_some() {
+            return Ok(Some(session));
+        }
+
+        let refreshed = self.auth.refresh(&session, now_ms)?;
+        self.repository.save(&refreshed).map_err(|_| {
+            AuthContractError::new(
+                "auth_session_store_failed",
+                "Capso refreshed your session but could not save it securely; try again.",
+            )
+        })?;
+        Ok(Some(refreshed))
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct KeychainSessionVault;
@@ -705,8 +771,8 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::{
         AuthHttpClient, AuthHttpRequest, AuthHttpResponse, AuthRuntime, AuthSession, AuthStart,
-        SessionRepository, SessionVault, SupabaseAuthClient, SupabaseAuthConfig, AUTH_CALLBACK_URI,
-        HANDOFF_TTL_MS,
+        SessionCoordinator, SessionRepository, SessionVault, SupabaseAuthClient,
+        SupabaseAuthConfig, AUTH_CALLBACK_URI, HANDOFF_TTL_MS,
     };
     use std::{collections::VecDeque, sync::Mutex};
 
@@ -1064,6 +1130,92 @@ mod tests {
             .expect("seed corrupt record");
         let error = repository.load().expect_err("corrupt record rejected");
         assert!(!error.contains("leaked-but-corrupt"));
+    }
+
+    #[test]
+    fn session_coordinator_reuses_a_fresh_keychain_session_without_auth_network() {
+        let vault = MemoryVault::default();
+        let repository = SessionRepository::new(vault);
+        let session = AuthSession::for_test(
+            "header.payload.signature",
+            "refresh_0123456789abcdef",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            3_610_000,
+        );
+        repository.save(&session).expect("seed secure session");
+        let coordinator =
+            SessionCoordinator::new(auth_config(), RecordingAuthHttp::default(), repository)
+                .expect("session coordinator");
+
+        assert_eq!(
+            coordinator.fresh_session(10_000).expect("fresh session"),
+            Some(session)
+        );
+        assert!(
+            coordinator
+                .http()
+                .requests
+                .lock()
+                .expect("request lock")
+                .is_empty(),
+            "a fresh Keychain access token must not trigger an Auth request"
+        );
+    }
+
+    #[test]
+    fn session_coordinator_rotates_an_expiring_session_before_returning_it() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        let expiring = AuthSession::for_test(
+            "old.access.token",
+            "old_refresh_token",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            60_000,
+        );
+        repository.save(&expiring).expect("seed expiring session");
+        let coordinator = SessionCoordinator::new(
+            auth_config(),
+            RecordingAuthHttp::responding(token_response(200)),
+            repository,
+        )
+        .expect("session coordinator");
+
+        let rotated = coordinator
+            .fresh_session(1)
+            .expect("rotate session")
+            .expect("stored session");
+        assert_ne!(rotated, expiring);
+        assert_eq!(rotated.expires_at_ms(), 3_600_001);
+        assert_eq!(
+            coordinator.repository().load().expect("persisted rotation"),
+            Some(rotated)
+        );
+        assert_eq!(
+            coordinator
+                .http()
+                .requests
+                .lock()
+                .expect("request lock")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn session_coordinator_has_a_network_free_missing_session_hold() {
+        let coordinator = SessionCoordinator::new(
+            auth_config(),
+            RecordingAuthHttp::default(),
+            SessionRepository::new(MemoryVault::default()),
+        )
+        .expect("session coordinator");
+
+        assert_eq!(coordinator.fresh_session(10_000).expect("no session"), None);
+        assert!(coordinator
+            .http()
+            .requests
+            .lock()
+            .expect("request lock")
+            .is_empty());
     }
 
     #[test]

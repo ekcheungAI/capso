@@ -1,7 +1,7 @@
 # Capso — Master Plan
 
 > Canonical entry point for the Capso planning pack. Every planning or build session starts here.
-> Status: **Build active — native CleanShot replacement loop.** Last updated: 2026-08-08.
+> Status: **Build active — native CleanShot replacement loop.** Last updated: 2026-08-09.
 
 ## 1. Product summary
 
@@ -85,8 +85,10 @@ adds synced capture pixels and an atomic restart-safe local queue, while `b3b964
 production-compiled single-flight drain coordinator with exact-ID acknowledgement and
 error-safe wake handoff proofs. `c3278ba` now adds a strict native PKCE callback seam and
 shared authenticated-ingest request/ack/error contract without caller-supplied ownership.
-Production identity/linking, deep-link registration, Supabase exchange, Keychain storage,
-and real upload remain owner-gated/unwired. `42fcfbf` now connects a native four-tool
+Production identity/linking, deep-link registration, and the first account session remain
+owner-gated/unwired. The native startup/capture runtime now loads an existing matching
+Keychain session, refreshes it before expiry, creates the real Storage/RPC transport, and
+wakes the durable drain off the UI thread. `42fcfbf` now connects a native four-tool
 annotation editor, preserves the first original, atomically flattens the durable PNG, and
 keeps queue/clipboard/overlay identity aligned across save and retry. `4651859` adds an
 exact cross-language golden proof that irreversible redaction survives local save,
@@ -102,8 +104,10 @@ approval. The native client now has a locally verified authenticated Storage/RPC
 transport and an unapplied owner-derived ingest function that atomically produces the
 background job. The macOS core now also performs bounded PKCE code exchange and refresh,
 stores the rotating session through a Keychain adapter, and converts only a fresh access
-token into upload credentials. Deep-link/UI delivery, owner identity selection,
-transport/wake instantiation, the reconnect drill, and production migration/deployment
+token into upload credentials. Startup and successfully queued captures now instantiate
+and wake that transport; missing/unsafe build config or a missing session holds every item
+without claiming an attempt. Deep-link/UI delivery, owner identity selection, session
+creation, timed/connectivity retry wakes, the reconnect drill, and production migration/deployment
 remain hard prerequisites before a native capture can learn with every browser closed. Loop 47
 supplies the locally verified one-job Edge worker and unapplied atomic jobs migration;
 no migration, function, secret, or schedule has been changed in production.
@@ -140,14 +144,20 @@ native arrow/box/text/irreversible-pixelate editor that preserves the first orig
 atomically replaces the canonical PNG, records flattened queue pixels, re-copies them, and
 refreshes the exact overlay presentation. A shared/native golden fixture now proves the
 exact irreversible pixels survive command validation, save, clipboard, restart recovery,
-and the drain boundary. The actual queue drain transport/authenticated
-upload remains unwired. A production-compiled coordinator now
+and the drain boundary. The queue drain now composes that coordinator with the real
+authenticated Storage/RPC transport when a matching fresh Keychain session exists. Startup
+and each durably queued capture wake it off the UI thread; absent configuration/session is
+an explicit zero-claim hold. Fresh captures also remain unclaimable while Quick Access can
+open Annotate, then dismissal or annotation completion releases and wakes the exact item.
+The production-compiled coordinator
 proves exact-ID completion, no-attempt offline/auth holds, FIFO healthy-work isolation,
 single-flight overlap, restart idempotency, and error-safe wake handoff against a fake
 transport. A compiled PKCE/ingest boundary now rejects forged/replayed callbacks, keeps
 tokens out of URLs and payloads, derives future ownership from authentication, and shares
-strict payload fixtures across Rust and Zod. It deliberately has no production session or
-network adapter. P2 native capture remains the active risk track under D15's sequencing exception.
+strict payload fixtures across Rust and Zod. The current hosted account still has anonymous
+sign-in disabled, and its public Data API schema could not be proven with the configured
+publishable key, so the web client may fall back to IndexedDB and shared cloud behavior is
+not yet verified. P2 native capture remains the active risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
@@ -159,15 +169,17 @@ Known blockers:
    queue, fake-transport drain coordinator,
    strict auth/ingest contract, native four-tool annotation/flattening, and the exact local
    redaction pixel chain are tested. A latest-20 overlay speed instrument is also wired,
-   but the physical 20-capture perceived-latency proof remains. The production
-   authenticated transport/connectivity wake path does not exist. Physical
+   but the physical 20-capture perceived-latency proof remains. The authenticated runtime
+   now wakes at startup and after durable capture enqueue, but session creation plus
+   timed/connectivity retry wakes and the real offline/reconnect drill do not exist. Physical
    shortcut, recent-menu thumbnail/relaunch/click/focus, physical annotation
    save/copy/relaunch, downloaded cloud-object,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
-2. **Mac identity + background worker** — the PKCE/ingest boundary is compiled but browser
-   anonymous auth still cannot be silently transferred to the Mac app; no deep-link,
-   exchange, Keychain, HTTP/upload adapter, or job producer is wired. Loop 47 adds a
+2. **Mac identity + background worker** — browser anonymous auth cannot be silently
+   transferred to the Mac app. PKCE exchange/refresh, Keychain persistence, the authenticated
+   upload adapter, and startup/capture drain wakes are now connected behind an existing
+   same-account session, but no login UI/deep-link delivery creates that session. Loop 47 adds a
    locally verified one-job Edge classifier with exact owner/storage boundaries, bounded
    context and atomic retries, but its migration is unapplied and it has no deployed
    function or Vault/Cron trigger. Native captures still cannot learn with the web app closed.
@@ -182,10 +194,10 @@ Known blockers:
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; native PKCE exchange/refresh and Keychain persistence are locally verified, but identity UI/deep-link/runtime wiring, CI and telemetry remain |
+| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; native PKCE exchange/refresh, Keychain persistence, and startup/capture authenticated drain are locally verified, but identity UI/deep-link/session creation, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; unapplied jobs + authenticated native-ingest migrations and local Edge worker core exist; production apply, Vault/Cron, generated types and integration proof remain |
-| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, drain coordinator, and locally verified real Storage/RPC transport; production auth session/transport/wake instantiation, offline drill, and native QA remain |
+| P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, and startup/capture-woken authenticated Storage/RPC drain; login/session creation, timed/connectivity retries, hosted proof, offline drill, and native QA remain |
 | P3 OCR/classification | 🟡 partial | browser MiniMax path works; local server worker/ingest core now passes 19 Deno tests, but hosted integration and embeddings do not exist |
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |

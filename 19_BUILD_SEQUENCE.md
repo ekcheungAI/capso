@@ -36,9 +36,11 @@ Risk note: **P2 is the riskiest phase** (macOS Screen Recording permission, `scr
 private Storage buckets, and the web remote-store path are live. P2 native local capture
 primitives may therefore proceed now to retire the highest platform risk, even though P0
 production Mac auth/CI/telemetry and P1 jobs/worker work remain incomplete. A strict native
-PKCE/ingest contract is compiled (`c3278ba`) but has no session or network adapter. This
-exception does not permit claiming AC-CAP-03, AI-01, P2 done, or dogfood readiness until
-authenticated native ingest and browser-independent processing are complete.
+PKCE/ingest contract is compiled (`c3278ba`). An existing matching Keychain session now
+refreshes and drives the real transport at startup and after durable capture enqueue, but
+no login/deep-link creates that first session. This exception does not permit claiming
+AC-CAP-03, AI-01, P2 done, or dogfood readiness until authenticated native ingest and
+browser-independent processing are complete.
 
 ---
 
@@ -51,7 +53,7 @@ authenticated native ingest and browser-independent processing are complete.
 **Tasks:**
 - [x] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas) <!-- loop 01; Next 16.2.12 shipped by create-next-app, see BUILD_LOG deviation -->
 - [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed <!-- partial: .env.example done (loop 01); project creation BLOCKED on owner, STOP rules 3+4 -->
-- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves the strict native-origin callback/contract; the native core now performs bounded PKCE exchange + rotating refresh, persists the exact redacted session through macOS Keychain, and supplies only fresh JWTs to the Storage/RPC adapter. Identity choice, email/provider UI, deep-link registration/delivery, Keychain runtime instantiation, anonymous-library linking, and production apply remain -->
+- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves the strict native-origin callback/contract; the native core performs bounded PKCE exchange + rotating refresh, persists the exact redacted session through macOS Keychain, and supplies only fresh JWTs to the Storage/RPC adapter. An existing session now drives startup/capture drain wakes off the UI thread. Identity choice, email/provider UI, deep-link delivery, first-session creation, anonymous-library linking, and production apply remain -->
 - [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
 
 - [x] Vercel deploy of `apps/web` <!-- production deployed in BUILD_LOG loop 20; real app, not empty shell -->
@@ -102,8 +104,8 @@ loop.
 - [ ] Global hotkey (default ⌘⇧5-alternative) triggering region, window, and fullscreen `screencapture` modes; result copied to clipboard <!-- fullscreen added by D15; partial: command seam 01c05d1, conflict-safe defaults/tray fallbacks 056801e, persisted rollback-safe editable bindings d4d2bff, and persist-first exact-byte AppKit clipboard 3496c82 are Checker-approved; physical shortcut/picker/general-pasteboard QA remains -->
 - [x] Screen Recording permission detection + guidance UI; Accessibility is neither needed nor requested (`b507eec`; native grant/revoke QA remains) (specs/permission_model.md)
 - [ ] Post-capture floating overlay window (always-on-top, non-activating): thumbnail, Confirm / Ignore / Ask AI placeholders, auto-dismiss timer <!-- partial: hidden-until-decode display-correct overlay 91e6643; generation-safe Copy, atomic Save As, Close, and hover/action-paused auto-dismiss 8923e90; exact restore 8bd0888; copy-only native drag-out db0ab1e; queue-timestamped five-item thumbnail history plus Open Library e0b1020; and privacy-safe latest-20 process-completion-to-native-show speed evidence ec43534 are Checker-approved; native focus/relaunch/multi-display/interaction and physical 20-capture latency QA plus AI placeholders remain -->
-- [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01) <!-- partial: a5c5e80 syncs capture pixels before atomic JSON handoff and proves restart FIFO/orphan recovery, exact 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt-store preservation, and zero capture deletion; b3b9641 adds the production-compiled single-flight coordinator; c3278ba adds the strict authenticated contract; the real bounded Storage/RPC transport now preserves no-attempt credential holds, retryable failures, terminal poison isolation, and exact acknowledgements. Auth session instantiation, real connectivity/retry wake sources, and the offline drill remain -->
-- [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job <!-- partial: the macOS client now has a bounded JWT-authenticated original-PNG Storage/RPC transport and the unapplied RPC atomically inserts the owner-derived screenshot + process job with exact retry acknowledgement; thumbnail generation, auth/runtime wiring, production apply, and live integration remain -->
+- [ ] Local upload queue: persist to disk (SQLite or JSON queue), retry on failure, survives app restart, drains on reconnect (offline support — AC-OFF-01) <!-- partial: a5c5e80 syncs capture pixels before atomic JSON handoff and proves restart FIFO/orphan recovery, exact 5s/30s/2m retry, four-attempt poison isolation, idempotency, corrupt-store preservation, and zero deletion; b3b9641 adds the single-flight coordinator; c3278ba adds the authenticated contract. The real Storage/RPC transport now runs at startup and after durable capture enqueue when an existing Keychain session can be refreshed; missing config/session and Quick Access/annotation holds consume no attempt. Login/session creation, timed/connectivity retry wakes, hosted proof, and the offline drill remain -->
+- [ ] Upload path: Storage put (original + generated thumbnail) → insert `screenshots` row → enqueue `process_screenshot` job <!-- partial: the macOS client has a bounded JWT-authenticated original-PNG Storage/RPC transport and the unapplied RPC atomically inserts the owner-derived screenshot + process job with exact retry acknowledgement. Startup/capture runtime wiring now exists; thumbnail generation, login/session creation, timed/connectivity retry wakes, production apply, and live integration remain -->
 - [ ] Web: drag-drop / paste ingest on `apps/web` hitting the same upload path
 - [ ] Library grid on web listing captured screenshots (newest first, thumbnail + timestamp)
 
