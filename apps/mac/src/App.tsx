@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   useEffect,
   useMemo,
   useState,
+  type FormEvent,
   type KeyboardEvent,
 } from "react";
 import "./App.css";
@@ -40,6 +42,19 @@ type SystemStatus = {
   launchAtLogin: LoginItemStatus;
 };
 
+type AuthAccountStatus = {
+  status: "signed_in" | "signed_out";
+  userId: string | null;
+  email: string | null;
+};
+
+type AuthFailureEvent = { message: string };
+
+type AuthUiSnapshot = {
+  account: AuthAccountStatus;
+  lastFailure: string | null;
+};
+
 const DEFAULT_SHORTCUTS: ShortcutSettings = {
   region: "Control+Shift+C",
   window: "Control+Shift+W",
@@ -50,6 +65,12 @@ const PREVIEW_SYSTEM_STATUS: SystemStatus = {
   screenRecording: "required",
   screenRecordingRequestAttempted: false,
   launchAtLogin: "disabled",
+};
+
+const PREVIEW_AUTH_STATUS: AuthAccountStatus = {
+  status: "signed_out",
+  userId: null,
+  email: null,
 };
 
 const SHORTCUT_FIELDS: Array<{
@@ -148,6 +169,19 @@ function App() {
   const [systemAction, setSystemAction] = useState<
     "permission" | "login" | null
   >(null);
+  const [authStatus, setAuthStatus] = useState(PREVIEW_AUTH_STATUS);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authAction, setAuthAction] = useState<"email" | "sign_out" | null>(
+    null,
+  );
+  const [authNotice, setAuthNotice] = useState(() =>
+    isTauriRuntime()
+      ? "Checking your Capso account…"
+      : "Preview mode — sign-in activates in the installed app.",
+  );
+  const [authNoticeIsError, setAuthNoticeIsError] = useState(
+    () => !isTauriRuntime(),
+  );
   const nativeRuntime = useMemo(isTauriRuntime, []);
   const isDirty = !sameSettings(settings, savedSettings);
   const screenRecordingGranted = systemStatus.screenRecording === "granted";
@@ -207,6 +241,96 @@ function App() {
         setNeedsRetry(true);
       });
   }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime) return;
+    let active = true;
+    const statusListener = listen<AuthAccountStatus>(
+      "auth-status-changed",
+      ({ payload }) => {
+        if (!active) return;
+        setAuthStatus(payload);
+        setAuthNotice(
+          payload.status === "signed_in"
+            ? `Signed in${payload.email ? ` as ${payload.email}` : ""}. Ready to sync when the cloud connection is available.`
+            : "Sign in before syncing captures to your private web library.",
+        );
+        setAuthNoticeIsError(false);
+        setAuthAction(null);
+      },
+    );
+    const failureListener = listen<AuthFailureEvent>(
+      "auth-sign-in-failed",
+      ({ payload }) => {
+        if (!active) return;
+        setAuthNotice(payload.message);
+        setAuthNoticeIsError(true);
+        setAuthAction(null);
+      },
+    );
+
+    invoke<AuthUiSnapshot>("get_auth_status")
+      .then((snapshot) => {
+        if (!active) return;
+        const status = snapshot.account;
+        setAuthStatus(status);
+        setAuthNotice(
+          snapshot.lastFailure ??
+            (status.status === "signed_in"
+              ? `Signed in${status.email ? ` as ${status.email}` : ""}. Ready to sync when the cloud connection is available.`
+              : "Sign in before syncing captures to your private web library."),
+        );
+        setAuthNoticeIsError(snapshot.lastFailure !== null);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAuthNotice(String(error));
+        setAuthNoticeIsError(true);
+      });
+
+    return () => {
+      active = false;
+      void statusListener.then((unlisten) => unlisten());
+      void failureListener.then((unlisten) => unlisten());
+    };
+  }, [nativeRuntime]);
+
+  async function requestSignIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!nativeRuntime || authAction !== null) return;
+    setAuthAction("email");
+    setAuthNotice("Requesting a secure sign-in email…");
+    setAuthNoticeIsError(false);
+    try {
+      await invoke("request_sign_in_email", { email: authEmail });
+      setAuthNotice(
+        "Check your email, then choose Open Capso on the confirmation page. The link expires in five minutes.",
+      );
+      setAuthAction(null);
+    } catch (error) {
+      setAuthNotice(String(error));
+      setAuthNoticeIsError(true);
+      setAuthAction(null);
+    }
+  }
+
+  async function signOut() {
+    if (!nativeRuntime || authAction !== null) return;
+    setAuthAction("sign_out");
+    setAuthNotice("Signing out…");
+    setAuthNoticeIsError(false);
+    try {
+      const status = await invoke<AuthAccountStatus>("sign_out");
+      setAuthStatus(status);
+      setAuthEmail("");
+      setAuthNotice("Signed out. Local captures remain on this Mac.");
+    } catch (error) {
+      setAuthNotice(String(error));
+      setAuthNoticeIsError(true);
+    } finally {
+      setAuthAction(null);
+    }
+  }
 
   useEffect(() => {
     if (!nativeRuntime) return;
@@ -399,6 +523,62 @@ function App() {
           }
         />
       </header>
+
+      <section className="account-card" aria-labelledby="account-heading">
+        <div className="section-heading">
+          <h2 id="account-heading">Cloud account</h2>
+          <span data-ready={authStatus.status === "signed_in"}>
+            {authStatus.status === "signed_in" ? "Signed in" : "Sign in"}
+          </span>
+        </div>
+        {authStatus.status === "signed_in" ? (
+          <div className="account-row">
+            <div className="system-copy">
+              <strong>{authStatus.email ?? "Capso account"}</strong>
+              <span>This Mac is ready to sync to this Capso account</span>
+            </div>
+            <button
+              type="button"
+              className="compact-button"
+              disabled={!nativeRuntime || authAction !== null}
+              onClick={() => void signOut()}
+            >
+              {authAction === "sign_out" ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        ) : (
+          <form className="account-form" onSubmit={requestSignIn}>
+            <label htmlFor="account-email">Email</label>
+            <div>
+              <input
+                id="account-email"
+                type="email"
+                value={authEmail}
+                autoComplete="email"
+                inputMode="email"
+                placeholder="you@example.com"
+                required
+                disabled={!nativeRuntime || authAction !== null}
+                onChange={(event) => setAuthEmail(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={!nativeRuntime || authAction !== null}
+              >
+                {authAction === "email" ? "Sending…" : "Send link"}
+              </button>
+            </div>
+          </form>
+        )}
+        <div
+          className="account-notice"
+          data-error={authNoticeIsError}
+          aria-live="polite"
+        >
+          {authNotice}
+        </div>
+      </section>
 
       <section className="system-card" aria-labelledby="system-heading">
         <div className="section-heading">

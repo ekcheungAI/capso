@@ -621,10 +621,10 @@ html[data-surface="annotate"] #root {
 
 .popover {
   min-height: 100vh;
-  padding: 2rem 1rem 1rem;
+  padding: 1.55rem 1rem 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
 
 .popover-header {
@@ -664,11 +664,85 @@ html[data-surface="annotate"] #root {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--intent-design-inspiration) 16%, transparent);
 }
 
-.system-card {
+.system-card,
+.account-card {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   background: var(--surface);
+}
+
+.account-row {
+  min-height: 3.55rem;
+  padding: 0.62rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.account-form {
+  padding: 0.6rem 0.75rem 0.7rem;
+  border-top: 1px solid var(--line);
+}
+
+.account-form label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 620;
+}
+
+.account-form > div {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.account-form input {
+  min-width: 0;
+  min-height: 2.1rem;
+  flex: 1;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-input);
+  outline: none;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.account-form input:focus-visible {
+  border-color: color-mix(in srgb, var(--foreground) 28%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.account-form .primary-button {
+  min-height: 2.1rem;
+  padding: 0.42rem 0.65rem;
+  border-radius: var(--radius-input);
+  font-size: 0.7rem;
+  font-weight: 620;
+}
+
+.account-form button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.account-notice {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--intent-reference) 7%, transparent);
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.account-notice[data-error="true"] {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .section-heading {
@@ -700,7 +774,7 @@ html[data-surface="annotate"] #root {
 }
 
 .system-row {
-  min-height: 3.55rem;
+  min-height: 3.25rem;
   padding: 0.62rem 0.75rem;
   display: flex;
   align-items: center;
@@ -822,7 +896,7 @@ html[data-surface="annotate"] #root {
 }
 
 .shortcut-row {
-  min-height: 3.65rem;
+  min-height: 3.3rem;
   padding: 0.6rem 0.75rem;
   display: flex;
   align-items: center;
@@ -936,9 +1010,18 @@ html[data-surface="annotate"] #root {
 
 .actions {
   margin-top: auto;
+  position: sticky;
+  z-index: 3;
+  bottom: 0;
+  padding: 0.55rem 0 0.15rem;
   display: flex;
   justify-content: space-between;
   gap: 0.6rem;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--background) 0.55rem
+  );
 }
 
 .actions button {

@@ -17,7 +17,7 @@ mod upload;
 use serde::Serialize;
 use std::{
     path::PathBuf,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
@@ -25,6 +25,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
 };
+#[cfg(target_os = "macos")]
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 struct TauriShortcutRegistry<'a> {
@@ -111,10 +113,226 @@ fn background_sync_now_ms() -> Result<u64, String> {
         .map_err(|_| "Capso could not timestamp its background sync wake.".into())
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthEmailRequestStatus {
+    status: &'static str,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AuthBoundaryState {
+    active_drains: usize,
+    active_auth_operations: usize,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AuthAccountBoundary(Mutex<AuthBoundaryState>);
+
+pub(crate) struct AuthDrainGuard<'a> {
+    boundary: &'a AuthAccountBoundary,
+}
+
+pub(crate) struct AuthOperationGuard<'a> {
+    boundary: &'a AuthAccountBoundary,
+}
+
+impl Drop for AuthDrainGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.boundary.0.lock() {
+            state.active_drains = state.active_drains.saturating_sub(1);
+        }
+    }
+}
+
+impl Drop for AuthOperationGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.boundary.0.lock() {
+            state.active_auth_operations = state.active_auth_operations.saturating_sub(1);
+        }
+    }
+}
+
+impl AuthAccountBoundary {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, AuthBoundaryState>, String> {
+        self.0
+            .lock()
+            .map_err(|_| "Capso's account transition is temporarily unavailable.".into())
+    }
+
+    fn begin_drain(&self) -> Result<AuthDrainGuard<'_>, String> {
+        self.lock()?.active_drains += 1;
+        Ok(AuthDrainGuard { boundary: self })
+    }
+
+    pub(crate) fn begin_auth_operation(&self) -> Result<AuthOperationGuard<'_>, String> {
+        self.lock()?.active_auth_operations += 1;
+        Ok(AuthOperationGuard { boundary: self })
+    }
+
+    pub(crate) fn lock_for_sign_out(&self) -> Result<MutexGuard<'_, AuthBoundaryState>, String> {
+        let guard = self.lock()?;
+        if guard.active_auth_operations > 0 {
+            return Err(
+                "Wait for the current account request to finish before signing out; no pixels were removed."
+                    .into(),
+            );
+        }
+        if guard.active_drains > 0 {
+            return Err(
+                "Wait for the current background sync to finish before signing out; no pixels were removed."
+                    .into(),
+            );
+        }
+        Ok(guard)
+    }
+}
+
+#[derive(Debug, Default)]
+struct AuthFeedbackState(Mutex<Option<String>>);
+
+impl AuthFeedbackState {
+    fn record_failure(&self, message: &str) {
+        if let Ok(mut failure) = self.0.lock() {
+            *failure = Some(message.to_string());
+        }
+    }
+
+    fn last_failure(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|failure| failure.clone())
+    }
+
+    fn clear(&self) {
+        if let Ok(mut failure) = self.0.lock() {
+            *failure = None;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthUiSnapshot {
+    account: auth::AuthAccountStatus,
+    last_failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct AuthFailureEvent<'a> {
+    message: &'a str,
+}
+
+#[cfg(target_os = "macos")]
+fn receive_auth_callback(app: &AppHandle, callback: &str) {
+    let result = app
+        .state::<AuthAccountBoundary>()
+        .begin_auth_operation()
+        .and_then(|_operation| {
+            let now_ms = background_sync_now_ms()?;
+            app.state::<auth::ProductionAuthRuntime>()
+                .complete_callback(callback, now_ms)
+        });
+    match result {
+        Ok(status) => {
+            app.state::<AuthFeedbackState>().clear();
+            let _ = app.emit("auth-status-changed", &status);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            spawn_background_sync(app.clone(), drain::DrainWake::CredentialsRestored);
+        }
+        Err(error) => {
+            app.state::<AuthFeedbackState>().record_failure(&error);
+            let _ = app.emit("auth-sign-in-failed", AuthFailureEvent { message: &error });
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_auth_callback(app: AppHandle, callback: String) {
+    let _auth_task = tauri::async_runtime::spawn_blocking(move || {
+        receive_auth_callback(&app, &callback);
+    });
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn get_auth_status(app: AppHandle) -> Result<AuthUiSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let boundary = app.state::<AuthAccountBoundary>();
+        let _operation = boundary.begin_auth_operation()?;
+        let account = app.state::<auth::ProductionAuthRuntime>().status()?;
+        Ok(AuthUiSnapshot {
+            account,
+            last_failure: app.state::<AuthFeedbackState>().last_failure(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Capso could not check its account task: {error}"))?
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn request_sign_in_email(
+    app: AppHandle,
+    email: String,
+) -> Result<AuthEmailRequestStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let boundary = app.state::<AuthAccountBoundary>();
+        let _operation = boundary.begin_auth_operation()?;
+        let now_ms = background_sync_now_ms()?;
+        app.state::<auth::ProductionAuthRuntime>()
+            .start_email(&email, now_ms)
+            .map(|_| {
+                app.state::<AuthFeedbackState>().clear();
+                AuthEmailRequestStatus {
+                    status: "email_sent",
+                    expires_at_ms: now_ms.saturating_add(auth::HANDOFF_TTL_MS),
+                }
+            })
+    })
+    .await
+    .map_err(|error| format!("Capso could not finish its sign-in task: {error}"))?
+}
+
+fn ensure_sign_out_queue_is_safe(status: &queue::QueueRuntimeStatus) -> Result<(), String> {
+    let active = status.summary.pending + status.summary.uploading + status.summary.retrying;
+    if active == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Wait for {active} local {} to finish syncing before signing out; no pixels were removed.",
+            if active == 1 { "capture" } else { "captures" }
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn sign_out(app: AppHandle) -> Result<auth::AuthAccountStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let boundary = app.state::<AuthAccountBoundary>();
+        let _guard = boundary.lock_for_sign_out()?;
+        ensure_sign_out_queue_is_safe(&current_queue_status(&app)?)?;
+        let status = app.state::<auth::ProductionAuthRuntime>().sign_out()?;
+        app.state::<AuthFeedbackState>().clear();
+        let _ = app.emit("auth-status-changed", &status);
+        Ok(status)
+    })
+    .await
+    .map_err(|error| format!("Capso could not finish its sign-out task: {error}"))?
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
     let _sync_task = tauri::async_runtime::spawn_blocking(move || {
         let result = (|| {
+            let boundary = app.state::<AuthAccountBoundary>();
+            let _drain_guard = boundary.begin_drain()?;
             let now_ms = background_sync_now_ms()?;
             let sync_state = app.state::<Mutex<sync::ProductionSyncRuntime>>();
             let sync = sync_state
@@ -611,8 +829,11 @@ pub fn run() {
         .manage(Mutex::new(queue::QueueRuntime::default()))
         .manage(Mutex::new(latency::OverlayLatencyRuntime::default()))
         .manage(drain::DrainCoordinator::default())
-        .manage(Mutex::new(auth::AuthRuntime::default()))
+        .manage(AuthAccountBoundary::default())
+        .manage(AuthFeedbackState::default())
+        .manage(auth::ProductionAuthRuntime::from_embedded())
         .manage(Mutex::new(sync::ProductionSyncRuntime::from_embedded()))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -645,6 +866,9 @@ pub fn run() {
             open_screen_recording_settings,
             set_launch_at_login_enabled,
             open_login_item_settings,
+            get_auth_status,
+            request_sign_in_email,
+            sign_out,
             overlay::get_overlay_capture,
             overlay::overlay_image_ready,
             overlay::overlay_image_failed,
@@ -661,6 +885,21 @@ pub fn run() {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(urls) = app.deep_link().get_current()? {
+                    for url in urls {
+                        spawn_auth_callback(app.handle().clone(), url.to_string());
+                    }
+                }
+                let auth_app = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        spawn_auth_callback(auth_app.clone(), url.to_string());
+                    }
+                });
+            }
 
             if let Ok(cache_directory) = app.path().app_cache_dir() {
                 let _ = dragout::cleanup_drag_exports(&cache_directory.join("drag-exports"));
@@ -797,6 +1036,11 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{capture, clipboard, drain, latency, overlay, queue};
+    use std::{
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
 
     fn latency_report(
         sample_count: usize,
@@ -957,6 +1201,70 @@ mod tests {
             super::queue_menu_label(&failed).as_deref(),
             Some("2 captures need manual retry")
         );
+    }
+
+    #[test]
+    fn sign_out_blocks_active_work_but_keeps_terminal_failures_local() {
+        let status = |pending, uploading, retrying, failed, uploaded| queue::QueueRuntimeStatus {
+            summary: queue::QueueSummary {
+                pending,
+                uploading,
+                retrying,
+                failed,
+                uploaded,
+                total: pending + uploading + retrying + failed + uploaded,
+            },
+            warning: None,
+        };
+
+        assert!(super::ensure_sign_out_queue_is_safe(&status(0, 0, 0, 0, 2)).is_ok());
+        assert!(super::ensure_sign_out_queue_is_safe(&status(0, 0, 0, 2, 0)).is_ok());
+        assert_eq!(
+            super::ensure_sign_out_queue_is_safe(&status(1, 0, 0, 0, 0))
+                .expect_err("pending capture blocks account switch"),
+            "Wait for 1 local capture to finish syncing before signing out; no pixels were removed."
+        );
+        assert_eq!(
+            super::ensure_sign_out_queue_is_safe(&status(0, 1, 1, 2, 0))
+                .expect_err("active upload and retry block account switch"),
+            "Wait for 2 local captures to finish syncing before signing out; no pixels were removed."
+        );
+    }
+
+    #[test]
+    fn stalled_background_network_does_not_block_a_fresh_capture_transition() {
+        let boundary = Arc::new(super::AuthAccountBoundary::default());
+        let stalled_upload = boundary.begin_drain().expect("begin stalled upload");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let contender = Arc::clone(&boundary);
+        let worker = thread::spawn(move || {
+            let _guard = contender.lock().expect("enter transition boundary");
+            entered_tx.send(()).expect("announce entry");
+        });
+
+        entered_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("fresh capture enters while upload remains stalled");
+        assert!(boundary.lock_for_sign_out().is_err());
+        drop(stalled_upload);
+        drop(
+            boundary
+                .lock_for_sign_out()
+                .expect("drain released for sign-out"),
+        );
+        worker.join().expect("transition worker");
+    }
+
+    #[test]
+    fn auth_feedback_retains_startup_failure_until_the_ui_reads_it() {
+        let feedback = super::AuthFeedbackState::default();
+        feedback.record_failure("This sign-in link expired.");
+        assert_eq!(
+            feedback.last_failure().as_deref(),
+            Some("This sign-in link expired.")
+        );
+        feedback.clear();
+        assert_eq!(feedback.last_failure(), None);
     }
 
     #[test]

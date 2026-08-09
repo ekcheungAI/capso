@@ -22,6 +22,9 @@ tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"]
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Official Tauri adapter for the installed app's static capso:// callback.
+# The native auth parser still validates the exact callback independently.
+tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already present through Tauri's HTTP stack. Declared directly for the native

@@ -943,6 +943,8 @@ pub(crate) async fn enqueue_capture(
     capture_source: QueueSource,
 ) -> CaptureQueueStatus {
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let account_boundary = app.state::<crate::AuthAccountBoundary>();
+        let _account_guard = account_boundary.lock()?;
         let created_at_ms = now_ms()?;
         let state = app.state::<std::sync::Mutex<QueueRuntime>>();
         let mut runtime = state

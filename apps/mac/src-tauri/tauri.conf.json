@@ -15,7 +15,7 @@
         "label": "main",
         "title": "Capso",
         "width": 360,
-        "height": 620,
+        "height": 720,
         "visible": false,
         "resizable": false,
         "skipTaskbar": true,
@@ -83,5 +83,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "scheme": ["capso"],
+          "appLink": false
+        }
+      ],
+      "desktop": {
+        "schemes": ["capso"]
+      }
+    }
   }
 }

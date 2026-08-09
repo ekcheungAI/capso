@@ -6,7 +6,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, error::Error, fmt, io::Read, time::Duration};
+use std::{collections::BTreeMap, error::Error, fmt, io::Read, sync::Mutex, time::Duration};
 use url::Url;
 
 pub(crate) const AUTH_CALLBACK_URI: &str = "capso://auth/callback";
@@ -157,6 +157,8 @@ pub(crate) struct AuthSession {
     access_token: String,
     refresh_token: String,
     user_id: String,
+    #[serde(default)]
+    email: Option<String>,
     expires_at_ms: u64,
 }
 
@@ -177,6 +179,10 @@ impl AuthSession {
         if !valid_secret_token(&self.access_token)
             || !valid_secret_token(&self.refresh_token)
             || !canonical_uuid(&self.user_id)
+            || self
+                .email
+                .as_deref()
+                .is_some_and(|email| normalize_email(email).as_deref() != Ok(email))
             || self.expires_at_ms == 0
         {
             return Err(AuthContractError::new(
@@ -211,6 +217,7 @@ impl AuthSession {
             access_token: access_token.into(),
             refresh_token: refresh_token.into(),
             user_id: user_id.into(),
+            email: None,
             expires_at_ms,
         }
     }
@@ -237,10 +244,18 @@ pub(crate) struct AuthHttpRequest {
 
 impl fmt::Debug for AuthHttpRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_url: String = Url::parse(&self.url)
+            .map(|mut url| {
+                if url.query().is_some() {
+                    url.set_query(Some("[REDACTED]"));
+                }
+                url.into()
+            })
+            .unwrap_or_else(|_| "[INVALID URL]".into());
         formatter
             .debug_struct("AuthHttpRequest")
             .field("method", &self.method)
-            .field("url", &self.url)
+            .field("url", &redacted_url)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("body", &"[REDACTED]")
             .finish()
@@ -327,6 +342,7 @@ fn read_bounded(reader: impl Read, max_bytes: usize) -> Result<Vec<u8>, String> 
 #[derive(Deserialize)]
 struct TokenUser {
     id: String,
+    email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -359,6 +375,56 @@ impl<C> SupabaseAuthClient<C> {
 }
 
 impl<C: AuthHttpClient> SupabaseAuthClient<C> {
+    fn request_email_link(
+        &self,
+        email: &str,
+        start: &AuthStart,
+        confirmation_origin: &Url,
+    ) -> Result<(), AuthContractError> {
+        let mut confirmation = confirmation_origin.clone();
+        confirmation.set_path("/auth/open-capso");
+        confirmation
+            .query_pairs_mut()
+            .append_pair("state", &start.state);
+
+        let mut endpoint = Url::parse(&format!("{}/auth/v1/otp", self.config.url))
+            .expect("validated Supabase origin joins an auth endpoint");
+        endpoint
+            .query_pairs_mut()
+            .append_pair("redirect_to", confirmation.as_str());
+        let response = self
+            .http
+            .execute(AuthHttpRequest {
+                method: "POST",
+                url: endpoint.into(),
+                headers: BTreeMap::from([
+                    ("apikey".into(), self.config.publishable_key.clone()),
+                    ("content-type".into(), "application/json".into()),
+                    ("accept".into(), "application/json".into()),
+                ]),
+                body: serde_json::to_vec(&serde_json::json!({
+                    "email": email,
+                    "create_user": true,
+                    "code_challenge": start.code_challenge,
+                    "code_challenge_method": start.code_challenge_method,
+                }))
+                .expect("email auth request JSON is serializable"),
+            })
+            .map_err(|_| {
+                AuthContractError::new(
+                    "auth_network_failed",
+                    "Capso could not request the sign-in email; try again when online.",
+                )
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(AuthContractError::new(
+                "auth_email_rejected",
+                "Supabase could not send that sign-in email; check the address and try again.",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn exchange(
         &self,
         exchange: &AuthCodeExchange,
@@ -437,6 +503,7 @@ impl<C: AuthHttpClient> SupabaseAuthClient<C> {
             access_token: token.access_token,
             refresh_token: token.refresh_token,
             user_id: token.user.id,
+            email: token.user.email,
             expires_at_ms: now_ms.saturating_add(token.expires_in.saturating_mul(1_000)),
         };
         session.validate()?;
@@ -566,6 +633,335 @@ impl<C: AuthHttpClient, V: SessionVault> SessionCoordinator<C, V> {
         })?;
         Ok(Some(refreshed))
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AuthAccountStatus {
+    pub(crate) status: &'static str,
+    pub(crate) user_id: Option<String>,
+    pub(crate) email: Option<String>,
+}
+
+impl AuthAccountStatus {
+    fn signed_out() -> Self {
+        Self {
+            status: "signed_out",
+            user_id: None,
+            email: None,
+        }
+    }
+
+    fn signed_in(session: &AuthSession) -> Self {
+        Self {
+            status: "signed_in",
+            user_id: Some(session.user_id().into()),
+            email: session.email.clone(),
+        }
+    }
+}
+
+pub(crate) struct NativeSignIn<C, V> {
+    runtime: Mutex<AuthRuntime>,
+    auth: SupabaseAuthClient<C>,
+    repository: SessionRepository<V>,
+    confirmation_origin: Url,
+}
+
+impl<C, V> fmt::Debug for NativeSignIn<C, V> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NativeSignIn")
+            .field(
+                "handoff_pending",
+                &self
+                    .runtime
+                    .lock()
+                    .map(|runtime| runtime.pending.is_some())
+                    .unwrap_or(false),
+            )
+            .field("confirmation_origin", &self.confirmation_origin)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<C, V> NativeSignIn<C, V> {
+    pub(crate) fn new(
+        config: SupabaseAuthConfig,
+        http: C,
+        repository: SessionRepository<V>,
+        confirmation_origin: &str,
+    ) -> Result<Self, AuthContractError> {
+        let confirmation_origin = validate_confirmation_origin(confirmation_origin)?;
+        Ok(Self {
+            runtime: Mutex::new(AuthRuntime::default()),
+            auth: SupabaseAuthClient::new(config, http)?,
+            repository,
+            confirmation_origin,
+        })
+    }
+
+    #[cfg(test)]
+    fn http(&self) -> &C {
+        &self.auth.http
+    }
+}
+
+impl<C: AuthHttpClient, V: SessionVault> NativeSignIn<C, V> {
+    pub(crate) fn start_email(
+        &self,
+        email: &str,
+        now_ms: u64,
+    ) -> Result<AuthStart, AuthContractError> {
+        let email = normalize_email(email)?;
+        self.ensure_signed_out()?;
+        let start = self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())?
+            .begin(now_ms)?;
+        self.auth
+            .request_email_link(&email, &start, &self.confirmation_origin)?;
+        Ok(start)
+    }
+
+    #[cfg(test)]
+    fn start_email_with_tokens(
+        &self,
+        email: &str,
+        now_ms: u64,
+        state: &str,
+        verifier: &str,
+    ) -> Result<AuthStart, AuthContractError> {
+        let email = normalize_email(email)?;
+        self.ensure_signed_out()?;
+        let start = self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())?
+            .begin_with_tokens(now_ms, state, verifier)?;
+        self.auth
+            .request_email_link(&email, &start, &self.confirmation_origin)?;
+        Ok(start)
+    }
+
+    pub(crate) fn complete_callback(
+        &self,
+        callback: &str,
+        now_ms: u64,
+    ) -> Result<AuthAccountStatus, AuthContractError> {
+        let exchange = self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())?
+            .complete_callback(callback, now_ms)?;
+        let session = self.auth.exchange(&exchange, now_ms)?;
+        if self
+            .repository
+            .load()
+            .map_err(|_| auth_session_unavailable())?
+            .as_ref()
+            .is_some_and(|existing| existing.user_id() != session.user_id())
+        {
+            return Err(AuthContractError::new(
+                "auth_account_switch_forbidden",
+                "Sign out of the current Capso account before signing in with another one.",
+            ));
+        }
+        self.repository.save(&session).map_err(|_| {
+            AuthContractError::new(
+                "auth_session_store_failed",
+                "Capso signed in but could not save the session securely; try again.",
+            )
+        })?;
+        Ok(AuthAccountStatus::signed_in(&session))
+    }
+
+    fn ensure_signed_out(&self) -> Result<(), AuthContractError> {
+        if self
+            .repository
+            .load()
+            .map_err(|_| auth_session_unavailable())?
+            .is_some()
+        {
+            Err(AuthContractError::new(
+                "auth_already_signed_in",
+                "Sign out of the current Capso account before starting another sign-in.",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn status(&self) -> Result<AuthAccountStatus, AuthContractError> {
+        self.repository
+            .load()
+            .map(|session| {
+                session
+                    .as_ref()
+                    .map(AuthAccountStatus::signed_in)
+                    .unwrap_or_else(AuthAccountStatus::signed_out)
+            })
+            .map_err(|_| {
+                AuthContractError::new(
+                    "auth_session_unavailable",
+                    "Capso could not read its secure session; sign in again if this continues.",
+                )
+            })
+    }
+
+    pub(crate) fn sign_out(&self) -> Result<(), AuthContractError> {
+        self.repository.delete().map_err(|_| {
+            AuthContractError::new(
+                "auth_sign_out_failed",
+                "Capso could not remove its secure session; try again.",
+            )
+        })?;
+        *self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())? = AuthRuntime::default();
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+type MacNativeSignIn = NativeSignIn<ReqwestAuthHttpClient, KeychainSessionVault>;
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub(crate) enum ProductionAuthRuntime {
+    Ready(Box<MacNativeSignIn>),
+    Disabled { warning: String },
+}
+
+#[cfg(target_os = "macos")]
+impl ProductionAuthRuntime {
+    pub(crate) fn from_embedded() -> Self {
+        let configured = (|| {
+            let config = crate::sync::embedded_public_config()?.ok_or_else(|| {
+                "Capso sign-in is not configured in this build; local capture still works."
+                    .to_string()
+            })?;
+            let confirmation_origin = option_env!("CAPSO_AUTH_SITE_URL").ok_or_else(|| {
+                "Capso's secure sign-in website is not configured in this build.".to_string()
+            })?;
+            let http = ReqwestAuthHttpClient::new().map_err(|error| error.to_string())?;
+            NativeSignIn::new(
+                config,
+                http,
+                SessionRepository::new(KeychainSessionVault),
+                confirmation_origin,
+            )
+            .map_err(|error| error.to_string())
+        })();
+
+        match configured {
+            Ok(sign_in) => Self::Ready(Box::new(sign_in)),
+            Err(warning) => Self::Disabled { warning },
+        }
+    }
+
+    pub(crate) fn start_email(&self, email: &str, now_ms: u64) -> Result<AuthStart, String> {
+        match self {
+            Self::Ready(sign_in) => sign_in
+                .start_email(email, now_ms)
+                .map_err(|error| error.to_string()),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn complete_callback(
+        &self,
+        callback: &str,
+        now_ms: u64,
+    ) -> Result<AuthAccountStatus, String> {
+        match self {
+            Self::Ready(sign_in) => sign_in
+                .complete_callback(callback, now_ms)
+                .map_err(|error| error.to_string()),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn status(&self) -> Result<AuthAccountStatus, String> {
+        match self {
+            Self::Ready(sign_in) => sign_in.status().map_err(|error| error.to_string()),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn sign_out(&self) -> Result<AuthAccountStatus, String> {
+        match self {
+            Self::Ready(sign_in) => {
+                sign_in.sign_out().map_err(|error| error.to_string())?;
+                Ok(AuthAccountStatus::signed_out())
+            }
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+}
+
+fn auth_runtime_unavailable() -> AuthContractError {
+    AuthContractError::new(
+        "auth_runtime_unavailable",
+        "Capso sign-in is temporarily unavailable; try again.",
+    )
+}
+
+fn auth_session_unavailable() -> AuthContractError {
+    AuthContractError::new(
+        "auth_session_unavailable",
+        "Capso could not read its secure session; sign in again if this continues.",
+    )
+}
+
+fn validate_confirmation_origin(value: &str) -> Result<Url, AuthContractError> {
+    let parsed = Url::parse(value.trim()).map_err(|_| {
+        AuthContractError::new(
+            "auth_site_invalid",
+            "Capso's sign-in website is not a valid secure origin.",
+        )
+    })?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !matches!(parsed.path(), "" | "/")
+    {
+        return Err(AuthContractError::new(
+            "auth_site_invalid",
+            "Capso's sign-in website is not a valid secure origin.",
+        ));
+    }
+    Ok(parsed)
+}
+
+fn normalize_email(value: &str) -> Result<String, AuthContractError> {
+    let value = value.trim();
+    let mut parts = value.split('@');
+    let local = parts.next().unwrap_or_default();
+    let domain = parts.next().unwrap_or_default();
+    if value.len() > 254
+        || local.is_empty()
+        || local.len() > 64
+        || domain.is_empty()
+        || parts.next().is_some()
+        || value.bytes().any(|byte| !(b'!'..=b'~').contains(&byte))
+        || local.starts_with('.')
+        || local.ends_with('.')
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+    {
+        return Err(AuthContractError::new(
+            "auth_email_invalid",
+            "Enter a valid email address to sign in.",
+        ));
+    }
+    Ok(value.into())
 }
 
 #[cfg(target_os = "macos")]
@@ -771,10 +1167,18 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::{
         AuthHttpClient, AuthHttpRequest, AuthHttpResponse, AuthRuntime, AuthSession, AuthStart,
-        SessionCoordinator, SessionRepository, SessionVault, SupabaseAuthClient,
+        NativeSignIn, SessionCoordinator, SessionRepository, SessionVault, SupabaseAuthClient,
         SupabaseAuthConfig, AUTH_CALLBACK_URI, HANDOFF_TTL_MS,
     };
-    use std::{collections::VecDeque, sync::Mutex};
+    use std::{
+        collections::VecDeque,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc, Mutex,
+        },
+        thread,
+        time::Duration,
+    };
 
     const STATE: &str = "state_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const VERIFIER: &str =
@@ -937,6 +1341,13 @@ mod tests {
                 ..Self::default()
             }
         }
+
+        fn responding_in_order(responses: impl IntoIterator<Item = AuthHttpResponse>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().map(Ok).collect()),
+                ..Self::default()
+            }
+        }
     }
 
     impl AuthHttpClient for RecordingAuthHttp {
@@ -948,6 +1359,70 @@ mod tests {
                 .pop_front()
                 .expect("scripted auth response")
         }
+    }
+
+    #[derive(Debug)]
+    struct BlockingAuthHttp {
+        responses: Mutex<VecDeque<Result<AuthHttpResponse, String>>>,
+        calls: AtomicUsize,
+        block_at: usize,
+        started: mpsc::SyncSender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl BlockingAuthHttp {
+        fn at_request(
+            block_at: usize,
+            responses: impl IntoIterator<Item = AuthHttpResponse>,
+        ) -> (Self, mpsc::Receiver<()>, mpsc::SyncSender<()>) {
+            let (started_tx, started_rx) = mpsc::sync_channel(1);
+            let (release_tx, release_rx) = mpsc::sync_channel(1);
+            (
+                Self {
+                    responses: Mutex::new(responses.into_iter().map(Ok).collect()),
+                    calls: AtomicUsize::new(0),
+                    block_at,
+                    started: started_tx,
+                    release: Mutex::new(release_rx),
+                },
+                started_rx,
+                release_tx,
+            )
+        }
+    }
+
+    impl AuthHttpClient for BlockingAuthHttp {
+        fn execute(&self, _request: AuthHttpRequest) -> Result<AuthHttpResponse, String> {
+            let index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if index == self.block_at {
+                self.started.send(()).expect("announce blocked auth HTTP");
+                self.release
+                    .lock()
+                    .expect("release lock")
+                    .recv()
+                    .expect("release blocked auth HTTP");
+            }
+            self.responses
+                .lock()
+                .expect("response lock")
+                .pop_front()
+                .expect("scripted auth response")
+        }
+    }
+
+    fn assert_capture_transition_enters_while_auth_http_is_blocked(
+        boundary: &Arc<crate::AuthAccountBoundary>,
+    ) {
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let capture_boundary = Arc::clone(boundary);
+        let capture = thread::spawn(move || {
+            let _transition = capture_boundary.lock().expect("capture transition");
+            entered_tx.send(()).expect("announce capture transition");
+        });
+        entered_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("capture transition must not wait for auth HTTP");
+        capture.join().expect("capture transition worker");
     }
 
     #[derive(Debug, Default)]
@@ -986,7 +1461,7 @@ mod tests {
               "token_type":"bearer",
               "expires_in":3600,
               "refresh_token":"refresh_0123456789abcdef",
-              "user":{"id":"018f22c4-cada-7c6b-9d5b-fc35f7f92279"}
+              "user":{"id":"018f22c4-cada-7c6b-9d5b-fc35f7f92279","email":"ek@example.com"}
             }"#
             .to_vec(),
         }
@@ -998,6 +1473,327 @@ mod tests {
         runtime
             .complete_callback(&callback(STATE), 1_001)
             .expect("valid code exchange")
+    }
+
+    #[test]
+    fn email_pkce_start_uses_only_public_config_and_an_https_confirmation_handoff() {
+        let http = RecordingAuthHttp::responding(AuthHttpResponse {
+            status: 200,
+            body: b"{}".to_vec(),
+        });
+        let sign_in = NativeSignIn::new(
+            auth_config(),
+            http,
+            SessionRepository::new(MemoryVault::default()),
+            "https://app.capso.test",
+        )
+        .expect("native sign-in");
+
+        let start = sign_in
+            .start_email_with_tokens(" ek+mac@example.com ", 1_000, STATE, VERIFIER)
+            .expect("request email sign-in");
+        assert_eq!(start.state, STATE);
+
+        let requests = sign_in.http().requests.lock().expect("request lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, "POST");
+        let request_url = url::Url::parse(&requests[0].url).expect("OTP URL");
+        assert_eq!(
+            request_url.as_str().split('?').next(),
+            Some("https://capso-test.supabase.co/auth/v1/otp")
+        );
+        let query = request_url.query_pairs().collect::<Vec<_>>();
+        assert_eq!(query.len(), 1);
+        assert_eq!(query[0].0, "redirect_to");
+        let redirect = url::Url::parse(&query[0].1).expect("confirmation URL");
+        assert_eq!(redirect.scheme(), "https");
+        assert_eq!(redirect.host_str(), Some("app.capso.test"));
+        assert_eq!(redirect.path(), "/auth/open-capso");
+        assert_eq!(
+            redirect.query_pairs().collect::<Vec<_>>(),
+            vec![("state".into(), STATE.into())]
+        );
+
+        assert_eq!(
+            requests[0].headers.get("apikey").map(String::as_str),
+            Some("sb_publishable_capso_test")
+        );
+        assert!(!requests[0].headers.contains_key("authorization"));
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("OTP JSON");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "email": "ek+mac@example.com",
+                "create_user": true,
+                "code_challenge": "z8HAYl2-kI-gUtjJqfqUvnIIoD_s3UEA1TYL7ckmlBQ",
+                "code_challenge_method": "S256"
+            })
+        );
+        let debug = format!("{:?}", requests[0]);
+        assert!(!debug.contains("ek+mac@example.com"));
+        assert!(!debug.contains(STATE));
+        assert!(!debug.contains(VERIFIER));
+    }
+
+    #[test]
+    fn stalled_otp_http_never_holds_the_capture_transition_mutex() {
+        let (http, started, release) = BlockingAuthHttp::at_request(
+            0,
+            [AuthHttpResponse {
+                status: 200,
+                body: b"{}".to_vec(),
+            }],
+        );
+        let sign_in = Arc::new(
+            NativeSignIn::new(
+                auth_config(),
+                http,
+                SessionRepository::new(MemoryVault::default()),
+                "https://app.capso.test",
+            )
+            .expect("native sign-in"),
+        );
+        let boundary = Arc::new(crate::AuthAccountBoundary::default());
+        let operation_boundary = Arc::clone(&boundary);
+        let worker_sign_in = Arc::clone(&sign_in);
+        let worker = thread::spawn(move || {
+            let _operation = operation_boundary
+                .begin_auth_operation()
+                .expect("begin email operation");
+            worker_sign_in.start_email_with_tokens("ek@example.com", 1_000, STATE, VERIFIER)
+        });
+
+        started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("OTP request reached HTTP boundary");
+        assert_capture_transition_enters_while_auth_http_is_blocked(&boundary);
+        assert!(boundary.lock_for_sign_out().is_err());
+        release.send(()).expect("release OTP request");
+        worker.join().expect("OTP worker").expect("OTP request");
+        drop(
+            boundary
+                .lock_for_sign_out()
+                .expect("sign-out transition released"),
+        );
+    }
+
+    #[test]
+    fn stalled_pkce_exchange_never_holds_the_capture_transition_mutex() {
+        let (http, started, release) = BlockingAuthHttp::at_request(
+            1,
+            [
+                AuthHttpResponse {
+                    status: 200,
+                    body: b"{}".to_vec(),
+                },
+                token_response(200),
+            ],
+        );
+        let sign_in = Arc::new(
+            NativeSignIn::new(
+                auth_config(),
+                http,
+                SessionRepository::new(MemoryVault::default()),
+                "https://app.capso.test",
+            )
+            .expect("native sign-in"),
+        );
+        sign_in
+            .start_email_with_tokens("ek@example.com", 1_000, STATE, VERIFIER)
+            .expect("prepare callback state");
+        let boundary = Arc::new(crate::AuthAccountBoundary::default());
+        let operation_boundary = Arc::clone(&boundary);
+        let worker_sign_in = Arc::clone(&sign_in);
+        let worker = thread::spawn(move || {
+            let _operation = operation_boundary
+                .begin_auth_operation()
+                .expect("begin callback operation");
+            worker_sign_in.complete_callback(&callback(STATE), 2_000)
+        });
+
+        started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("exchange reached HTTP boundary");
+        assert_capture_transition_enters_while_auth_http_is_blocked(&boundary);
+        assert!(boundary.lock_for_sign_out().is_err());
+        release.send(()).expect("release exchange");
+        let status = worker
+            .join()
+            .expect("exchange worker")
+            .expect("complete callback");
+        assert_eq!(status.status, "signed_in");
+        drop(
+            boundary
+                .lock_for_sign_out()
+                .expect("sign-out transition released"),
+        );
+    }
+
+    #[test]
+    fn invalid_email_or_confirmation_origin_is_rejected_before_network_io() {
+        for email in ["", "not-an-email", "two@@example.com", "a b@example.com"] {
+            let sign_in = NativeSignIn::new(
+                auth_config(),
+                RecordingAuthHttp::default(),
+                SessionRepository::new(MemoryVault::default()),
+                "https://app.capso.test",
+            )
+            .expect("native sign-in");
+            let error = sign_in
+                .start_email_with_tokens(email, 1_000, STATE, VERIFIER)
+                .expect_err("invalid email");
+            assert_eq!(error.code(), "auth_email_invalid");
+            assert!(sign_in
+                .http()
+                .requests
+                .lock()
+                .expect("request lock")
+                .is_empty());
+        }
+
+        for origin in [
+            "http://app.capso.test",
+            "https://user@app.capso.test",
+            "https://app.capso.test/path",
+            "https://app.capso.test?token=secret",
+        ] {
+            let error = NativeSignIn::new(
+                auth_config(),
+                RecordingAuthHttp::default(),
+                SessionRepository::new(MemoryVault::default()),
+                origin,
+            )
+            .expect_err("unsafe confirmation origin");
+            assert_eq!(error.code(), "auth_site_invalid");
+        }
+    }
+
+    #[test]
+    fn exact_native_callback_exchanges_and_persists_one_session_then_sign_out_deletes_it() {
+        let http = RecordingAuthHttp::responding_in_order([
+            AuthHttpResponse {
+                status: 200,
+                body: b"{}".to_vec(),
+            },
+            token_response(200),
+        ]);
+        let sign_in = NativeSignIn::new(
+            auth_config(),
+            http,
+            SessionRepository::new(MemoryVault::default()),
+            "https://app.capso.test",
+        )
+        .expect("native sign-in");
+        sign_in
+            .start_email_with_tokens("ek@example.com", 1_000, STATE, VERIFIER)
+            .expect("request email sign-in");
+
+        let status = sign_in
+            .complete_callback(&callback(STATE), 2_000)
+            .expect("exchange and persist session");
+        assert_eq!(
+            status.user_id.as_deref(),
+            Some("018f22c4-cada-7c6b-9d5b-fc35f7f92279")
+        );
+        assert_eq!(status.email.as_deref(), Some("ek@example.com"));
+        assert_eq!(status.status, "signed_in");
+        assert_eq!(sign_in.status().expect("stored status"), status);
+        assert_eq!(
+            sign_in.http().requests.lock().expect("request lock").len(),
+            2
+        );
+
+        sign_in.sign_out().expect("delete session");
+        assert_eq!(
+            sign_in.status().expect("signed-out status").status,
+            "signed_out"
+        );
+    }
+
+    #[test]
+    fn an_existing_session_rejects_a_second_email_flow_before_network_io() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        repository
+            .save(&AuthSession::for_test(
+                "existing.access.token",
+                "existing_refresh_token",
+                "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+                9_000,
+            ))
+            .expect("store existing session");
+        let sign_in = NativeSignIn::new(
+            auth_config(),
+            RecordingAuthHttp::default(),
+            repository,
+            "https://app.capso.test",
+        )
+        .expect("native sign-in");
+
+        let error = sign_in
+            .start_email_with_tokens("other@example.com", 1_000, STATE, VERIFIER)
+            .expect_err("signed-in account cannot be replaced");
+        assert_eq!(error.code(), "auth_already_signed_in");
+        assert!(sign_in
+            .http()
+            .requests
+            .lock()
+            .expect("request lock")
+            .is_empty());
+    }
+
+    #[test]
+    fn a_callback_cannot_replace_a_different_session_that_arrived_mid_flow() {
+        let different_user_response = AuthHttpResponse {
+            status: 200,
+            body: br#"{
+              "access_token":"other.payload.signature",
+              "token_type":"bearer",
+              "expires_in":3600,
+              "refresh_token":"other_refresh_0123456789",
+              "user":{"id":"018f22c4-cada-7c6b-9d5b-fc35f7f92271","email":"other@example.com"}
+            }"#
+            .to_vec(),
+        };
+        let sign_in = NativeSignIn::new(
+            auth_config(),
+            RecordingAuthHttp::responding_in_order([
+                AuthHttpResponse {
+                    status: 200,
+                    body: b"{}".to_vec(),
+                },
+                different_user_response,
+            ]),
+            SessionRepository::new(MemoryVault::default()),
+            "https://app.capso.test",
+        )
+        .expect("native sign-in");
+        sign_in
+            .start_email_with_tokens("other@example.com", 1_000, STATE, VERIFIER)
+            .expect("begin while signed out");
+        let existing = AuthSession::for_test(
+            "existing.access.token",
+            "existing_refresh_token",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            9_000,
+        );
+        sign_in
+            .repository
+            .save(&existing)
+            .expect("store concurrent session");
+
+        let error = sign_in
+            .complete_callback(&callback(STATE), 2_000)
+            .expect_err("different callback user cannot replace existing account");
+        assert_eq!(error.code(), "auth_account_switch_forbidden");
+        assert_eq!(
+            sign_in
+                .repository
+                .load()
+                .expect("load retained session")
+                .expect("existing session remains")
+                .user_id(),
+            existing.user_id()
+        );
     }
 
     #[test]
