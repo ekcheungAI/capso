@@ -92,13 +92,26 @@ where
     V: SessionVault,
     F: UploadTransportFactory,
 {
-    pub(crate) fn wake<Q: DrainQueue>(
+    pub(crate) fn wake_with_connectivity<Q: DrainQueue>(
         &self,
         wake: DrainWake,
         coordinator: &DrainCoordinator,
         queue: &Q,
         now_ms: u64,
+        connectivity_available: bool,
     ) -> Result<WakeResult, String> {
+        if !connectivity_available {
+            let summary = queue.summary()?;
+            return Ok(WakeResult::Ran(crate::drain::DrainReport {
+                passes: 1,
+                held: summary.queued(),
+                remaining: summary.queued(),
+                last_hold: Some(
+                    "offline: No network route is available; captures remain saved locally.".into(),
+                ),
+                ..crate::drain::DrainReport::default()
+            }));
+        }
         let session = self
             .sessions
             .fresh_session(now_ms)
@@ -151,9 +164,16 @@ impl ProductionSyncRuntime {
         coordinator: &DrainCoordinator,
         queue: &Q,
         now_ms: u64,
+        connectivity_available: bool,
     ) -> Result<WakeResult, String> {
         match self {
-            Self::Ready(sync) => sync.wake(wake, coordinator, queue, now_ms),
+            Self::Ready(sync) => sync.wake_with_connectivity(
+                wake,
+                coordinator,
+                queue,
+                now_ms,
+                connectivity_available,
+            ),
             Self::Disabled { warning } => {
                 let summary = queue.summary()?;
                 Ok(WakeResult::Ran(crate::drain::DrainReport {
@@ -181,8 +201,15 @@ mod tests {
             UploadResult, UploadTransport, WakeResult,
         },
         queue::{QueueItem, QueueItemStatus, QueueSource, QueueSummary},
+        retry::{RetryDeadlinePlanner, RETRY_WAKE_REARM_MS},
     };
-    use std::{path::PathBuf, sync::Mutex};
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+    };
 
     const USER_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f92279";
     const CAPTURE_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f92270";
@@ -193,6 +220,18 @@ mod tests {
     impl AuthHttpClient for NoAuthNetwork {
         fn execute(&self, _request: AuthHttpRequest) -> Result<AuthHttpResponse, String> {
             panic!("a fresh or missing session must not call Supabase Auth")
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FailingAuthNetwork {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl AuthHttpClient for FailingAuthNetwork {
+        fn execute(&self, _request: AuthHttpRequest) -> Result<AuthHttpResponse, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err("simulated auth refresh outage".into())
         }
     }
 
@@ -351,11 +390,12 @@ mod tests {
         let sync = runtime(SessionRepository::new(MemoryVault::default()));
         let queue = MemoryQueue::one_pending();
         let result = sync
-            .wake(
+            .wake_with_connectivity(
                 DrainWake::Startup,
                 &DrainCoordinator::default(),
                 &queue,
                 10_000,
+                true,
             )
             .expect("held wake");
 
@@ -368,6 +408,90 @@ mod tests {
         assert_eq!(
             *sync.factory().prepared_user.lock().expect("factory lock"),
             Some(None)
+        );
+    }
+
+    #[test]
+    fn known_offline_route_holds_before_auth_or_transport_and_consumes_zero_attempts() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        repository
+            .save(&AuthSession::for_test(
+                "header.payload.signature",
+                "refresh_0123456789abcdef",
+                USER_ID,
+                1,
+            ))
+            .expect("seed expired session");
+        let sync = runtime(repository);
+        let queue = MemoryQueue::one_pending();
+        let result = sync
+            .wake_with_connectivity(
+                DrainWake::CaptureEnqueued,
+                &DrainCoordinator::default(),
+                &queue,
+                10_000,
+                false,
+            )
+            .expect("offline hold");
+
+        let WakeResult::Ran(report) = result else {
+            panic!("offline wake must report a hold")
+        };
+        assert_eq!(report.attempted, 0);
+        assert_eq!(report.held, 1);
+        assert_eq!(*queue.claims.lock().expect("claim lock"), 0);
+        assert_eq!(
+            *sync.factory().prepared_user.lock().expect("factory lock"),
+            None,
+            "offline gating must happen before session or transport preparation"
+        );
+    }
+
+    #[test]
+    fn auth_failure_before_claim_rearms_the_same_persisted_deadline() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        repository
+            .save(&AuthSession::for_test(
+                "header.payload.signature",
+                "refresh_0123456789abcdef",
+                USER_ID,
+                1,
+            ))
+            .expect("seed expired session");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sync = BackgroundSync::new(
+            SessionCoordinator::new(
+                config(),
+                FailingAuthNetwork {
+                    calls: Arc::clone(&calls),
+                },
+                repository,
+            )
+            .expect("session coordinator"),
+            RecordingFactory::default(),
+        );
+        let queue = MemoryQueue::one_pending();
+        let deadline = 5_000;
+        let mut planner = RetryDeadlinePlanner::default();
+
+        assert_eq!(
+            planner.observe(deadline, Some(deadline), true),
+            Some(DrainWake::RetryDeadline)
+        );
+        assert!(sync
+            .wake_with_connectivity(
+                DrainWake::RetryDeadline,
+                &DrainCoordinator::default(),
+                &queue,
+                deadline,
+                true,
+            )
+            .is_err());
+        assert_eq!(*queue.claims.lock().expect("claim lock"), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            planner.observe(deadline + RETRY_WAKE_REARM_MS, Some(deadline), true,),
+            Some(DrainWake::RetryDeadline)
         );
     }
 
@@ -385,11 +509,12 @@ mod tests {
         let sync = runtime(repository);
         let queue = MemoryQueue::one_pending();
         let result = sync
-            .wake(
+            .wake_with_connectivity(
                 DrainWake::CaptureEnqueued,
                 &DrainCoordinator::default(),
                 &queue,
                 10_000,
+                true,
             )
             .expect("authenticated wake");
 

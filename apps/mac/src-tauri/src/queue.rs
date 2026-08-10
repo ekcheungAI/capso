@@ -124,6 +124,12 @@ pub(crate) struct QueueRuntimeStatus {
     pub(crate) warning: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RetryMonitorSnapshot {
+    pub(crate) has_retryable_work: bool,
+    pub(crate) next_retry_at_ms: Option<u64>,
+}
+
 impl QueueSummary {
     pub(crate) fn queued(self) -> usize {
         self.pending + self.uploading + self.retrying + self.failed
@@ -400,6 +406,24 @@ impl DurableUploadQueue {
             }
         }
         summary
+    }
+
+    pub(crate) fn next_retry_at_ms(&self) -> Option<u64> {
+        self.document
+            .entries
+            .iter()
+            .filter_map(|item| item.next_attempt_at_ms)
+            .min()
+    }
+
+    pub(crate) fn retry_monitor_snapshot(&self) -> RetryMonitorSnapshot {
+        RetryMonitorSnapshot {
+            has_retryable_work: self.document.entries.iter().any(|item| {
+                item.status == QueueItemStatus::Pending
+                    || (item.status == QueueItemStatus::Failed && !item.is_terminal())
+            }),
+            next_retry_at_ms: self.next_retry_at_ms(),
+        }
     }
 
     fn recover_interrupted(&mut self, restart_time_ms: u64) -> bool {
@@ -869,6 +893,13 @@ impl QueueRuntime {
             .map(DurableUploadQueue::summary)
             .ok_or_else(|| self.unavailable_message())
     }
+
+    pub(crate) fn retry_monitor_snapshot(&self) -> Result<RetryMonitorSnapshot, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::retry_monitor_snapshot)
+            .ok_or_else(|| self.unavailable_message())
+    }
 }
 
 fn now_ms() -> Result<u64, String> {
@@ -906,6 +937,15 @@ pub(crate) fn current_status(app: &AppHandle) -> Result<QueueRuntimeStatus, Stri
         .lock()
         .map(|runtime| runtime.status())
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".into())
+}
+
+pub(crate) fn retry_monitor_snapshot_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<RetryMonitorSnapshot, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .retry_monitor_snapshot()
 }
 
 pub(crate) fn capture_timestamps_for_app<R: Runtime>(
@@ -1070,7 +1110,7 @@ fn validate_document(document: &QueueDocument, capture_directory: &Path) -> Resu
 mod tests {
     use super::{
         DurableUploadQueue, EnqueueOutcome, QueueItemStatus, QueueRuntime, QueueSource,
-        MAX_AUTOMATIC_ATTEMPTS, RETRY_DELAYS_MS,
+        RetryMonitorSnapshot, MAX_AUTOMATIC_ATTEMPTS, RETRY_DELAYS_MS,
     };
     use crate::drain::{
         DrainCoordinator, DrainWake, TransportAvailability, UploadAcknowledgement, UploadResult,
@@ -1561,6 +1601,49 @@ mod tests {
                 interrupted_attempt + 1
             );
         }
+    }
+
+    #[test]
+    fn earliest_retry_deadline_ignores_pending_uploaded_and_terminal_items() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let first = capture(&captures, FIRST_ID);
+        let second = capture(&captures, SECOND_ID);
+        let third = capture(&captures, THIRD_ID);
+        let mut queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        queue
+            .enqueue(&first, QueueSource::Region, 1)
+            .expect("enqueue first");
+        queue
+            .enqueue(&second, QueueSource::Window, 2)
+            .expect("enqueue second");
+        queue
+            .enqueue(&third, QueueSource::Fullscreen, 3)
+            .expect("enqueue third");
+
+        let first_claim = queue.claim_next(100).expect("claim first").expect("first");
+        queue
+            .mark_failed(&first_claim.id, 100, "retry first")
+            .expect("fail first");
+        let second_claim = queue
+            .claim_next(101)
+            .expect("claim second")
+            .expect("second");
+        queue
+            .mark_failed(&second_claim.id, 1_000, "retry second")
+            .expect("fail second");
+        let third_claim = queue.claim_next(102).expect("claim third").expect("third");
+        queue.mark_uploaded(&third_claim.id).expect("upload third");
+
+        assert_eq!(queue.next_retry_at_ms(), Some(5_100));
+        assert_eq!(
+            queue.retry_monitor_snapshot(),
+            RetryMonitorSnapshot {
+                has_retryable_work: true,
+                next_retry_at_ms: Some(5_100),
+            }
+        );
     }
 
     #[test]

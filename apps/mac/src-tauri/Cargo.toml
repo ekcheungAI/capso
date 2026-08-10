@@ -61,6 +61,9 @@ drag = "2.1.1"
 # user's encrypted login Keychain, never JSON under Application Support.
 security-framework = "3.7.0"
 security-framework-sys = "2.17.0"
+# Apple's route-reachability API lets the background queue wake on reconnect
+# without probing a third-party endpoint or touching foreground capture.
+system-configuration = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3"

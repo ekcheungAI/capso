@@ -9,6 +9,7 @@ mod ingest;
 mod latency;
 mod overlay;
 mod queue;
+mod retry;
 mod shortcuts;
 mod sync;
 mod system;
@@ -18,6 +19,7 @@ use serde::Serialize;
 use std::{
     path::PathBuf,
     sync::{Mutex, MutexGuard},
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
@@ -329,8 +331,13 @@ async fn sign_out(app: AppHandle) -> Result<auth::AuthAccountStatus, String> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
+    app.state::<retry::RetryMonitorSignal>().notify();
     let _sync_task = tauri::async_runtime::spawn_blocking(move || {
         let result = (|| {
+            let route = retry::SystemConnectivityProbe::new()
+                .ok()
+                .and_then(|probe| probe.is_reachable().ok());
+            app.state::<retry::ConnectivityState>().observe_probe(route);
             let boundary = app.state::<AuthAccountBoundary>();
             let _drain_guard = boundary.begin_drain()?;
             let now_ms = background_sync_now_ms()?;
@@ -340,7 +347,8 @@ pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
                 .map_err(|_| "Capso's background sync is temporarily unavailable.".to_string())?;
             let coordinator = app.state::<drain::DrainCoordinator>();
             let queue = app.state::<Mutex<queue::QueueRuntime>>();
-            sync.wake(wake, &coordinator, &*queue, now_ms)
+            let connectivity_available = app.state::<retry::ConnectivityState>().permits_sync();
+            sync.wake(wake, &coordinator, &*queue, now_ms, connectivity_available)
         })();
         if let Err(error) = result {
             eprintln!("Capso background sync wake failed safely: {error}");
@@ -348,7 +356,68 @@ pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
         if let Err(error) = refresh_tray_status(&app) {
             eprintln!("Could not refresh Capso after background sync: {error}");
         }
+        app.state::<retry::RetryMonitorSignal>().notify();
     });
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_background_retry_monitor(app: AppHandle) -> Result<(), String> {
+    if let Ok(probe) = retry::SystemConnectivityProbe::new() {
+        app.state::<retry::ConnectivityState>()
+            .observe_probe(probe.is_reachable().ok());
+    }
+    let receiver = app.state::<retry::RetryMonitorSignal>().take_receiver()?;
+
+    thread::Builder::new()
+        .name("capso-background-retry".into())
+        .spawn(move || {
+            let mut probe = retry::SystemConnectivityProbe::new().ok();
+            let mut planner = retry::RetryDeadlinePlanner::default();
+            loop {
+                let now_ms = match background_sync_now_ms() {
+                    Ok(now_ms) => now_ms,
+                    Err(_) => {
+                        retry::RetryMonitorSignal::wait(
+                            &receiver,
+                            Some(retry::CONNECTIVITY_POLL_INTERVAL_MS),
+                        );
+                        continue;
+                    }
+                };
+                let connectivity = app.state::<retry::ConnectivityState>();
+                let transition = connectivity
+                    .observe_probe(probe.as_ref().and_then(|probe| probe.is_reachable().ok()));
+                let snapshot = queue::retry_monitor_snapshot_for_app(&app).unwrap_or_default();
+                let timed_wake = planner.observe(
+                    now_ms,
+                    snapshot.next_retry_at_ms,
+                    connectivity.permits_sync(),
+                );
+                let wake = if transition == retry::ConnectivityTransition::Restored {
+                    Some(drain::DrainWake::ConnectivityRestored)
+                } else {
+                    timed_wake
+                };
+                if let Some(wake) = wake {
+                    spawn_background_sync(app.clone(), wake);
+                }
+                retry::RetryMonitorSignal::wait(
+                    &receiver,
+                    retry::RetryDeadlinePlanner::wait_ms(
+                        now_ms,
+                        snapshot.next_retry_at_ms,
+                        snapshot.has_retryable_work,
+                        &connectivity,
+                    ),
+                );
+
+                if probe.is_none() {
+                    probe = retry::SystemConnectivityProbe::new().ok();
+                }
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("Capso could not start its background retry monitor: {error}"))
 }
 
 fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
@@ -829,6 +898,8 @@ pub fn run() {
         .manage(Mutex::new(queue::QueueRuntime::default()))
         .manage(Mutex::new(latency::OverlayLatencyRuntime::default()))
         .manage(drain::DrainCoordinator::default())
+        .manage(retry::ConnectivityState::default())
+        .manage(retry::RetryMonitorSignal::default())
         .manage(AuthAccountBoundary::default())
         .manage(AuthFeedbackState::default())
         .manage(auth::ProductionAuthRuntime::from_embedded())
@@ -1002,6 +1073,9 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            #[cfg(target_os = "macos")]
+            spawn_background_retry_monitor(app.handle().clone())?;
 
             #[cfg(target_os = "macos")]
             spawn_background_sync(app.handle().clone(), drain::DrainWake::Startup);
