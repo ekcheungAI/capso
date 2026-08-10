@@ -16,7 +16,7 @@
         "title": "Capso",
         "width": 360,
         "height": 720,
-        "visible": false,
+        "visible": true,
         "resizable": false,
         "skipTaskbar": true,
         "alwaysOnTop": true,

@@ -492,6 +492,10 @@ fn toggle_popover(window: &WebviewWindow) -> tauri::Result<()> {
     }
 }
 
+fn should_reveal_main_on_reopen(has_visible_windows: bool) -> bool {
+    !has_visible_windows
+}
+
 fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -520,6 +524,10 @@ fn tray_tooltip(
     } else {
         "Capso"
     }
+}
+
+fn tray_template_icon() -> tauri::Result<tauri::image::Image<'static>> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate@2x.png"))
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -889,7 +897,7 @@ fn open_login_item_settings() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
         .manage(Mutex::new(system::PermissionRuntime::default()))
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
@@ -1026,7 +1034,7 @@ pub fn run() {
                 &latency_report,
             )?;
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_template_icon()?)
                 .icon_as_template(true)
                 .tooltip(tray_tooltip(
                     &status,
@@ -1103,8 +1111,24 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = event
+        {
+            if should_reveal_main_on_reopen(has_visible_windows) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1141,6 +1165,35 @@ mod tests {
         result: Result<capture::CaptureOutcome, capture::CaptureFailure>,
     ) -> serde_json::Value {
         serde_json::to_value(super::capture_event(&result)).expect("serialize capture event")
+    }
+
+    #[test]
+    fn explicit_app_launch_opens_the_main_control_surface() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let main = config["app"]["windows"]
+            .as_array()
+            .expect("window configurations")
+            .iter()
+            .find(|window| window["label"] == "main")
+            .expect("main control surface");
+
+        assert_eq!(main["visible"], true);
+        assert_eq!(main["skipTaskbar"], true);
+    }
+
+    #[test]
+    fn menu_bar_uses_the_dedicated_template_sized_icon() {
+        let icon = super::tray_template_icon().expect("decode bundled tray icon");
+
+        assert_eq!(icon.width(), 44);
+        assert_eq!(icon.height(), 44);
+    }
+
+    #[test]
+    fn reopening_a_running_menu_bar_app_reveals_its_hidden_control_surface() {
+        assert!(super::should_reveal_main_on_reopen(false));
+        assert!(!super::should_reveal_main_on_reopen(true));
     }
 
     #[test]
