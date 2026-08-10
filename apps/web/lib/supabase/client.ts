@@ -1,17 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { loadPermanentAccount, requirePermanentUserId } from "./account";
 
 /**
- * The browser's Supabase connection, and the anonymous session everything else
- * hangs off.
- *
- * Why anonymous sessions: every table's RLS policy is
- * `for all to authenticated using (user_id = auth.uid())` (migration 0001), and
- * Storage mirrors it on the first path segment (0002). A visitor therefore needs
- * a real `auth.users` row before they can read or write anything — but the demo
- * is deliberately open, so a login screen is not an option. `signInAnonymously()`
- * issues exactly that: a genuine authenticated identity, no credentials, no UI.
- * It also means the isolation guarantee is the same one that will protect real
- * accounts later, rather than a demo-only special case.
+ * The browser's one Supabase connection. Its persisted session is also the
+ * identity that owns every Postgres row and Storage object in the library.
  */
 
 // Read as literals. `NEXT_PUBLIC_*` values are inlined at build time, so a
@@ -41,9 +33,8 @@ export function supabase(): SupabaseClient {
   // and the two would race over the same storage key on refresh.
   client ??= createClient(url!, anonKey!, {
     auth: {
-      // Load-bearing, not defaults-for-the-sake-of-it: without persistence every
-      // reload mints a *new* anonymous user, and the library would look empty
-      // each time. autoRefresh keeps a long-lived tab from silently 401ing.
+      // Persistence makes the emailed login survive reloads. autoRefresh keeps
+      // a long-lived library from silently losing its authenticated requests.
       persistSession: true,
       autoRefreshToken: true,
     },
@@ -51,43 +42,10 @@ export function supabase(): SupabaseClient {
   return client;
 }
 
-/** Distinguishes "the project has anonymous sign-ins turned off" from noise. */
-export class AnonymousSignInDisabled extends Error {
-  constructor(cause: string) {
-    super(
-      "Supabase rejected the anonymous sign-in. Enable it under " +
-        `Authentication → Providers → Anonymous sign-ins. (${cause})`,
-    );
-    this.name = "AnonymousSignInDisabled";
-  }
-}
-
-let pending: Promise<string> | null = null;
-
 /**
- * The current user's id, signing in anonymously if there is no session yet.
- *
- * Every store write needs this: `user_id` is not defaulted server-side, and a row
- * written with the wrong one is invisible to its own author under RLS.
- *
- * Concurrent callers share one in-flight sign-in. Without that, the several
- * independent reads a first paint issues would each start their own, and
- * Supabase would hand back a different anonymous user to each.
+ * Return the durable email account id or fail visibly before the store opens.
+ * Every write sets this id explicitly because `user_id` has no database default.
  */
-export function ensureSession(): Promise<string> {
-  pending ??= (async () => {
-    const sb = supabase();
-
-    const { data: existing } = await sb.auth.getSession();
-    if (existing.session?.user.id) return existing.session.user.id;
-
-    const { data, error } = await sb.auth.signInAnonymously();
-    if (error || !data.user) {
-      pending = null; // let a later attempt retry rather than caching the failure
-      throw new AnonymousSignInDisabled(error?.message ?? "no user returned");
-    }
-    return data.user.id;
-  })();
-
-  return pending;
+export async function requireSession(): Promise<string> {
+  return requirePermanentUserId(await loadPermanentAccount(supabase().auth));
 }

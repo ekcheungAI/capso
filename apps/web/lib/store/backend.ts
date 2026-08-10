@@ -100,34 +100,17 @@ let chosen: Promise<Backend> | null = null;
 /**
  * Pick a backend once, then keep it for the life of the tab.
  *
- * Remote wins when the project is configured *and* a session can actually be
- * obtained. Both halves matter: environment variables prove a project exists,
- * they do not prove anonymous sign-ins are switched on for it, and every table is
- * behind `for all to authenticated` — so a configured-but-unauthenticated client
- * reads zero rows and writes nothing, which would look exactly like a wiped
- * library.
- *
- * Falling back to IndexedDB rather than surfacing an error is the same posture
- * `classify.ts` takes without an API key: a missing backend should degrade the
- * app, never blank it, and `pnpm dev` in a fresh clone must still work.
+ * An unconfigured developer build remains local-first. A configured build never
+ * silently falls back: auth/network/schema failures must be visible, otherwise a
+ * person can believe their synced library was wiped while viewing IndexedDB.
  */
 export function backend(): Promise<Backend> {
   chosen ??= (async (): Promise<Backend> => {
-    try {
-      const { isConfigured } = await import("@/lib/supabase/client");
-      if (!isConfigured()) return local;
+    const { isConfigured } = await import("@/lib/supabase/client");
+    if (!isConfigured()) return local;
 
-      const { remote } = await import("./remote");
-      return await remote();
-    } catch (err) {
-      // Deliberately not fatal, but never silent — a library that quietly stops
-      // syncing is worse than one that says why.
-      console.warn(
-        "[capso] Falling back to local storage; captures stay in this browser.",
-        err instanceof Error ? err.message : err,
-      );
-      return local;
-    }
+    const { remote } = await import("./remote");
+    return remote();
   })();
 
   return chosen;

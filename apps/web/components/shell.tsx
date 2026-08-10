@@ -23,7 +23,8 @@ import { CommandPalette } from "@/components/palette";
 import { ShortcutSheet } from "@/components/shortcuts";
 import { FirstRun } from "@/components/first-run";
 import { DropZone, useDragCount } from "@/components/ui";
-import { ImportLocal } from "@/components/import-local";
+import { useAccount } from "@/components/account-gate";
+import { useToast } from "@/components/toast";
 import { useMoveCaptures } from "@/lib/move";
 import { useStore } from "@/lib/store/provider";
 
@@ -53,6 +54,8 @@ const LIGHT_THEME = {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { ready, loadError, needsSetup, threads, byThread, addThread, reset, clearSamples } = useStore();
+  const account = useAccount();
+  const toast = useToast();
   const pathname = usePathname();
   const move = useMoveCaptures();
   const dragCount = useDragCount();
@@ -156,7 +159,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <button type="button" onClick={() => { setSettingsOpen((open) => !open); setProjectsOpen(false); }} aria-label="Settings" title="Settings" className="grid h-10 w-10 place-items-center rounded-[13px] text-muted hover:bg-surface hover:text-foreground">
             <GearSix size={19} />
           </button>
-          <div className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[9px] font-semibold text-accent-ink">EK</div>
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-accent text-[9px] font-semibold uppercase text-accent-ink">
+            {account.mode === "signed_in" ? account.email.slice(0, 2) : "LO"}
+          </div>
         </div>
       </aside>
 
@@ -230,11 +235,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <span className={`h-1.5 w-1.5 rounded-full ${ai?.configured ? "bg-accent" : "bg-muted"}`} />
               {ai?.configured ? ai.model : "AI: sample data"}
             </p>
+            <div className="rounded-xl bg-background px-3 py-2.5">
+              <p className="font-semibold text-foreground">{account.mode === "signed_in" ? account.email : "Local-only library"}</p>
+              <p className="mt-0.5 text-[10px] leading-4">{account.mode === "signed_in" ? "Synced Capso account" : "Cloud account is not configured in this build"}</p>
+            </div>
             <button type="button" onClick={() => setKeys(true)} className="rounded-xl px-3 py-2 text-left hover:bg-background hover:text-foreground">Keyboard shortcuts</button>
             <Link href="/extension" onClick={() => setSettingsOpen(false)} className="rounded-xl px-3 py-2 hover:bg-background hover:text-foreground">Get the browser extension</Link>
-            <ImportLocal />
             <button type="button" onClick={() => confirm("Delete the sample captures and keep only your own screenshots?") && void clearSamples()} className="rounded-xl px-3 py-2 text-left hover:bg-background hover:text-foreground">Use only my screenshots</button>
             <button type="button" onClick={() => confirm("Reset demo data?") && void reset()} className="rounded-xl px-3 py-2 text-left text-danger hover:bg-background">Reset demo data</button>
+            {account.mode === "signed_in" && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!confirm(`Sign out of ${account.email} on this browser?`)) return;
+                  void account.signOut().catch(() => toast("Capso could not sign out. Try again."));
+                }}
+                className="rounded-xl px-3 py-2 text-left text-danger hover:bg-background"
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </Panel>
       )}

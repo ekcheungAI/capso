@@ -1,4 +1,4 @@
-import { ensureSession, supabase } from "@/lib/supabase/client";
+import { requireSession, supabase } from "@/lib/supabase/client";
 import type { Backend, Collection } from "./backend";
 import {
   correctionFromRow, correctionToRow,
@@ -48,9 +48,9 @@ async function toBlob(dataUrl: string): Promise<Blob> {
 }
 
 export async function remote(): Promise<Backend> {
-  // Throws if anonymous sign-ins are disabled for the project; `backend()`
-  // catches it and falls back to local rather than blanking the library.
-  const userId = await ensureSession();
+  // A configured deployment must have a permanent email account. Opening a
+  // local fallback here would make a signed-out library look mysteriously empty.
+  const userId = await requireSession();
   const sb = supabase();
 
   /** Upload one image and return its object path, or null if there was nothing. */

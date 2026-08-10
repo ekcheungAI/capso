@@ -56,6 +56,7 @@ Where docs conflict, the "authority" doc for that domain wins; fix the conflict 
 | D13 | 2026-07-31 | **Memory optimisation is a first-class surface** (new M10) — see [24_FEATURE_SPEC_MEMORY.md](24_FEATURE_SPEC_MEMORY.md). No pack doc had specified any UI for viewing or editing what the system learned. |
 | D14 | 2026-07-31 | **`why_saved` is user-editable**, superseding `06_FEATURE_SPEC_AI_MEMORY.md` §5. Each edit writes a correction row. |
 | D15 | 2026-08-08 | Owner approved an hourly Maker–Checker build loop whose exit is daily-driver CleanShot replacement: intentional region/window/fullscreen capture, clipboard, non-activating overlay, four-tool annotation, durable history, and post-capture background learning. Fullscreen is added to the capture path; scrolling capture, recording/GIF, pins, background composition, and passive screen observation remain out. P2 native capture primitives may proceed while the remaining P0 Mac-auth/CI/telemetry and P1 worker gaps stay explicit blockers for AI processing and dogfood, not blockers for local capture-risk spikes. |
+| D16 | 2026-08-10 | The permanent email account starts a **fresh authenticated library**. Existing anonymous/local browser captures remain separate and are not silently adopted, linked, or uploaded. The same email is used on web and Mac. |
 
 ## 5. Current assumptions (unverified — challenge freely)
 
@@ -108,8 +109,10 @@ stores the rotating session through a Keychain adapter, and converts only a fres
 token into upload credentials. Startup and successfully queued captures now instantiate
 and wake that transport; missing/unsafe build config or a missing session holds every item
 without claiming an attempt. The handoff route is locally build-verified but is not deployed
-or allowlisted in hosted Auth, and the existing anonymous website library is not yet linked
-to the signed-in native account. Owner identity selection, the physical reconnect drill,
+or allowlisted in hosted Auth. The website now has a locally verified permanent-email gate
+that clears legacy anonymous browser sessions and opens the same owner-scoped remote store;
+the D16 fresh-library policy deliberately performs no anonymous migration. Hosted deployment
+and live same-account proof, the physical reconnect drill,
 and production migration/deployment remain hard prerequisites before a
 native capture can learn with every browser closed. Loop 47
 supplies the locally verified one-job Edge worker and unapplied atomic jobs migration;
@@ -164,10 +167,11 @@ strict payload fixtures across Rust and Zod. Native email OTP request, HTTPS han
 deep-link callback, PKCE exchange, Keychain status, and guarded sign-out are connected
 locally. Slow Auth HTTP never holds the capture-transition mutex, while sign-out is refused
 during an auth operation or queue drain and when uploadable work remains. The current hosted
-account still has anonymous
-sign-in disabled, and its public Data API schema could not be proven with the configured
-publishable key, so the web client may fall back to IndexedDB and shared cloud behavior is
-not yet verified. P2 native capture remains the active risk track under D15's sequencing exception.
+account still has anonymous sign-in disabled, and its public Data API schema could not be
+proven with the configured publishable key. Local source now requires a durable email identity
+whenever Supabase is configured and never silently falls back to IndexedDB; the change is not
+deployed, so shared cloud behavior is not yet verified. P2 native capture remains the active
+risk track under D15's sequencing exception.
 
 Working today (`pnpm dev:web`): capture by drop/paste/button with the four-state overlay, library with real filters, keyboard-first Inbox triage, screenshot detail with prev/next and editable `why_saved`, drag-to-file, ⌘K palette, and the `/memory` surface. Classification calls MiniMax M3 when a key is present and falls back to sample data otherwise — the sidebar says which.
 
@@ -188,11 +192,12 @@ Known blockers:
    save/copy/relaunch, downloaded cloud-object,
    relaunch/selection, clipboard, focus, mixed-scale display, permission, Login Item, and
    lifecycle QA also remains.
-2. **Mac identity + background worker** — browser anonymous auth cannot be silently
-   transferred to the Mac app. Email OTP UI, HTTPS handoff, strict token-free deep link,
+2. **Mac identity + background worker** — D16 selects a fresh authenticated library rather
+   than transferring browser-anonymous data. Email OTP UI, HTTPS handoff, strict token-free deep link,
    PKCE exchange/refresh, Keychain persistence, authenticated upload, and startup/capture
    drain wakes are connected locally. The handoff is not deployed or configured in hosted
-   Auth, and the website does not yet share that authenticated identity. Loop 47 adds a
+   Auth. Website source now requires the same permanent email identity and owner-scoped
+   remote store locally, but neither surface has the hosted redirect/deployment proof. Loop 47 adds a
    locally verified one-job Edge classifier with exact owner/storage boundaries, bounded
    context and atomic retries, but its migration is unapplied and it has no deployed
    function or Vault/Cron trigger. Native captures still cannot learn with the web app closed.
@@ -207,7 +212,7 @@ Known blockers:
 | Phase | Status | Notes |
 |---|---|---|
 | Planning pack | ✅ complete | 2026-07-31 |
-| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; native email OTP, HTTPS/deep-link PKCE exchange/refresh, Keychain persistence, guarded sign-out, and startup/capture authenticated drain are locally verified, but hosted redirect deployment, same website identity, CI and telemetry remain |
+| P0 Foundation | 🟡 partial | scaffold, tray, Supabase and Vercel exist; native email OTP, HTTPS/deep-link PKCE exchange/refresh, Keychain persistence, guarded sign-out, authenticated drain, and the fresh permanent-email website gate are locally verified, but hosted redirect/deployment proof, CI and telemetry remain |
 | Demo track | 🟢 working | remote/local store, web capture, extension, projects, memory, annotation, chat and search surfaces |
 | P1 Core backend | 🟡 partial | schema/RLS/Storage live; unapplied jobs + authenticated native-ingest migrations and local Edge worker core exist; production apply, Vault/Cron, generated types and integration proof remain |
 | P2 Screenshot ingestion | 🟡 active | web/extension ingest plus native command/editable-shortcut/tray/permission, AppKit clipboard, interactive overlay, drag-out, five-item recent restore, four-tool annotation/flattening, durable local queue, native email session creation, and startup/capture/deadline/reconnect-woken authenticated Storage/RPC drain; hosted redirect/data proof, offline drill, and native QA remain |

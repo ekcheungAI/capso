@@ -4,6 +4,7 @@ import "./globals.css";
 import { Shell } from "@/components/shell";
 import { StoreProvider } from "@/lib/store/provider";
 import { ToastProvider } from "@/components/toast";
+import { AccountGate } from "@/components/account-gate";
 
 /**
  * Absolute base for every URL-shaped metadata field. It has to be absolute or
@@ -78,11 +79,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full">
-        <StoreProvider>
-          <ToastProvider>
-            <Shell>{children}</Shell>
-          </ToastProvider>
-        </StoreProvider>
+        <AccountGate>
+          <StoreProvider>
+            <ToastProvider>
+              <Shell>{children}</Shell>
+            </ToastProvider>
+          </StoreProvider>
+        </AccountGate>
       </body>
     </html>
   );

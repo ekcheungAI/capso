@@ -38,8 +38,9 @@ primitives may therefore proceed now to retire the highest platform risk, even t
 production Mac auth/CI/telemetry and P1 jobs/worker work remain incomplete. A strict native
 PKCE/ingest contract is compiled (`c3278ba`). Native email OTP, a strict token-free HTTPS
 handoff/deep-link, PKCE exchange, Keychain status, guarded sign-out, and authenticated
-startup/capture drain are now connected locally. The hosted handoff is not deployed or
-allowlisted and the website still has a separate anonymous/local identity. This exception
+startup/capture drain are now connected locally. The website now has a locally verified
+permanent-email gate and owner-scoped remote-store selection under D16's fresh-library
+policy. The hosted handoff and website change are not deployed or allowlisted. This exception
 does not permit claiming
 AC-CAP-03, AI-01, P2 done, or dogfood readiness until authenticated native ingest and
 browser-independent processing are complete.
@@ -55,7 +56,7 @@ browser-independent processing are complete.
 **Tasks:**
 - [x] Monorepo scaffold (pnpm workspaces): `apps/mac` (Tauri 2 + React + TS), `apps/web` (Next.js 15 App Router), `packages/shared` (types, zod schemas) <!-- loop 01; Next 16.2.12 shipped by create-next-app, see BUILD_LOG deviation -->
 - [ ] Supabase project created; `.env.local` templates (`.env.example`) for both apps; secrets never committed <!-- partial: .env.example done (loop 01); project creation BLOCKED on owner, STOP rules 3+4 -->
-- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves the strict native-origin callback/contract; native email OTP, exact HTTPS handoff, token-free capso callback, bounded PKCE exchange + rotating refresh, Keychain persistence/status, guarded sign-out, and fresh-JWT Storage/RPC startup/capture drains are locally connected. Hosted handoff deployment/redirect allowlisting, same-account website auth, anonymous-library linking, and live endpoint proof remain -->
+- [ ] Supabase Auth wired: email magic-link sign-in works on web; Mac app stores session and can call an authenticated endpoint <!-- partial: c3278ba proves the strict native-origin callback/contract; native email OTP, exact HTTPS handoff, token-free capso callback, bounded PKCE exchange + rotating refresh, Keychain persistence/status, guarded sign-out, fresh-JWT Storage/RPC startup/capture drains, and the permanent-email website gate are locally connected. D16 selects a fresh library with no anonymous migration. Hosted handoff deployment/redirect allowlisting, deployed same-account proof, and live endpoint proof remain -->
 - [x] Tauri menu-bar app boots with tray icon + empty popover window <!-- loop 02 -->
 
 - [x] Vercel deploy of `apps/web` <!-- production deployed in BUILD_LOG loop 20; real app, not empty shell -->

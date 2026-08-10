@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `e8dd7e22adaf93ee1f023dcc0d1c58b4c038360d` |
 | Current phase | Native capture plus browser-independent processing |
-| Next objective | No independent queue-wake code remains: AI-01a4 website identity/library migration plus hosted redirect and AI-01b2 integration require owner approval; CAP-02b/offline QA and PKG-01 remain manual or owner gates |
+| Next objective | D16 resolves identity as a fresh authenticated library and the local website gate is implemented; AI-01a4 hosted redirect/deployment proof and AI-01b2 integration require owner approval; CAP-02b/offline QA and PKG-01 remain manual or owner gates |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -35,7 +35,7 @@ candidate source files.
 
 | Loop | Schedule | Last run | Last result | Next gate |
 |---|---|---|---|---|
-| capso-cleanshot-replacement | hourly | 2026-08-10 09:14 HKT | DUR-01b3 APPROVED after 1 repair | Owner-gated website identity/hosted apply; then physical offline drill |
+| capso-cleanshot-replacement | hourly | 2026-08-10 09:14 HKT | DUR-01b3 APPROVED after 1 repair | Website identity chosen/implemented locally; owner-gated hosted apply, then physical offline drill |
 
 ## Gate scoreboard
 
@@ -50,7 +50,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor and durable flatten path; `4651859` proves one cross-language golden redaction fixture byte-for-byte through production pixelation, editor input validation, canonical/original save, clipboard, queue crash recovery, and drain consumption; 129 Rust + 98 workspace tests pass | Physical four-tool editor/save/copy/relaunch QA plus a downloaded remote-object pixel comparison |
 | DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels and restart FIFO; `b3b9641` proves the coordinator; `c3278ba` adds the ingest contract; Loop 48 composes Keychain with real Storage/RPC startup/capture wakes; Loop 50 connects session creation without capture-transition blocking; Loop 51 adds persisted-deadline wake/rearm plus event-driven ≤5s known-offline reconnect monitoring without consuming offline attempts | Hosted proof, then the physical three-capture offline/restart/reconnect drill |
 | HIS-01 reliable history | IN_PROGRESS | `8bd0888` provides exact-ID local restore without touching the pasteboard; `e0b1020` orders by durable queue capture time, attaches bounded 48×32 native thumbnails, and adds an explicit verified production-library route while retaining full-decode/path checks | Native relaunch/menu thumbnail/click/focus proof plus queued end-to-end cloud persistence |
-| AI-01 browser-independent processing | BLOCKED | `c3278ba` proves the PKCE/ingest contract; Loop 47 adds the local worker/migration; Loop 48 wires refresh, Keychain, real upload, and startup/capture drain; Loop 50 locally connects email OTP, strict HTTPS/deep-link PKCE exchange, Keychain status, and guarded sign-out. No hosted handoff deployment/allowlist, shared website identity, production apply/deploy, Vault/Cron schedule, or live database proof exists | Owner identity/library decision and production-change approval; deploy/allowlist handoff; apply/deploy/Cron; no-browser E2E proof |
+| AI-01 browser-independent processing | BLOCKED | `c3278ba` proves the PKCE/ingest contract; Loop 47 adds the local worker/migration; Loops 48/50 connect native auth/upload locally. D16 chooses a fresh library, and current website source now requires the same permanent email identity, clears legacy anonymous browser sessions locally, and never silently falls back from configured remote storage. No hosted handoff/website deployment, redirect allowlist, production worker apply, Vault/Cron schedule, or live database proof exists | Production-change approval; deploy/allowlist handoff and website; apply/deploy/Cron; same-account and no-browser E2E proof |
 | LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
 | RET-01 retrieval | IN_PROGRESS | Lexical retrieval passes; pgvector path absent | Hybrid search golden evaluation |
 | PKG-01 signed installer | BLOCKED | Local `.app`/`.dmg` build; ad-hoc signature fails Gatekeeper | Fix identifier; Developer ID/notarization owner gate |
@@ -73,7 +73,7 @@ outcome that fits the run budget.
 | 8 | CAP-02b — 20-capture overlay latency proof <!-- partial: `ec43534` records and reports the latest 20 successful fresh process-completion-to-native-show samples; the physical foreground run remains --> | OVL-01a | foreground test window |
 | 9 | ✅ DUR-01a — synced capture durability plus atomic restart-safe local queue state machine (`a5c5e80`) | CAP-01a | none |
 | 10 | DUR-01b — idempotent single-flight drain coordinator with exact acknowledgements, no-attempt holds, and error-safe wake handoff (`b3b9641`); Loop 48 adds real transport plus startup/capture wakes, Loop 50 adds locally created sessions without capture-transition blocking, and Loop 51 adds timed/reconnect wakes; hosted proof and the three-capture drill remain | DUR-01a, AI-01a for authenticated transport | network toggle QA only for the final drill |
-| 11 | AI-01a — Mac identity/auth handoff and authenticated ingest contract <!-- partial: `c3278ba` plus Loops 48/50 connect email OTP, strict HTTPS/deep-link PKCE, Keychain exchange/refresh/status, guarded sign-out, real upload, and startup/capture drain locally; hosted route deployment/redirect allowlisting, same website identity, live proof, and anonymous-library linking remain --> | DUR-01a | production identity/linking decision required |
+| 11 | AI-01a — Mac identity/auth handoff and authenticated ingest contract <!-- partial: `c3278ba` plus Loops 48/50 connect email OTP, strict HTTPS/deep-link PKCE, Keychain exchange/refresh/status, guarded sign-out, real upload, and startup/capture drain locally. D16 chooses a fresh library, and website source now enforces the permanent email identity without anonymous migration. Hosted route/website deployment, redirect allowlisting, and live same-account proof remain --> | DUR-01a | production deployment approval required |
 | 12 | AI-01b — server-side worker so processing continues with every browser closed <!-- partial: Loop 47 adds the locally verified one-job worker core and unapplied atomic jobs migration; AI-01b2 must add job production, Vault/Cron, production apply/deploy, and live integration proof --> | AI-01a | production/migration approval before apply |
 | 13 | AI-01c — no-browser end-to-end proof | AI-01b | foreground capture QA |
 | 14 | ✅ ANN-01a — native four-tool editor, protected first original, atomic flatten, queue reservation/recovery, clipboard re-copy, and overlay refresh (`42fcfbf`) | OVL-01b, DUR-01a | annotation QA |
@@ -122,7 +122,7 @@ is PASS; a skipped or unverified gate is not PASS.
 | Priority | Area | Debt | Disposition |
 |---|---|---|---|
 | P0 | Processing | Native startup/capture can now drive the real upload/job-registration transport behind an existing session, but hosted schema/function/Cron integration is unproven and inactive. | AI-01b2 production approval/apply plus live no-browser proof. |
-| P0 | Identity | Native email/PKCE can create a Keychain session locally, but the handoff is not deployed/allowlisted and the anonymous/local website library cannot be silently transferred to that account. | AI-01a4 hosted redirect plus owner identity/library linking decision. |
+| P0 | Identity | Native email/PKCE and website permanent-email identity are connected locally under D16's fresh-library policy, but the handoff/website are not deployed or allowlisted and same-account data flow is unproven. | AI-01a4 owner-approved hosted redirect/website deployment plus live proof. |
 | P1 | Distribution | Bundle id ends in `.app`; build is ad-hoc signed and fails Gatekeeper. | PKG-01a. |
 | P1 | Permissions | Preflight/guidance and capture gating are implemented, but Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 manual QA. |
 | P1 | Retrieval | Current search is lexical; embedding column is not used by the client path. | RET-01a. |
@@ -133,7 +133,5 @@ is PASS; a skipped or unverified gate is not PASS.
   PKG-01a changes macOS identity; `com.capso.app` is temporary and unsuitable.
 - Developer ID signing/notarization credentials are required only after PKG-01a.
   Never read, export, or alter signing credentials without explicit owner approval.
-- Decide whether native sign-in adopts/migrates the current anonymous browser library or
-  starts a fresh authenticated library before AI-01a production wiring.
 - Changing production auth, applying database migrations, spending money, distributing a
   build, or changing CleanShot settings remains a STOP-and-ask action.
