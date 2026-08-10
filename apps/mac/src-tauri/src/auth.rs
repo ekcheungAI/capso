@@ -891,6 +891,16 @@ impl ProductionAuthRuntime {
         }
     }
 
+    pub(crate) fn ui_status(&self) -> Result<(bool, AuthAccountStatus), String> {
+        match self {
+            Self::Ready(sign_in) => sign_in
+                .status()
+                .map(|account| (true, account))
+                .map_err(|error| error.to_string()),
+            Self::Disabled { .. } => Ok((false, AuthAccountStatus::signed_out())),
+        }
+    }
+
     pub(crate) fn sign_out(&self) -> Result<AuthAccountStatus, String> {
         match self {
             Self::Ready(sign_in) => {
@@ -1167,8 +1177,8 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::{
         AuthHttpClient, AuthHttpRequest, AuthHttpResponse, AuthRuntime, AuthSession, AuthStart,
-        NativeSignIn, SessionCoordinator, SessionRepository, SessionVault, SupabaseAuthClient,
-        SupabaseAuthConfig, AUTH_CALLBACK_URI, HANDOFF_TTL_MS,
+        NativeSignIn, ProductionAuthRuntime, SessionCoordinator, SessionRepository, SessionVault,
+        SupabaseAuthClient, SupabaseAuthConfig, AUTH_CALLBACK_URI, HANDOFF_TTL_MS,
     };
     use std::{
         collections::VecDeque,
@@ -1189,6 +1199,17 @@ mod tests {
         runtime
             .begin_with_tokens(now_ms, STATE, VERIFIER)
             .expect("begin deterministic PKCE handoff")
+    }
+
+    #[test]
+    fn disabled_production_auth_is_an_explicit_signed_out_ui_state() {
+        let runtime = ProductionAuthRuntime::Disabled {
+            warning: "test build has no cloud configuration".into(),
+        };
+
+        let (configured, account) = runtime.ui_status().expect("safe UI status");
+        assert!(!configured);
+        assert_eq!(account, super::AuthAccountStatus::signed_out());
     }
 
     fn callback(state: &str) -> String {

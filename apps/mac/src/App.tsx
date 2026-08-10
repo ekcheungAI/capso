@@ -8,6 +8,10 @@ import {
   type KeyboardEvent,
 } from "react";
 import "./App.css";
+import {
+  cloudAccountPresentation,
+  shortcutRecorderLabel,
+} from "./setup";
 
 type ShortcutSettings = {
   region: string;
@@ -51,6 +55,7 @@ type AuthAccountStatus = {
 type AuthFailureEvent = { message: string };
 
 type AuthUiSnapshot = {
+  configured: boolean;
   account: AuthAccountStatus;
   lastFailure: string | null;
 };
@@ -170,6 +175,7 @@ function App() {
     "permission" | "login" | null
   >(null);
   const [authStatus, setAuthStatus] = useState(PREVIEW_AUTH_STATUS);
+  const [authConfigured, setAuthConfigured] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authAction, setAuthAction] = useState<"email" | "sign_out" | null>(
     null,
@@ -183,6 +189,10 @@ function App() {
     () => !isTauriRuntime(),
   );
   const nativeRuntime = useMemo(isTauriRuntime, []);
+  const accountPresentation = useMemo(
+    () => cloudAccountPresentation(authConfigured, authStatus.status),
+    [authConfigured, authStatus.status],
+  );
   const isDirty = !sameSettings(settings, savedSettings);
   const screenRecordingGranted = systemStatus.screenRecording === "granted";
   const launchAtLoginEnabled =
@@ -249,6 +259,7 @@ function App() {
       "auth-status-changed",
       ({ payload }) => {
         if (!active) return;
+        setAuthConfigured(true);
         setAuthStatus(payload);
         setAuthNotice(
           payload.status === "signed_in"
@@ -272,6 +283,7 @@ function App() {
     invoke<AuthUiSnapshot>("get_auth_status")
       .then((snapshot) => {
         if (!active) return;
+        setAuthConfigured(snapshot.configured);
         const status = snapshot.account;
         setAuthStatus(status);
         setAuthNotice(
@@ -510,91 +522,117 @@ function App() {
     <main className="popover">
       <header className="popover-header">
         <div>
-          <p className="eyebrow">Capso capture</p>
-          <h1>Capture settings</h1>
+          <p className="eyebrow">Capso</p>
+          <h1>Capture on this Mac</h1>
+          <p className="header-copy">
+            Start with a shortcut. Captures stay local unless cloud sync is
+            connected.
+          </p>
         </div>
         <span
-          className="status-dot"
+          className="status-pill"
           data-ready={screenRecordingGranted}
-          aria-label={
-            screenRecordingGranted
-              ? "Capso is ready"
-              : "Capso needs Screen Recording access"
-          }
-        />
+        >
+          {screenRecordingGranted ? "All modes ready" : "Area ready"}
+        </span>
       </header>
 
-      <section className="account-card" aria-labelledby="account-heading">
-        <div className="section-heading">
-          <h2 id="account-heading">Cloud account</h2>
-          <span data-ready={authStatus.status === "signed_in"}>
-            {authStatus.status === "signed_in" ? "Signed in" : "Sign in"}
-          </span>
-        </div>
-        {authStatus.status === "signed_in" ? (
-          <div className="account-row">
-            <div className="system-copy">
-              <strong>{authStatus.email ?? "Capso account"}</strong>
-              <span>This Mac is ready to sync to this Capso account</span>
-            </div>
-            <button
-              type="button"
-              className="compact-button"
-              disabled={!nativeRuntime || authAction !== null}
-              onClick={() => void signOut()}
-            >
-              {authAction === "sign_out" ? "Signing out…" : "Sign out"}
-            </button>
+      <section className="shortcut-section" aria-labelledby="shortcuts-heading">
+        <div className="setup-heading">
+          <div>
+            <h2 id="shortcuts-heading">Keyboard shortcuts</h2>
+            <p>Click a shortcut, then press your new key combination.</p>
           </div>
-        ) : (
-          <form className="account-form" onSubmit={requestSignIn}>
-            <label htmlFor="account-email">Email</label>
-            <div>
-              <input
-                id="account-email"
-                type="email"
-                value={authEmail}
-                autoComplete="email"
-                inputMode="email"
-                placeholder="you@example.com"
-                required
-                disabled={!nativeRuntime || authAction !== null}
-                onChange={(event) => setAuthEmail(event.target.value)}
-              />
+          <span>Works from any app</span>
+        </div>
+        <div className="shortcut-list">
+          {SHORTCUT_FIELDS.map(({ action, label, detail }) => (
+            <div className="shortcut-row" key={action}>
+              <div className="shortcut-copy">
+                <strong>{label}</strong>
+                <span>{detail}</span>
+              </div>
               <button
-                type="submit"
-                className="primary-button"
-                disabled={!nativeRuntime || authAction !== null}
+                type="button"
+                className="shortcut-recorder"
+                data-recording={recording === action}
+                aria-pressed={recording === action}
+                aria-label={`Change ${label} shortcut`}
+                onClick={() => {
+                  setRecording(action);
+                  setNotice("Press your new shortcut. Escape cancels.");
+                  setNoticeIsError(false);
+                }}
+                onBlur={() => setRecording(null)}
+                onKeyDown={(event) => {
+                  if (recording === action) {
+                    recordShortcut(action, event);
+                  }
+                }}
               >
-                {authAction === "email" ? "Sending…" : "Send link"}
+                {shortcutRecorderLabel(
+                  formatShortcut(settings[action]),
+                  recording === action,
+                )}
               </button>
             </div>
-          </form>
-        )}
-        <div
-          className="account-notice"
-          data-error={authNoticeIsError}
-          aria-live="polite"
-        >
-          {authNotice}
+          ))}
         </div>
+
+        <div className="notice" data-error={noticeIsError} aria-live="polite">
+          <span className="notice-mark" aria-hidden="true" />
+          <p>{notice}</p>
+        </div>
+
+        {conflicts.length > 0 && (
+          <ul className="conflict-list" aria-label="Shortcut conflicts">
+            {conflicts.map((conflict) => (
+              <li key={conflict.action}>
+                {formatShortcut(conflict.display)} — {conflict.error}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <footer className="actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={restoreDefaults}
+            disabled={isSaving}
+          >
+            Restore defaults
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={save}
+            disabled={!nativeRuntime || (!isDirty && !needsRetry) || isSaving}
+          >
+            {isSaving
+              ? "Saving…"
+              : !isDirty && needsRetry
+                ? "Retry shortcuts"
+                : "Save changes"}
+          </button>
+        </footer>
       </section>
 
       <section className="system-card" aria-labelledby="system-heading">
         <div className="section-heading">
-          <h2 id="system-heading">System readiness</h2>
+          <h2 id="system-heading">Capture permissions</h2>
           <span data-ready={screenRecordingGranted}>
-            {screenRecordingGranted ? "Ready" : "Action needed"}
+            {screenRecordingGranted ? "All modes ready" : "Area works now"}
           </span>
         </div>
 
         <div className="system-row">
           <div className="system-copy">
-            <strong>Screen Recording</strong>
+            <strong>Window &amp; full screen</strong>
             <span>
               {screenRecordingGranted
-                ? "Window and full-screen capture enabled"
-                : "Required for windows and full screens"}
+                ? "Screen Recording access is enabled"
+                : "Allow Screen Recording to unlock these modes"}
             </span>
           </div>
           <button
@@ -667,81 +705,73 @@ function App() {
         </div>
       </section>
 
-      <section aria-labelledby="shortcuts-heading">
-        <div className="section-heading shortcuts-heading">
-          <h2 id="shortcuts-heading">Keyboard shortcuts</h2>
+      <section className="account-card" aria-labelledby="account-heading">
+        <div className="section-heading">
+          <h2 id="account-heading">Cloud sync</h2>
+          <span
+            data-ready={authStatus.status === "signed_in"}
+            data-muted={!authConfigured}
+          >
+            {accountPresentation.status}
+          </span>
         </div>
-        <div className="shortcut-list">
-        {SHORTCUT_FIELDS.map(({ action, label, detail }) => (
-          <div className="shortcut-row" key={action}>
-            <div className="shortcut-copy">
-              <strong>{label}</strong>
-              <span>{detail}</span>
+
+        {authStatus.status === "signed_in" ? (
+          <div className="account-row">
+            <div className="system-copy">
+              <strong>{authStatus.email ?? "Capso account"}</strong>
+              <span>{accountPresentation.message}</span>
             </div>
             <button
               type="button"
-              className="shortcut-recorder"
-              data-recording={recording === action}
-              aria-pressed={recording === action}
-              aria-label={`Record ${label} shortcut`}
-              onClick={() => {
-                setRecording(action);
-                setNotice("Press your new shortcut. Escape cancels.");
-                setNoticeIsError(false);
-              }}
-              onBlur={() => setRecording(null)}
-              onKeyDown={(event) => {
-                if (recording === action) {
-                  recordShortcut(action, event);
-                }
-              }}
+              className="compact-button"
+              disabled={!nativeRuntime || authAction !== null}
+              onClick={() => void signOut()}
             >
-              {recording === action
-                ? "Type shortcut"
-                : formatShortcut(settings[action])}
+              {authAction === "sign_out" ? "Signing out…" : "Sign out"}
             </button>
           </div>
-        ))}
-        </div>
+        ) : accountPresentation.showEmailForm ? (
+          <>
+            <p className="account-guidance">{accountPresentation.message}</p>
+            <form className="account-form" onSubmit={requestSignIn}>
+              <label htmlFor="account-email">Capso account email</label>
+              <div>
+                <input
+                  id="account-email"
+                  type="email"
+                  value={authEmail}
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@example.com"
+                  required
+                  disabled={!nativeRuntime || authAction !== null}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={!nativeRuntime || authAction !== null}
+                >
+                  {authAction === "email" ? "Sending…" : "Send link"}
+                </button>
+              </div>
+            </form>
+            <div
+              className="account-notice"
+              data-error={authNoticeIsError}
+              aria-live="polite"
+            >
+              {authNotice}
+            </div>
+          </>
+        ) : (
+          <div className="account-unavailable">
+            <strong>No email needed</strong>
+            <span>{accountPresentation.message}</span>
+          </div>
+        )}
       </section>
-
-      <div className="notice" data-error={noticeIsError} aria-live="polite">
-        <span className="notice-mark" aria-hidden="true" />
-        <p>{notice}</p>
-      </div>
-
-      {conflicts.length > 0 && (
-        <ul className="conflict-list" aria-label="Shortcut conflicts">
-          {conflicts.map((conflict) => (
-            <li key={conflict.action}>
-              {formatShortcut(conflict.display)} — {conflict.error}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <footer className="actions">
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={restoreDefaults}
-          disabled={isSaving}
-        >
-          Restore defaults
-        </button>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={save}
-          disabled={!nativeRuntime || (!isDirty && !needsRetry) || isSaving}
-        >
-          {isSaving
-            ? "Saving…"
-            : !isDirty && needsRetry
-              ? "Retry shortcuts"
-              : "Save shortcuts"}
-        </button>
-      </footer>
     </main>
   );
 }

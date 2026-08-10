@@ -214,6 +214,7 @@ impl AuthFeedbackState {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthUiSnapshot {
+    configured: bool,
     account: auth::AuthAccountStatus,
     last_failure: Option<String>,
 }
@@ -267,8 +268,9 @@ async fn get_auth_status(app: AppHandle) -> Result<AuthUiSnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let boundary = app.state::<AuthAccountBoundary>();
         let _operation = boundary.begin_auth_operation()?;
-        let account = app.state::<auth::ProductionAuthRuntime>().status()?;
+        let (configured, account) = app.state::<auth::ProductionAuthRuntime>().ui_status()?;
         Ok(AuthUiSnapshot {
+            configured,
             account,
             last_failure: app.state::<AuthFeedbackState>().last_failure(),
         })
