@@ -23,7 +23,8 @@
     "brand:check": "node scripts/gen-tokens.mjs --check",
     "capture:spec": "node --experimental-strip-types scripts/gen-capture-spec.mjs",
     "capture:check": "node --experimental-strip-types scripts/gen-capture-spec.mjs --check",
-    "loop:check": "node scripts/validate-capso-loop.mjs"
+    "loop:check": "node scripts/validate-capso-loop.mjs",
+    "verify:ai01": "node scripts/verify-ai01-pipeline.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
