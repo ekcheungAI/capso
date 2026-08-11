@@ -1,8 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import { Art, type ArtName } from "@/components/art";
 import { useStore } from "@/lib/store/provider";
 import { ROLES } from "@/lib/templates";
+
+/**
+ * Generated art per role (D17). The four frames were reviewed together at real
+ * card width and re-rolled as a set, not individually — a card that reads as a
+ * different shoot breaks the group even when it is a good photograph on its own.
+ */
+const ROLE_ART: Record<string, ArtName> = {
+  marketing: "role-marketing",
+  product: "role-product",
+  founder: "role-founder",
+  empty: "role-empty",
+};
 
 /**
  * One screen, one decision. Picking a role only creates projects — it sets no
@@ -11,7 +24,7 @@ import { ROLES } from "@/lib/templates";
  * beats a promise you have to accept blind.
  */
 export function FirstRun() {
-  const { applyTemplate, loadSamples } = useStore();
+  const { applyTemplate, loadSamples, skipSetup } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
 
   const pick = async (id: string) => {
@@ -33,8 +46,16 @@ export function FirstRun() {
             key={role.id}
             disabled={busy !== null}
             onClick={() => void pick(role.id)}
-            className="group rounded-xl bg-surface p-4 text-left ring-1 ring-line transition-[box-shadow,transform] duration-[120ms] ease-out hover:-translate-y-0.5 hover:ring-accent disabled:opacity-50"
+            className="group min-h-11 overflow-hidden rounded-xl bg-surface text-left ring-1 ring-line transition-[box-shadow,transform] duration-[120ms] ease-out hover:-translate-y-0.5 hover:ring-accent disabled:opacity-50"
           >
+            {ROLE_ART[role.id] && (
+              <Art
+                name={ROLE_ART[role.id]}
+                sizes="(min-width: 640px) 340px, 100vw"
+                className="h-28 w-full object-cover"
+              />
+            )}
+            <div className="p-4">
             <p className="text-sm font-medium">{role.name}</p>
             <p className="mt-1 text-xs leading-relaxed text-muted">{role.blurb}</p>
 
@@ -55,6 +76,7 @@ export function FirstRun() {
             <p className="mt-3 text-xs text-accent opacity-0 transition-opacity group-hover:opacity-100">
               {busy === role.id ? "Setting up…" : "Use this →"}
             </p>
+            </div>
           </button>
         ))}
       </div>
@@ -67,10 +89,31 @@ export function FirstRun() {
             setBusy("samples");
             void loadSamples();
           }}
-          className="text-accent underline underline-offset-2 disabled:opacity-50"
+          className="min-h-11 text-accent underline underline-offset-2 disabled:opacity-50"
         >
           Explore with sample captures
         </button>
+        {" · "}
+        {/* An explicit way out. The picker now renders inside the shell, so the
+            rail can navigate away from it — but leaving without answering left
+            `needsSetup` true and the cover reappeared on the next route, which
+            reads as the app refusing to let go. */}
+        <button
+          disabled={busy !== null}
+          onClick={() => {
+            setBusy("skip");
+            void skipSetup();
+          }}
+          className="min-h-11 text-accent underline underline-offset-2 disabled:opacity-50"
+        >
+          Skip for now
+        </button>
+      </p>
+
+      {/* Drop, paste and Capture are all live on this screen now. They were not
+          before: Shell returned early here and never mounted CaptureLayer. */}
+      <p className="mt-3 text-xs text-muted">
+        Already have one? Drop it anywhere on this page and pick a project after.
       </p>
     </div>
   );

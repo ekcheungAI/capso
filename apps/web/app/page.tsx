@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowRight, CheckCircle, MagnifyingGlass, Plus, SealCheck, Sparkle, X } from "@phosphor-icons/react";
+import { FirstCapture } from "@/components/first-capture";
 import { CapsoMark, fillFor } from "@/components/mark.generated";
 import { useToast } from "@/components/toast";
-import { EmptyState, SkeletonGrid, Thumb } from "@/components/ui";
+import { SkeletonGrid, Thumb } from "@/components/ui";
 import { resurface } from "@/lib/resurface";
 import type { Screenshot, Thread } from "@/lib/store";
 import { useStore } from "@/lib/store/provider";
 
 export default function HomePage() {
-  const { ready, screenshots, inbox, threads, byThread, threadName, revisits, assign } = useStore();
+  const { ready, screenshots, inbox, threads, byThread, threadName, revisits, assign, stage } = useStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filingId, setFilingId] = useState<string | null>(null);
   const [drawerItem, setDrawerItem] = useState<Screenshot | null>(null);
@@ -51,15 +52,12 @@ export default function HomePage() {
 
   if (!ready) return <SkeletonGrid />;
 
-  if (screenshots.length === 0 && threads.length === 0) {
-    return (
-      <EmptyState
-        title="Your visual memory starts with one screenshot"
-        body="Drop an image anywhere, paste from the clipboard, or press Capture. Capso will organise the rest."
-        action="Your first capture becomes the first capsule"
-      />
-    );
-  }
+  // Was `screenshots.length === 0 && threads.length === 0`, which a role template
+  // makes false the instant it creates projects — so this welcome was unreachable
+  // for nearly every new user, who landed on an empty "Today's tray" instead.
+  // `stage` asks the question that was actually meant: has this person captured
+  // anything yet? See lib/onboarding.ts.
+  if (stage === "first_capture") return <FirstCapture variant="page" />;
 
   const selectCapture = (id: string) => {
     setSelectedId((current) => (current === id ? null : id));
@@ -121,6 +119,11 @@ export default function HomePage() {
           </button>
         </div>
       </header>
+
+      {/* Samples are on screen, so the full-page welcome has nowhere to go. One
+          line instead, and it removes itself on the first real capture — nothing
+          to dismiss, per doc 15's ban on checklists that outlive onboarding. */}
+      {stage === "nudge" && <FirstCapture variant="nudge" />}
 
       <section aria-labelledby="tray-heading">
         <div className="mb-4 flex items-end justify-between gap-4">
