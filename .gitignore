@@ -21,6 +21,19 @@ apps/web/public/extension-version.json
 # three enumerated rules and 22 MB of PNGs went in before anyone noticed.
 drafts/brand/renders*/
 
+# generated preview bundles — same failure mode as renders: a 128 MB
+# `*-interactive-preview/` dir appeared outside the renders glob.
+drafts/*preview*/
+
+# QA evidence, browser-tool scratch, and CLI temp state — artifacts, not source
+.playwright-cli/
+qa/
+output/
+supabase/.temp/
+
+# npm artifact in a pnpm repo — a stray `npm install` creates this
+package-lock.json
+
 # tooling
 __pycache__/
 .DS_Store
