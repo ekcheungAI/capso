@@ -135,3 +135,21 @@ cargo test --manifest-path apps/mac/src-tauri/Cargo.toml
 cargo clippy --manifest-path apps/mac/src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 pnpm --filter mac tauri build --debug --bundles app
 ```
+
+### Cloud sync and native sign-in need build-time configuration
+
+`build.rs` reads `CAPSO_SUPABASE_URL`, `CAPSO_SUPABASE_PUBLISHABLE_KEY`, and
+`CAPSO_AUTH_SITE_URL` from the **process environment at compile time**; it does not read
+`.env.local`. The commands above therefore produce an app that cannot sign in or sync,
+with no runtime error — `embedded_public_config()` simply reports no configuration.
+
+To build or run a cloud-enabled app, use the wrapper, which loads `.env.local` and
+exports only those three public values:
+
+```bash
+scripts/mac-cloud.sh dev      # run it
+scripts/mac-cloud.sh build    # debug .app bundle
+```
+
+The publishable key must start with `sb_publishable_`; a legacy anon JWT and any
+`sb_secret_`/service-role key are rejected before compilation.
