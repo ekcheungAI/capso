@@ -11,6 +11,26 @@ import { AnnotateEditor } from "@/components/annotate";
 import { downscale } from "@/components/capture";
 import { useToast } from "@/components/toast";
 
+async function copyImagePixels(source: string): Promise<void> {
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Capso could not prepare the image clipboard.");
+  context.drawImage(image, 0, 0);
+  const png = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Capso could not encode the image clipboard."))),
+      "image/png",
+    );
+  });
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+}
+
 /**
  * Screenshot detail — the "what does this actually tell me" surface.
  * Elements are the list in 13_WEB_APP_PLAN.md; opening it writes a revisit (F5).
@@ -45,7 +65,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const visited = useRef(false);
 
   /**
-   * The full-size original, fetched on demand. It no longer rides on the row —
+   * The full-size original, fetched on demand. It no longer rides on the row -
    * keeping every original in memory is what made loading the library expensive
    * — so this is the one screen that pays to read it back. Until it arrives,
    * `imageFor` renders the 800px thumb, so the page is never empty.
@@ -130,7 +150,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             // that actually clears it.
             if (redacted) {
               toast(
-                "Blurred — but the text Capso already read still contains it.",
+                "Blurred - but the text Capso already read still contains it.",
                 () => {
                   const cur = get(id);
                   if (cur) void reread(cur);
@@ -216,10 +236,14 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
           <button
-            onClick={() => {
-              void navigator.clipboard.writeText(fullImage);
-              void visit(s.id, "copied");
-              flash("image");
+            onClick={async () => {
+              try {
+                await copyImagePixels(fullImage);
+                await visit(s.id, "copied");
+                flash("image");
+              } catch {
+                toast("Could not copy image pixels. Download the PNG instead.");
+              }
             }}
             className="rounded-md border border-line px-3 py-1.5"
           >
@@ -243,7 +267,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             </button>
           )}
           {/* Quiet here, prominent in the failure banner above. Re-reading a
-              capture that read fine is still worth offering — the guess improves
+              capture that read fine is still worth offering - the guess improves
               once there are more projects and more corrections to learn from. */}
           {s.status === "done" && (
             <button
@@ -256,7 +280,12 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           )}
           <button
             onClick={async () => {
-              if (!confirm("Deletes the image, OCR text and every reference to it. Cannot be undone.")) return;
+              if (
+                !confirm(
+                  "Deletes this cloud copy, its OCR text and library references. A Mac original retained by the Capso app stays local. Cannot be undone.",
+                )
+              )
+                return;
               await remove(s);
               router.push("/");
             }}
@@ -275,10 +304,10 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             {new Date(s.capturedAt).toLocaleString("en-GB")} · {s.source.replace(/_/g, " ")}
           </p>
           {/* File meta line, Air/Squarespace style. Reads the loaded original
-              rather than the row — the row no longer carries it — and reports
+              rather than the row - the row no longer carries it - and reports
               the real format instead of calling every capture "PNG", which was
               wrong for the whole import path since it encodes JPEG. */}
-          <p className="mt-1 text-[11px] tracking-wide text-muted uppercase">
+          <p className="mt-1 text-xs tracking-wide text-muted uppercase">
             {formatOf(fullImage)} · {s.type.replace(/_/g, " ")}
             {s.width && s.height ? ` · ${s.width}×${s.height}` : ""} ·{" "}
             {Math.max(1, Math.round(fullImage.length / 1024))} KB
@@ -287,13 +316,13 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
         {/* A failed classification used to be a dead end here: no title, no
             summary, no OCR text, and the only "Try again" in the product was in
-            the Inbox — which this capture leaves the moment it is filed. */}
+            the Inbox - which this capture leaves the moment it is filed. */}
         {s.status === "unprocessed" && (
           <div className="rounded-lg border border-line bg-surface p-3">
             <p className="text-xs font-medium">Capso couldn&apos;t read this one</p>
-            <p className="mt-1 text-[11px] leading-relaxed text-muted">
+            <p className="mt-1 text-xs leading-relaxed text-muted">
               No title, summary or text was extracted, so it will not turn up in search. Nothing
-              about the image is lost — only what was read from it.
+              about the image is lost. Only what was read from it is missing.
             </p>
             <button
               onClick={() => void reread(s)}
@@ -321,6 +350,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           ) : (
             <div className="space-y-2">
               <textarea
+                aria-label="Why I saved this"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 rows={3}
@@ -353,11 +383,12 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
               <Tag key={`a-${t}`} label={t} onRemove={() => void dropTag(s, t)} />
             ))}
             {s.tags.length === 0 && s.userTags.length === 0 && (
-              <span className="text-[11px] text-muted">No tags yet.</span>
+              <span className="text-xs text-muted">No tags yet.</span>
             )}
           </div>
 
           <input
+            aria-label="Add a tag"
             value={tagDraft}
             onChange={(e) => setTagDraft(e.target.value)}
             // Handled on the key rather than via a <form>: a single-input form
@@ -377,14 +408,15 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             // Say which ones were guessed. Without this the owner cannot tell
             // what Capso inferred from what they told it, and removing a tag
             // stops reading as feedback.
-            <p className="mt-1.5 text-[11px] text-muted">
-              Unfilled tags are suggestions — removing one teaches Capso.
+            <p className="mt-1.5 text-xs text-muted">
+              Unfilled tags are suggestions - removing one teaches Capso.
             </p>
           )}
         </Field>
 
         <Field label="Intent">
           <select
+            aria-label="Intent"
             value={s.intent}
             onChange={(e) => void saveIntent(s, e.target.value as Intent)}
             className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
@@ -399,6 +431,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 
         <Field label="Project">
           <select
+            aria-label="Project"
             value={s.threadId ?? ""}
             onChange={(e) => void assign(s, e.target.value || null, "manual")}
             className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
@@ -411,19 +444,19 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             ))}
           </select>
           {s.suggestedThreadId && s.suggestedThreadId !== s.threadId && (
-            <p className="mt-1 text-[11px] text-muted">
+            <p className="mt-1 text-xs text-muted">
               Capso suggested {threadName(s.suggestedThreadId)} ({Math.round(s.confidence * 100)}%)
             </p>
           )}
         </Field>
 
         <Field label={`OCR text (${s.ocrText.length} chars)`}>
-          <button onClick={() => setOcrOpen((o) => !o)} className="text-[11px] underline underline-offset-2">
+          <button onClick={() => setOcrOpen((o) => !o)} className="text-xs underline underline-offset-2">
             {ocrOpen ? "Collapse" : "Expand"}
           </button>
           {ocrOpen && (
             <>
-              <pre className="mt-2 max-h-56 overflow-auto rounded-md border border-line bg-surface p-2 text-[11px] leading-relaxed whitespace-pre-wrap">
+              <pre className="mt-2 max-h-56 overflow-auto rounded-md border border-line bg-surface p-2 text-xs leading-relaxed whitespace-pre-wrap">
                 {s.ocrText || "No text found."}
               </pre>
               <button
@@ -431,7 +464,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                   void navigator.clipboard.writeText(s.ocrText);
                   flash("text");
                 }}
-                className="mt-1.5 text-[11px] underline underline-offset-2"
+                className="mt-1.5 text-xs underline underline-offset-2"
               >
                 Copy text
               </button>
@@ -451,7 +484,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemove: () => void }) {
   return (
     <span
-      className={`group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+      className={`group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
         mine ? "bg-accent/12 text-foreground" : "border border-line text-muted"
       }`}
     >
@@ -469,13 +502,13 @@ function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemov
 
 /** "data:image/webp;base64,…" → "WEBP". Falls back for the placeholder SVG. */
 function formatOf(dataUrl: string) {
-  return dataUrl.match(/^data:image\/([a-z+]+)/i)?.[1]?.toUpperCase() ?? "—";
+  return dataUrl.match(/^data:image\/([a-z+]+)/i)?.[1]?.toUpperCase() ?? "Unknown";
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="mb-1.5 text-[11px] uppercase tracking-wide text-muted">{label}</p>
+      <p className="mb-1.5 text-xs uppercase tracking-wide text-muted">{label}</p>
       {children}
     </div>
   );

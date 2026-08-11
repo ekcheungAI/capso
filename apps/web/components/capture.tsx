@@ -9,7 +9,13 @@ import { classify, fewShotLines } from "@/lib/classify";
 import { tagVocabulary } from "@/lib/tags";
 import { newId, routeConfidence, type Screenshot } from "@/lib/store";
 import { CapsoMark } from "@/components/mark.generated";
-import { deviceToken } from "@/lib/device";
+import { accountDeviceToken } from "@/lib/device";
+import { useAccount } from "@/components/account-gate";
+import {
+  EXTENSION_POLL_INTERVAL_MS,
+  extensionCaptureId,
+  shouldStartExtensionPoll,
+} from "@/lib/extension-poll";
 // Geometry, encoding and the aspect buckets live in one place now — the same
 // module the extension mirrors and the Mac app will import, so two surfaces
 // capturing the same screen produce the same stored artefact.
@@ -30,6 +36,8 @@ export function CaptureLayer() {
   const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
+  const account = useAccount();
+  const relayOwnerId = account.userId;
   const [pending, setPending] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState<BulkImportState | null>(null);
@@ -261,7 +269,7 @@ export function CaptureLayer() {
           currentName: null,
         });
         if (failed) {
-          toast(`Imported ${landed} of ${images.length} — ${failed} could not be fully read`);
+          toast(`Imported ${landed} of ${images.length} - ${failed} could not be fully read`);
         }
       } else if (failed) {
         toast("That file could not be read as an image");
@@ -275,18 +283,22 @@ export function CaptureLayer() {
     if (!ready) return;
     let stop = false;
     let polling = false;
+    let lastStartedAt = Number.NEGATIVE_INFINITY;
 
     const poll = async () => {
       // Focus, visibility and the interval can all fire together. Only one
       // drain may own a relay batch at a time, otherwise the same in-flight ids
       // can be classified twice before either call reaches the acknowledgement.
-      if (polling) return;
+      const now = performance.now();
+      if (polling || !shouldStartExtensionPoll(now, lastStartedAt)) return;
       polling = true;
+      lastStartedAt = now;
       try {
         // Custom header the GET route now requires — see api/ingest/route.ts.
         // The `device` filter is what stops a second Capso tab, in a second
         // browser, from collecting captures meant for this one.
-        const res = await fetch(`/api/ingest?device=${encodeURIComponent(deviceToken())}`, {
+        const relayDevice = await accountDeviceToken(relayOwnerId);
+        const res = await fetch(`/api/ingest?device=${encodeURIComponent(relayDevice)}`, {
           headers: { "x-capso-poll": "1" },
         });
         if (!res.ok) return;
@@ -321,6 +333,7 @@ export function CaptureLayer() {
         try {
           for (const [index, item] of items.entries()) {
             if (stop) break;
+            const persistedId = extensionCaptureId(item.id);
             // The extension has always sent the tab's URL and title; until now
             // they were read off the wire and dropped. They are the strongest
             // signal a browser capture carries, for classification and search.
@@ -333,14 +346,14 @@ export function CaptureLayer() {
             // confirms storage, so a lost ack or a recycled relay instance must
             // cost a redundant upload, never a duplicate capsule. The id comes
             // from the extension precisely so it is stable across those retries.
-            if (seen.current.has(item.id)) {
-              seen.current.add(item.id);
+            if (seen.current.has(persistedId)) {
+              seen.current.add(persistedId);
               stored.push(item.id);
               completed += 1;
             } else {
               try {
                 await startRef.current(await downscale(item.imageDataUrl), "extension", {
-                  id: item.id,
+                  id: persistedId,
                   overlay: false,
                   pageUrl: item.pageUrl ?? null,
                   pageTitle: item.pageTitle ?? null,
@@ -348,7 +361,7 @@ export function CaptureLayer() {
                   onStored: () => {
                     // Do not mark an id as seen before IndexedDB/Supabase has
                     // accepted it. If storage throws, the relay must re-offer it.
-                    seen.current.add(item.id);
+                    seen.current.add(persistedId);
                     stored.push(item.id);
                     setExtensionBatch((current) =>
                       current ? { ...current, stored: stored.length } : current,
@@ -410,7 +423,7 @@ export function CaptureLayer() {
     // Poll regardless of visibility: a capture taken from another tab must land
     // without waiting for the user to come back to Capso. Also drain instantly
     // when the tab is refocused so the overlay appears the moment you look.
-    const timer = setInterval(poll, 2500);
+    const timer = setInterval(poll, EXTENSION_POLL_INTERVAL_MS);
     const onVisible = () => void poll();
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
@@ -422,7 +435,7 @@ export function CaptureLayer() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [ready]);
+  }, [ready, relayOwnerId]);
 
   useEffect(() => {
     const onDrop = (e: DragEvent) => {
@@ -470,9 +483,9 @@ export function CaptureLayer() {
     <>
       {pathname !== "/extension" && <div className="fixed right-6 bottom-6 z-30 hidden items-center gap-1 rounded-full bg-surface p-1 shadow-lg ring-1 ring-line md:flex">
         <label
-          title={importActive ? "A screenshot batch is already being imported" : "Pick real screenshots from your Mac — they are classified like any capture"}
+          title={importActive ? "A screenshot batch is already being imported" : "Pick real screenshots from your Mac - they are classified like any capture"}
           aria-disabled={importActive}
-          className={`rounded-full px-3 py-2 text-[11px] font-medium transition ${
+          className={`rounded-full px-3 py-2 text-xs font-medium transition ${
             importActive ? "cursor-not-allowed text-muted opacity-45" : "cursor-pointer text-muted hover:bg-background hover:text-foreground"
           }`}
         >
@@ -495,7 +508,7 @@ export function CaptureLayer() {
         <button
           onClick={async () => void start(await downscale(sampleCapture()), "hotkey_region")}
           title="Stands in for ⌃⇧C until the Mac app is wired up"
-          className="rounded-full bg-accent px-3.5 py-2 text-[11px] font-semibold text-accent-ink"
+          className="rounded-full bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink"
         >
           Capture
         </button>
@@ -601,7 +614,7 @@ function BulkImportStatus({
                     ? "Browser captures received"
                     : "Import complete"}
               </h2>
-              <p aria-live="polite" aria-atomic="true" className="mt-0.5 text-[11px] leading-relaxed text-muted">
+              <p aria-live="polite" aria-atomic="true" className="mt-0.5 text-xs leading-relaxed text-muted">
                 {working
                   ? `${value.kind === "extension" ? "Organising" : "Reading"} ${Math.min(processed + 1, value.total)} of ${value.total}`
                   : `${landed} screenshot${landed === 1 ? "" : "s"} added to your memory`}
@@ -639,7 +652,7 @@ function BulkImportStatus({
         />
       </div>
 
-      <div className="mt-2 flex items-center gap-2 text-[11px] tabular-nums text-muted">
+      <div className="mt-2 flex items-center gap-2 text-xs tabular-nums text-muted">
         <span>{value.stored} saved</span>
         <span aria-hidden="true">·</span>
         <span>{value.done} read</span>
@@ -653,18 +666,18 @@ function BulkImportStatus({
       </div>
 
       {working ? (
-        <p className="mt-3 border-t border-line pt-3 text-[11px] leading-relaxed text-muted">
+        <p className="mt-3 border-t border-line pt-3 text-xs leading-relaxed text-muted">
           {value.kind === "extension"
             ? "The extension keeps every capture until Capso confirms it is safely stored."
             : "Images are safe as soon as they are saved. You can keep using Capso while it reads the rest."}
         </p>
       ) : (
         <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
-          <button type="button" onClick={onOpenLibrary} className="rounded-full bg-accent px-3 py-2 text-[11px] font-semibold text-accent-ink">
+          <button type="button" onClick={onOpenLibrary} className="rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-ink">
             View folders
           </button>
           {landed > 0 && (
-            <button type="button" onClick={onReview} className="rounded-full border border-line px-3 py-2 text-[11px] font-medium text-muted hover:text-foreground">
+            <button type="button" onClick={onReview} className="rounded-full border border-line px-3 py-2 text-xs font-medium text-muted hover:text-foreground">
               Review suggestions
             </button>
           )}
@@ -731,9 +744,9 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
       <div key={state} className="capso-fade space-y-2 p-3">
         {state === "loading" && (
           /* The Reading state, carried by the mark rather than by Tailwind's
-             default pulse — this is the provenance rule in motion: the glyph
+             default pulse - this is the provenance rule in motion: the glyph
              is present precisely because Capso, not you, is doing something. */
-          <p className="flex items-center gap-2 text-[11px] text-muted">
+          <p className="flex items-center gap-2 text-xs text-muted">
             <CapsoMark size={13} className="capso-reading" />
             Analysing…
           </p>
@@ -741,24 +754,24 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
 
         {state === "suggestion" && (
           <>
-            <p className="text-[11px]">
+            <p className="text-xs">
               <span className="text-muted">Project:</span> {threadName(s.suggestedThreadId)}{" "}
               <span className="text-muted">· {Math.round(s.confidence * 100)}%</span>
             </p>
             <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => seat(s.suggestedThreadId)}
-                className="rounded-md bg-accent px-2.5 py-1 text-[11px] text-accent-ink"
+                className="rounded-md bg-accent px-2.5 py-1 text-xs text-accent-ink"
               >
                 ✓ Confirm
               </button>
               <button
                 onClick={() => setAdjusting((a) => !a)}
-                className="rounded-md border border-line px-2.5 py-1 text-[11px]"
+                className="rounded-md border border-line px-2.5 py-1 text-xs"
               >
                 Move to…
               </button>
-              <button onClick={onClose} className="px-2 py-1 text-[11px] text-muted">
+              <button onClick={onClose} className="px-2 py-1 text-xs text-muted">
                 Ignore
               </button>
             </div>
@@ -766,7 +779,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
         )}
 
         {state === "confirmed" && (
-          <p className="text-[11px]">
+          <p className="text-xs">
             Saved to <span className="font-medium">{threadName(s.threadId)}</span>{" "}
             <button onClick={() => setAdjusting(true)} className="underline underline-offset-2">
               edit
@@ -775,7 +788,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
         )}
 
         {state === "timeout" && (
-          <p className="text-[11px] text-muted">Saved to Inbox — not sure where it belongs.</p>
+          <p className="text-xs text-muted">Saved to Inbox - not sure where it belongs.</p>
         )}
 
         {adjusting && (
@@ -789,7 +802,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
               void assign(s, e.target.value || null, "user_corrected");
               setAdjusting(false);
             }}
-            className="w-full rounded-md border border-line bg-background px-2 py-1 text-[11px]"
+            className="w-full rounded-md border border-line bg-background px-2 py-1 text-xs"
           >
             <option value="">Inbox</option>
             {threads.map((t) => (
@@ -801,7 +814,7 @@ function Overlay({ s, onClose }: { s: Screenshot; onClose: () => void }) {
         )}
 
         {state !== "loading" && (
-          <div className="flex items-center gap-3 border-t border-line pt-2 text-[11px] text-muted">
+          <div className="flex items-center gap-3 border-t border-line pt-2 text-xs text-muted">
             <button
               onClick={() => router.push(`/threads/${s.threadId ?? s.suggestedThreadId ?? "inbox"}`)}
               title="Open this project's chat"

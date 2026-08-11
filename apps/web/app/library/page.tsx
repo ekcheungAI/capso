@@ -49,7 +49,7 @@ const GROUPINGS: [Grouping, string][] = [
  * filing cabinet instead of your screenshots, which inverts principle 5: the
  * captures are the hero and the chrome recedes.
  *
- * Shelves are one click away and everything that made them good is intact —
+ * Shelves are one click away and everything that made them good is intact -
  * this changes which question the page answers first, not what it can answer.
  */
 export default function LibraryPage() {
@@ -131,7 +131,7 @@ export default function LibraryPage() {
 
   /**
    * The second clause of the brand promise: the rack holds everything, Capso
-   * knows which one to pull. Deliberately not filtered with the library below —
+   * knows which one to pull. Deliberately not filtered with the library below -
    * this is Capso's choice, not a view of the user's, so a filter the user set
    * on the grid must not silently change what gets resurfaced.
    */
@@ -152,7 +152,7 @@ export default function LibraryPage() {
       <EmptyState
         title="Your visual memory starts with one screenshot"
         body="Drop an image anywhere on this page, paste from the clipboard, or press Capture."
-        action="Nothing you save here needs filing — that part is handled"
+        action="Nothing you save here needs filing - that part is handled"
       />
     );
 
@@ -192,9 +192,9 @@ export default function LibraryPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-3xl font-semibold tracking-[-0.04em]">Folders</h1>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em]">Library</h1>
         <p className="mt-1.5 text-xs text-muted">
-          Every screenshot has one calm home. Tags connect ideas across folders.
+          Every screenshot has one calm home. Tags connect ideas across projects.
         </p>
       </header>
 
@@ -205,7 +205,7 @@ export default function LibraryPage() {
           // threshold was three, which meant two pending suggestions could not
           // reach /review at all — and a two-item sweep is still a sweep.
           href={sweepable > 0 ? "/review" : "/inbox"}
-          className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-xs hover:border-accent"
+          className="flex min-h-11 items-center gap-3 rounded-lg border border-line bg-surface px-4 text-xs hover:border-accent"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent" />
           <span>
@@ -229,14 +229,14 @@ export default function LibraryPage() {
       {!filtering && <ResurfaceShelf items={worthALook} />}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Segmented value={grouping} options={GROUPINGS} onChange={setGrouping} />
+        <Segmented label="Group library" value={grouping} options={GROUPINGS} onChange={setGrouping} />
 
         {/* Divides the grouping tabs from the filters. Hidden once the row wraps:
             on a phone the two groups already sit on separate lines, so the rule
             stops dividing anything and just dangles at the end of the tabs. */}
         <span className="mx-1 hidden h-4 w-px bg-line sm:block" />
 
-        <Select value={intent} onChange={(v) => setIntent(v as Intent | "all")}>
+        <Select label="Filter by intent" value={intent} onChange={(v) => setIntent(v as Intent | "all")}>
           <option value="all">Any intent</option>
           {INTENTS.map((i) => (
             <option key={i} value={i}>
@@ -245,7 +245,7 @@ export default function LibraryPage() {
           ))}
         </Select>
 
-        <Select value={project} onChange={setProject}>
+        <Select label="Filter by project" value={project} onChange={setProject}>
           <option value="all">Any project</option>
           {threads.map((t) => (
             <option key={t.id} value={t.id}>
@@ -255,7 +255,7 @@ export default function LibraryPage() {
         </Select>
 
         {tags.length > 0 && (
-          <Select value={tag} onChange={setTag}>
+          <Select label="Filter by tag" value={tag} onChange={setTag}>
             <option value="all">Any tag</option>
             {tags.map(([t, n]) => (
               <option key={t} value={t}>
@@ -266,6 +266,7 @@ export default function LibraryPage() {
         )}
 
         <Select
+          label="Filter by date"
           value={range.kind}
           onChange={(v) =>
             setRange({
@@ -282,7 +283,7 @@ export default function LibraryPage() {
         </Select>
 
         {filtering && (
-          <button onClick={resetFilters} className="text-xs text-muted underline underline-offset-2">
+          <button onClick={resetFilters} className="min-h-11 px-2 text-xs text-muted underline underline-offset-2">
             Reset
           </button>
         )}
@@ -301,12 +302,12 @@ export default function LibraryPage() {
             <button
               key={t.id}
               onClick={() => void moveSelected(t.id)}
-              className="rounded-md border border-line px-2 py-1 hover:border-accent"
+              className="min-h-11 rounded-md border border-line px-3 hover:border-accent"
             >
               {t.name}
             </button>
           ))}
-          <button onClick={() => setSelected(new Set())} className="ml-auto text-muted">
+          <button onClick={() => setSelected(new Set())} className="ml-auto min-h-11 px-2 text-muted">
             Clear
           </button>
         </div>
@@ -383,7 +384,7 @@ export default function LibraryPage() {
                 <div className="mb-3 flex flex-wrap items-baseline gap-2">
                   <h2 className="text-base font-semibold tracking-tight">Unsorted</h2>
                   <span className="text-xs text-muted tabular-nums">{unsorted.length}</span>
-                  <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted sm:block">
+                  <span className="hidden min-w-0 flex-1 truncate text-xs text-muted sm:block">
                     Capso had no guess for these. Drag one onto a project, or open it to file it.
                   </span>
                 </div>
@@ -460,19 +461,19 @@ function Shelf({
         {waiting > 0 && (
           <span
             title={`${waiting} capture${waiting === 1 ? "" : "s"} on this shelf are suggestions Capso has not had confirmed`}
-            className="rounded-full border border-accent/40 px-2 py-0.5 text-[11px] text-accent"
+            className="rounded-full border border-accent/40 px-2 py-0.5 text-xs text-accent"
           >
             {waiting} to confirm
           </span>
         )}
 
         {thread.description && (
-          <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted sm:block">
+          <span className="hidden min-w-0 flex-1 truncate text-xs text-muted sm:block">
             {thread.description}
           </span>
         )}
 
-        <span className="ml-auto shrink-0 text-[11px] text-muted">
+        <span className="ml-auto shrink-0 text-xs text-muted">
           {new Date(thread.lastActiveAt).toLocaleDateString("en-GB", {
             day: "numeric",
             month: "short",
@@ -481,8 +482,8 @@ function Shelf({
       </div>
 
       {items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-line px-3 py-3 text-center text-[11px] text-muted">
-          Nothing here yet — drag a capture onto this row.
+        <p className="rounded-lg border border-dashed border-line px-3 py-3 text-center text-xs text-muted">
+          Nothing here yet - drag a capture onto this row.
         </p>
       ) : (
         <Masonry
@@ -514,7 +515,7 @@ function ResurfaceShelf({ items }: { items: { s: Screenshot; reason: string }[] 
 
   return (
     <section aria-labelledby="resurface-heading" className="space-y-2">
-      <h2 id="resurface-heading" className="text-[11px] uppercase tracking-wide text-muted">
+      <h2 id="resurface-heading" className="text-xs uppercase tracking-wide text-muted">
         Worth another look
       </h2>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -531,7 +532,7 @@ function ResurfaceShelf({ items }: { items: { s: Screenshot; reason: string }[] 
               <span className="block truncate text-sm font-medium">{s.title}</span>
               {/* Mandatory. A recommendation the user cannot interrogate is one
                   they can neither trust nor dismiss. */}
-              <span className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted">
+              <span className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-muted">
                 {reason}
               </span>
             </span>
@@ -543,21 +544,23 @@ function ResurfaceShelf({ items }: { items: { s: Screenshot; reason: string }[] 
 }
 
 function Segmented<T extends string>({
+  label,
   value,
   options,
   onChange,
 }: {
+  label: string;
   value: T;
   options: [T, string][];
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex rounded-full border border-line bg-surface p-0.5">
+    <div className="flex rounded-full border border-line bg-surface p-0.5" role="group" aria-label={label}>
       {options.map(([key, label]) => (
         <button
           key={key}
           onClick={() => withTransition(() => onChange(key))}
-          className={`rounded-full px-3 py-1 text-xs ${
+          className={`min-h-11 rounded-full px-3 text-xs ${
             value === key ? "bg-accent font-medium text-accent-ink" : "text-muted"
           }`}
         >
@@ -569,19 +572,22 @@ function Segmented<T extends string>({
 }
 
 function Select({
+  label,
   value,
   onChange,
   children,
 }: {
+  label: string;
   value: string;
   onChange: (v: string) => void;
   children: React.ReactNode;
 }) {
   return (
     <select
+      aria-label={label}
       value={value}
       onChange={(e) => withTransition(() => onChange(e.target.value))}
-      className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs"
+      className="min-h-11 rounded-full border border-line bg-surface px-3 text-xs"
     >
       {children}
     </select>

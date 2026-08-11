@@ -26,7 +26,7 @@ export default function MemoryPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Memory</h1>
         <p className="mt-1 text-xs text-muted">
-          What Capso has worked out about how you save things — and where it&apos;s wrong.
+          What Capso has worked out about how you save things - and where it&apos;s wrong.
         </p>
       </div>
 
@@ -86,7 +86,7 @@ function Learned() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
-        <Stat label="Suggestions accepted" value={rate === null ? "—" : `${rate}%`} />
+        <Stat label="Suggestions accepted" value={rate === null ? "-" : `${rate}%`} />
         <Stat label="Corrections on file" value={String(total)} />
         <Stat
           label="Feeding the next guess"
@@ -247,8 +247,8 @@ function Tidy() {
 
       <section>
         <h2 className="mb-2 text-base font-semibold">Thin projects</h2>
-        <p className="mb-2 text-[11px] text-muted">
-          Under three captures, Capso can&apos;t match reliably against a project — it falls back to
+        <p className="mb-2 text-xs text-muted">
+          Under three captures, Capso can&apos;t match reliably against a project - it falls back to
           guessing from the image alone.
         </p>
         {thin.length === 0 ? (
@@ -343,7 +343,7 @@ function Review() {
           </Link>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{s.title}</p>
-            <p className="text-[11px] text-muted">
+            <p className="text-xs text-muted">
               {threadName(s.threadId)} · saved{" "}
               {new Date(s.capturedAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
             </p>
@@ -376,7 +376,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-surface px-4 py-3 ring-1 ring-line">
       <p className="text-lg font-semibold tabular-nums">{value}</p>
-      <p className="text-[11px] text-muted">{label}</p>
+      <p className="text-xs text-muted">{label}</p>
     </div>
   );
 }

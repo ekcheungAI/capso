@@ -44,7 +44,7 @@ export function FirstRun() {
                   <span
                     key={p.name}
                     title={p.description}
-                    className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted"
+                    className="rounded-full border border-line px-2 py-0.5 text-xs text-muted"
                   >
                     {p.name}
                   </span>
@@ -52,7 +52,7 @@ export function FirstRun() {
               </div>
             )}
 
-            <p className="mt-3 text-[11px] text-accent opacity-0 transition-opacity group-hover:opacity-100">
+            <p className="mt-3 text-xs text-accent opacity-0 transition-opacity group-hover:opacity-100">
               {busy === role.id ? "Setting up…" : "Use this →"}
             </p>
           </button>

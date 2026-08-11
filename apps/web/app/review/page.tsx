@@ -123,7 +123,7 @@ export default function ReviewPage() {
           title="Nothing left to review"
           body={
             unsorted.length > 0
-              ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all — they are in Unsorted on the library.`
+              ? `Every suggestion has been confirmed. ${unsorted.length} capture${unsorted.length === 1 ? "" : "s"} still have no suggestion at all - they are in Unsorted on the library.`
               : "Every capture has been confirmed into a project. Capso learns from each one you kept or moved."
           }
           action={<Link href="/library">Back to folders</Link>}
@@ -138,8 +138,8 @@ export default function ReviewPage() {
           <h1 className="text-xl font-semibold tracking-tight">Review</h1>
           <p className="mt-1 text-xs text-muted">
             {pending.length} capture{pending.length === 1 ? "" : "s"} Capso has a guess for. Keeping
-            one teaches it — the next import files itself.{" "}
-            <span className="text-[11px]">j/k move · ⏎ keep · 1–{threads.length} pick project</span>
+            one teaches it - the next import files itself.{" "}
+            <span className="text-xs">j/k move · ⏎ keep · 1–{threads.length} pick project</span>
           </p>
         </div>
 
@@ -181,7 +181,7 @@ export default function ReviewPage() {
                   onClick={() => void file(s, s.suggestedThreadId)}
                   className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
                 >
-                  ✓ Confirm — {threadName(s.suggestedThreadId)}
+                  ✓ Confirm - {threadName(s.suggestedThreadId)}
                 </button>
 
                 <select

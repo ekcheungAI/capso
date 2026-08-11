@@ -4,17 +4,21 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useState }
 import { ArrowRight, CheckCircle, SpinnerGap } from "@phosphor-icons/react";
 import { CapsoMark, CapsoMarkDefs } from "@/components/mark.generated";
 import {
+  localLibraryEntry,
+  localLibrarySafetyVerb,
   loadPermanentAccount,
   permanentAccountFromSession,
   requestPermanentAccountLink,
   type PermanentAccount,
 } from "@/lib/supabase/account";
 import { isConfigured, supabase } from "@/lib/supabase/client";
-import { resetBackend } from "@/lib/store/backend";
+import { resetBackend, setBackendPreference } from "@/lib/store/backend";
+import { localLibrarySize } from "@/lib/store/import-local";
+import { plural } from "@/lib/plural";
 
 type AccountContextValue =
-  | { mode: "local"; email: null; signOut: null }
-  | { mode: "signed_in"; email: string; signOut: () => Promise<void> };
+  | { mode: "local"; userId: null; email: null; signOut: null; openAccount: (() => void) | null }
+  | { mode: "signed_in"; userId: string; email: string; signOut: () => Promise<void>; openAccount: null };
 
 const AccountContext = createContext<AccountContextValue | null>(null);
 
@@ -31,12 +35,19 @@ type GateState =
 export function AccountGate({ children }: { children: React.ReactNode }) {
   const configured = isConfigured();
   const [state, setState] = useState<GateState>(configured ? { status: "loading" } : { status: "signed_out" });
+  const [localCount, setLocalCount] = useState(0);
+  const [localOnly, setLocalOnly] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!configured) return;
     setState({ status: "loading" });
     try {
-      setState(await loadPermanentAccount(supabase().auth));
+      const [account, count] = await Promise.all([
+        loadPermanentAccount(supabase().auth),
+        localLibrarySize().catch(() => 0),
+      ]);
+      setLocalCount(count);
+      setState(account);
     } catch (error) {
       setState({
         status: "error",
@@ -50,8 +61,15 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
     let active = true;
     const sb = supabase();
 
-    void loadPermanentAccount(sb.auth)
-      .then((account) => active && setState(account))
+    void Promise.all([
+      loadPermanentAccount(sb.auth),
+      localLibrarySize().catch(() => 0),
+    ])
+      .then(([account, count]) => {
+        if (!active) return;
+        setLocalCount(count);
+        setState(account);
+      })
       .catch((error: unknown) => {
         if (active) {
           setState({
@@ -66,6 +84,8 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
     const { data } = sb.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       const account = permanentAccountFromSession(session);
+      setBackendPreference("auto");
+      setLocalOnly(false);
       resetBackend();
       setState(account);
       if (session?.user.is_anonymous) void sb.auth.signOut({ scope: "local" });
@@ -79,7 +99,27 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
 
   if (!configured) {
     return (
-      <AccountContext.Provider value={{ mode: "local", email: null, signOut: null }}>
+      <AccountContext.Provider value={{ mode: "local", userId: null, email: null, signOut: null, openAccount: null }}>
+        {children}
+      </AccountContext.Provider>
+    );
+  }
+
+  if (localOnly) {
+    return (
+      <AccountContext.Provider
+        value={{
+          mode: "local",
+          userId: null,
+          email: null,
+          signOut: null,
+          openAccount: () => {
+            setBackendPreference("auto");
+            setLocalOnly(false);
+            setState({ status: "signed_out" });
+          },
+        }}
+      >
         {children}
       </AccountContext.Provider>
     );
@@ -87,7 +127,17 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
 
   if (state.status === "loading") return <AccountLoading />;
   if (state.status === "error") return <AccountError message={state.message} retry={refresh} />;
-  if (state.status === "signed_out") return <EmailSignIn />;
+  if (state.status === "signed_out") {
+    return (
+      <EmailSignIn
+        localCount={localCount}
+        continueLocal={() => {
+          setBackendPreference("local");
+          setLocalOnly(true);
+        }}
+      />
+    );
+  }
 
   const signOut = async () => {
     resetBackend();
@@ -97,7 +147,7 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AccountContext.Provider value={{ mode: "signed_in", email: state.email, signOut }}>
+    <AccountContext.Provider value={{ mode: "signed_in", userId: state.userId, email: state.email, signOut, openAccount: null }}>
       {/* A cross-tab account replacement must throw away the previous user's
           React store as well as the cached backend, or old rows remain visible
           and can be edited through the new account. */}
@@ -121,7 +171,7 @@ function AccountFrame({ children }: { children: React.ReactNode }) {
           <CapsoMark size={38} fill="full" label="Capso" />
           <div>
             <p className="text-sm font-semibold tracking-tight">Capso</p>
-            <p className="text-[11px] text-muted">Your private screenshot memory</p>
+            <p className="text-xs text-muted">Your private screenshot memory</p>
           </div>
         </div>
         {children}
@@ -152,11 +202,12 @@ function AccountError({ message, retry }: { message: string; retry: () => void }
   );
 }
 
-function EmailSignIn() {
+function EmailSignIn({ localCount, continueLocal }: { localCount: number; continueLocal: () => void }) {
   const [email, setEmail] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const localEntry = localLibraryEntry(localCount);
 
   if (sent) {
     return (
@@ -167,7 +218,7 @@ function EmailSignIn() {
           We sent a secure sign-in link to <strong className="font-semibold text-foreground">{email.trim()}</strong>.
           Open it on this Mac to continue.
         </p>
-        <button type="button" onClick={() => { setSent(false); setError(null); }} className="mt-6 text-sm font-semibold text-accent">
+        <button type="button" onClick={() => { setSent(false); setError(null); }} className="mt-6 flex min-h-11 items-center text-sm font-semibold text-accent">
           Use a different email
         </button>
       </AccountFrame>
@@ -176,11 +227,29 @@ function EmailSignIn() {
 
   return (
     <AccountFrame>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">One account, everywhere</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">One account, everywhere</p>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">Open your Capso library</h1>
       <p className="mt-3 text-sm leading-6 text-muted">
         Use the same email here and in the Capso Mac app. No password is required.
       </p>
+
+      {localEntry.canContinueLocal && (
+        <div className="mt-5 rounded-2xl border border-line bg-background px-4 py-3.5">
+          <p className="text-sm font-semibold text-foreground">
+            {localEntry.count > 0
+              ? `${plural(localEntry.count, "capture")} already ${localEntry.count === 1 ? "lives" : "live"} in this browser`
+              : "Prefer to keep Capso local?"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-muted">
+            {localEntry.count > 0
+              ? "Keep using that local library now, or sign in and copy it into your private account from Settings. Nothing is deleted automatically."
+              : "Use a private library in this browser without creating an account. You can sign in and copy it later."}
+          </p>
+          <button type="button" onClick={continueLocal} className="mt-3 flex min-h-11 items-center text-sm font-semibold text-accent">
+            {localEntry.count > 0 ? "Continue with my local library" : "Use Capso locally"}
+          </button>
+        </div>
+      )}
 
       <form
         className="mt-6"
@@ -224,7 +293,9 @@ function EmailSignIn() {
       </form>
 
       <div className="mt-6 rounded-2xl bg-background px-4 py-3 text-xs leading-5 text-muted">
-        This starts a fresh private library. Existing anonymous or demo captures stay separate and won’t be copied automatically.
+        {localEntry.canCopyAfterSignIn
+          ? `Your ${plural(localEntry.count, "local capture")} ${localLibrarySafetyVerb(localEntry.count)} safe. After signing in, choose “Copy to account” in Settings when you are ready.`
+          : "This opens a private library shared by the web and Mac apps."}
       </div>
     </AccountFrame>
   );

@@ -1,10 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as accountModule from "./account.ts";
 import {
   loadPermanentAccount,
   requestPermanentAccountLink,
   requirePermanentUserId,
 } from "./account.ts";
+
+test("account entry preserves an existing browser library as an explicit choice", () => {
+  const localLibraryEntry = (accountModule as typeof accountModule & {
+    localLibraryEntry?: (count: number) => unknown;
+  }).localLibraryEntry;
+
+  assert.equal(typeof localLibraryEntry, "function");
+  assert.deepEqual(localLibraryEntry!(3), {
+    count: 3,
+    canContinueLocal: true,
+    canCopyAfterSignIn: true,
+  });
+  assert.deepEqual(localLibraryEntry!(0), {
+    count: 0,
+    canContinueLocal: true,
+    canCopyAfterSignIn: false,
+  });
+});
+
+test("the local-library safety promise agrees with its capture count", () => {
+  const localLibrarySafetyVerb = (accountModule as typeof accountModule & {
+    localLibrarySafetyVerb?: (count: number) => string;
+  }).localLibrarySafetyVerb;
+
+  assert.equal(typeof localLibrarySafetyVerb, "function");
+  assert.equal(localLibrarySafetyVerb!(1), "remains");
+  assert.equal(localLibrarySafetyVerb!(2), "remain");
+});
 
 test("a persisted anonymous session is discarded instead of becoming the fresh library", async () => {
   const signOutCalls: unknown[] = [];

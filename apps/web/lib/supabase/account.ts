@@ -2,6 +2,27 @@ export type PermanentAccount =
   | { status: "signed_out" }
   | { status: "signed_in"; userId: string; email: string };
 
+export type LocalLibraryEntry = {
+  count: number;
+  canContinueLocal: boolean;
+  canCopyAfterSignIn: boolean;
+};
+
+/** Keep account entry honest about captures that already exist in this browser. */
+export function localLibraryEntry(count: number): LocalLibraryEntry {
+  const safeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  const hasLocalLibrary = safeCount > 0;
+  return {
+    count: safeCount,
+    canContinueLocal: true,
+    canCopyAfterSignIn: hasLocalLibrary,
+  };
+}
+
+export function localLibrarySafetyVerb(count: number): "remains" | "remain" {
+  return count === 1 ? "remains" : "remain";
+}
+
 type UserLike = {
   id: string;
   email?: string | null;

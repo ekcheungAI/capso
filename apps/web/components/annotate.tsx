@@ -178,7 +178,7 @@ export function AnnotateEditor({
       return;
     }
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    // Held separately because a rect's own x/y move as it is dragged backwards —
+    // Held separately because a rect's own x/y move as it is dragged backwards -
     // reading the anchor back off the shape in progress loses it on the first
     // pointermove and collapses the rect to nothing.
     anchorRef.current = { x, y };
@@ -332,9 +332,9 @@ export function AnnotateEditor({
           )}
         </div>
 
-        <p className="mt-3 text-center text-[11px] text-muted">
+        <p className="mt-3 text-center text-xs text-muted">
           {tool === "blur"
-            ? "Blur is baked into the saved image — the pixels are gone, not hidden."
+            ? "Blur is baked into the saved image - the pixels are gone, not hidden."
             : selected !== null
               ? "Drag to move · ⌫ delete · Esc deselect"
               : "Drag to draw · drag a mark to move it · ⌘Z undo · Esc close"}

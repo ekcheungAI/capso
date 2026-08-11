@@ -10,13 +10,6 @@ import { resurface } from "@/lib/resurface";
 import type { Screenshot, Thread } from "@/lib/store";
 import { useStore } from "@/lib/store/provider";
 
-const PROJECT_COLORS = [
-  "var(--intent-ux-bug)",
-  "var(--intent-design-inspiration)",
-  "var(--intent-marketing-hook)",
-  "var(--intent-reference)",
-];
-
 export default function HomePage() {
   const { ready, screenshots, inbox, threads, byThread, threadName, revisits, assign } = useStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -87,7 +80,7 @@ export default function HomePage() {
         void assign(capture, previousThreadId, "manual");
       });
     } catch {
-      toast("Couldn’t file this capture — nothing was changed.");
+      toast("Couldn’t file this capture. Nothing was changed.");
     } finally {
       setFilingId(null);
     }
@@ -175,20 +168,19 @@ export default function HomePage() {
             <h2 id="memory-heading" className="text-xl font-semibold tracking-tight">Your organised memory</h2>
             <p className="mt-1 text-xs text-muted">Projects stay calm. The useful thing is always one pull away.</p>
           </div>
-          <span className="hidden items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-2 text-[11px] font-medium text-muted sm:inline-flex">
+          <span className="hidden items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-2 text-xs font-medium text-muted sm:inline-flex">
             <Sparkle size={14} weight="fill" /> Organised around you
           </span>
         </div>
 
         <div className="grid gap-2.5">
-          {activeProjects.map((thread, index) => {
+          {activeProjects.map((thread) => {
             const items = byThread(thread.id).sort(byNewest);
             return (
               <ProjectRow
                 key={thread.id}
                 thread={thread}
                 items={items}
-                color={PROJECT_COLORS[index % PROJECT_COLORS.length]}
                 onPull={(item) => setDrawerItem(item)}
               />
             );
@@ -197,7 +189,7 @@ export default function HomePage() {
 
         {threads.filter((thread) => !thread.archived).length > 3 && (
           <Link href="/library" className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-muted hover:text-foreground">
-            Browse all folders <ArrowRight size={14} />
+            Browse all projects <ArrowRight size={14} />
           </Link>
         )}
       </section>
@@ -230,7 +222,7 @@ function CaptureTile({
   return (
     <article
       className={`capso-capture-tile group overflow-hidden rounded-2xl border bg-surface text-left ${
-        selected ? "border-danger shadow-md" : "border-line"
+        selected ? "border-accent shadow-md" : "border-line"
       }`}
     >
       <div className="relative">
@@ -244,18 +236,18 @@ function CaptureTile({
           <Thumb s={capture} box="2.35 / 1" className="rounded-none border-0" />
         </button>
         {selected && (
-          <span className="capso-selected-seal pointer-events-none absolute right-2.5 top-2.5 grid h-7 w-7 place-items-center rounded-full bg-surface text-danger shadow-md">
+          <span className="capso-selected-seal pointer-events-none absolute right-2.5 top-2.5 grid h-7 w-7 place-items-center rounded-full bg-surface text-foreground shadow-md">
             <SealCheck size={18} weight="fill" />
           </span>
         )}
         {selected && (
           <div className="capso-tile-decision absolute inset-x-2 bottom-2 flex items-center gap-2 rounded-xl border border-line bg-background/95 p-2 shadow-lg backdrop-blur-sm">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface text-danger shadow-sm" aria-hidden="true">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface text-foreground shadow-sm" aria-hidden="true">
               <CapsoMark size={26} fill="some" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-[9px] font-semibold uppercase tracking-[.1em] text-muted">Suggested project</span>
-              <strong className="block truncate text-[11px]">{destination?.name ?? "Choose a project"}</strong>
+              <span className="block text-xs font-semibold uppercase tracking-[.1em] text-muted">Suggested project</span>
+              <strong className="block truncate text-xs">{destination?.name ?? "Choose a project"}</strong>
             </span>
             {destination && onFile ? (
               <button
@@ -263,12 +255,12 @@ function CaptureTile({
                 onClick={onFile}
                 disabled={filing}
                 aria-label={`File ${capture.title} in ${destination.name}`}
-                className="capso-press min-h-9 shrink-0 rounded-lg bg-accent px-3 text-[11px] font-semibold text-accent-ink disabled:opacity-60"
+                className="capso-press min-h-11 shrink-0 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-ink disabled:opacity-60"
               >
                 {filing ? "Filing…" : "File here"}
               </button>
             ) : (
-              <Link href="/inbox" className="capso-press flex min-h-9 shrink-0 items-center rounded-lg bg-accent px-3 text-[11px] font-semibold text-accent-ink">
+              <Link href="/inbox" className="capso-press flex min-h-11 shrink-0 items-center rounded-lg bg-accent px-3 text-xs font-semibold text-accent-ink">
                 Choose
               </Link>
             )}
@@ -277,46 +269,45 @@ function CaptureTile({
       </div>
       <button type="button" onClick={onSelect} className="grid w-full gap-1 px-3.5 py-3 text-left">
         <strong className="truncate text-sm font-semibold">{capture.title}</strong>
-        <span className="text-[11px] text-muted">{sourceLabel(capture)} · {captureTime(capture)}</span>
+        <span className="text-xs text-muted">{sourceLabel(capture)} · {captureTime(capture)}</span>
       </button>
     </article>
   );
 }
 
-function ProjectRow({ thread, items, color, onPull }: { thread: Thread; items: Screenshot[]; color: string; onPull: (item: Screenshot) => void }) {
+function ProjectRow({ thread, items, onPull }: { thread: Thread; items: Screenshot[]; onPull: (item: Screenshot) => void }) {
   const preview = items[0];
   const visible = Math.min(Math.max(items.length, 1), 4);
   return (
     <article className="grid min-h-20 items-center gap-4 rounded-2xl border border-line bg-surface/55 px-5 py-3 transition-colors duration-[var(--dur-press)] ease-out hover:bg-surface md:grid-cols-[minmax(180px,.8fr)_minmax(260px,1.35fr)_124px_52px]">
       <div className="grid gap-1">
         <Link href={`/threads/${thread.id}`} className="text-sm font-semibold hover:underline">{thread.name}</Link>
-        <span className="text-[11px] text-muted">{items.length} memories · updated {relativeDay(thread.lastActiveAt)}</span>
+        <span className="text-xs text-muted">{items.length} memories · updated {relativeDay(thread.lastActiveAt)}</span>
       </div>
       <div className="flex items-center gap-2.5 overflow-hidden">
         {Array.from({ length: visible }, (_, index) => (
           <MemoryCapsule
             key={index}
-            color={color}
             fill={fillFor(items.length)}
             onClick={preview ? () => onPull(preview) : undefined}
             label={preview ? `Pull a memory from ${thread.name}` : undefined}
           />
         ))}
-        {items.length > 4 && <span className="text-[11px] font-semibold text-muted">+{items.length - 4}</span>}
+        {items.length > 4 && <span className="text-xs font-semibold text-muted">+{items.length - 4}</span>}
       </div>
       {preview ? <Thumb s={preview} box="2 / 1" /> : <span className="h-14 rounded-xl border border-dashed border-line" />}
-      <Link href={`/threads/${thread.id}`} className="text-center text-[11px] font-semibold text-muted hover:text-foreground">Open</Link>
+      <Link href={`/threads/${thread.id}`} className="text-center text-xs font-semibold text-muted hover:text-foreground">Open</Link>
     </article>
   );
 }
 
-function MemoryCapsule({ color, fill, onClick, label }: { color: string; fill: "empty" | "some" | "full"; onClick?: () => void; label?: string }) {
+function MemoryCapsule({ fill, onClick, label }: { fill: "empty" | "some" | "full"; onClick?: () => void; label?: string }) {
   const className = `grid h-12 w-12 shrink-0 place-items-center rounded-full border border-line bg-background shadow-md${onClick ? " capso-memory-capsule" : ""}`;
   if (!onClick) {
-    return <span className={className} style={{ color }}><CapsoMark size={39} fill={fill} /></span>;
+    return <span className={className}><CapsoMark size={39} fill={fill} /></span>;
   }
   return (
-    <button type="button" onClick={onClick} aria-label={label} className={className} style={{ color }}>
+    <button type="button" onClick={onClick} aria-label={label} className={className}>
       <CapsoMark size={39} fill={fill} />
     </button>
   );
@@ -331,20 +322,20 @@ function EvidenceDrawer({ item, reason, thread, onClose }: { item: Screenshot | 
         item ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-[calc(100%+32px)] opacity-0"
       }`}
     >
-      <button type="button" onClick={onClose} aria-label="Close evidence" className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full bg-background text-muted">
+      <button type="button" onClick={onClose} aria-label="Close evidence" className="absolute right-5 top-5 grid h-11 w-11 place-items-center rounded-full bg-background text-muted">
         <X size={18} />
       </button>
-      <p className="mb-3 text-[11px] font-bold uppercase tracking-[.14em] text-danger">Worth pulling</p>
+      <p className="mb-3 text-xs font-bold uppercase tracking-[.14em] text-muted">Worth pulling</p>
       <h2 className="text-2xl font-semibold tracking-tight">Back in context.</h2>
       <p className="mt-2 text-xs leading-relaxed text-muted">The original screenshot, why you saved it, and where it now belongs.</p>
       {item && (
         <>
           <div className="mt-5 overflow-hidden rounded-2xl shadow-lg"><Thumb s={item} box="4 / 3" size="full" /></div>
-          <div className="mt-4 flex gap-3 rounded-2xl bg-background p-4 text-danger">
+          <div className="mt-4 flex gap-3 rounded-2xl bg-background p-4 text-foreground">
             <Sparkle size={18} weight="fill" className="mt-0.5 shrink-0" />
             <div>
               <strong className="block text-xs text-foreground">Why Capso kept this</strong>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted">{reason ?? item.whySaved ?? item.summary ?? "It connects to work you have returned to recently."}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">{reason ?? item.whySaved ?? item.summary ?? "It connects to work you have returned to recently."}</p>
             </div>
           </div>
           <dl className="mt-3 text-xs">

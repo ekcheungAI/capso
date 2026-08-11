@@ -26,5 +26,5 @@ export async function deviceToken() {
 
 /** Opaque ids for captures. Client-generated so a retry is idempotent. */
 export function newId() {
-  return `c_${Date.now().toString(36)}${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  return crypto.randomUUID();
 }

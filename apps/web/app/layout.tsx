@@ -34,7 +34,7 @@ const SITE = new URL(host);
 export const metadata: Metadata = {
   metadataBase: SITE,
   title: { default: "Capso", template: "%s · Capso" },
-  description: "Screenshot memory — capture, organise, retrieve.",
+  description: "Screenshot memory - capture, organise, retrieve.",
   applicationName: "Capso",
   icons: {
     // favicon.ico is deliberately absent here: app/favicon.ico is a Next file

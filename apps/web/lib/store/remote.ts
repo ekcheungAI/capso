@@ -1,4 +1,4 @@
-import { requireSession, supabase } from "@/lib/supabase/client";
+import { accountFetch, requireSession, supabase } from "@/lib/supabase/client";
 import type { Backend, Collection } from "./backend";
 import {
   correctionFromRow, correctionToRow,
@@ -7,6 +7,7 @@ import {
   threadFromRow, threadToRow, toRow,
 } from "./map";
 import type { Correction, Message, Revisit, Screenshot, Thread } from "./types";
+import { storageObjectPath, storedStoragePath } from "./storage-path";
 
 /**
  * The Supabase half of the data layer. Every rule lives in `index.ts`; this file
@@ -27,8 +28,9 @@ const TABLE: Record<Collection, string> = {
   messages: "conversation_messages",
 };
 
-/** Signed-URL lifetime. Long enough for a working session, short enough to matter. */
-const SIGNED_URL_TTL = 60 * 60;
+/** Detail pixels are brief; grid previews may live for one browsing session. */
+const ORIGINAL_URL_TTL = 60;
+const THUMB_URL_TTL = 10 * 60;
 
 const EXT: Record<string, string> = {
   "image/png": "png",
@@ -66,20 +68,17 @@ export async function remote(): Promise<Backend> {
       .from(bucket)
       .upload(path, await toBlob(dataUrl), { contentType: mime, upsert: true });
     if (error) throw error;
-    return path;
-  }
-
-  async function signOne(bucket: "originals" | "thumbs", path: string | null) {
-    if (!path) return null;
-    const { data } = await sb.storage.from(bucket).createSignedUrl(path, SIGNED_URL_TTL);
-    return data?.signedUrl ?? null;
+    return storedStoragePath(bucket, path);
   }
 
   /** Remove every object this user owns in a bucket — used by `resetAll`. */
   async function wipeBucket(bucket: "originals" | "thumbs") {
     const { data } = await sb.storage.from(bucket).list(userId);
     const paths = (data ?? []).map((f) => `${userId}/${f.name}`);
-    if (paths.length) await sb.storage.from(bucket).remove(paths);
+    if (paths.length) {
+      const { error } = await sb.storage.from(bucket).remove(paths);
+      if (error) throw error;
+    }
   }
 
   return {
@@ -139,7 +138,11 @@ export async function remote(): Promise<Backend> {
     },
 
     async loadImage(s) {
-      return signOne("originals", s.originalPath);
+      if (!s.originalPath) return null;
+      const { data } = await sb.storage
+        .from("originals")
+        .createSignedUrl(storageObjectPath("originals", s.originalPath), ORIGINAL_URL_TTL);
+      return data?.signedUrl ?? null;
     },
 
     /**
@@ -147,24 +150,45 @@ export async function remote(): Promise<Backend> {
      * library open into one network round trip per capture.
      */
     async hydrateThumbs(rows) {
-      const paths = rows.map((r) => r.thumbPath).filter((p): p is string => Boolean(p));
+      const paths = rows
+        .map((r) => r.thumbPath)
+        .filter((p): p is string => Boolean(p))
+        .map((stored) => storageObjectPath("thumbs", stored));
       if (!paths.length) return rows;
 
-      const { data } = await sb.storage.from("thumbs").createSignedUrls(paths, SIGNED_URL_TTL);
+      const { data, error } = await sb.storage
+        .from("thumbs")
+        .createSignedUrls(paths, THUMB_URL_TTL);
+      if (error) throw error;
       const byPath = new Map((data ?? []).map((d) => [d.path, d.signedUrl]));
 
-      return rows.map((r) =>
-        r.thumbPath && byPath.get(r.thumbPath)
-          ? { ...r, thumbDataUrl: byPath.get(r.thumbPath)! }
-          : r,
-      );
+      return rows.map((r) => {
+        const objectPath = r.thumbPath ? storageObjectPath("thumbs", r.thumbPath) : null;
+        return objectPath && byPath.get(objectPath)
+          ? { ...r, thumbDataUrl: byPath.get(objectPath)! }
+          : r;
+      });
     },
 
     async removeImages(s) {
-      await Promise.all([
-        s.originalPath ? sb.storage.from("originals").remove([s.originalPath]) : null,
-        s.thumbPath ? sb.storage.from("thumbs").remove([s.thumbPath]) : null,
+      const results = await Promise.all([
+        s.originalPath
+          ? sb.storage.from("originals").remove([storageObjectPath("originals", s.originalPath)])
+          : null,
+        s.thumbPath
+          ? sb.storage.from("thumbs").remove([storageObjectPath("thumbs", s.thumbPath)])
+          : null,
       ]);
+      for (const result of results) {
+        if (result?.error) throw result.error;
+      }
+    },
+
+    async deleteCapture(s) {
+      const response = await accountFetch(`/api/screenshots/${encodeURIComponent(s.id)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error("The capture could not be deleted.");
     },
 
     async clearImages() {

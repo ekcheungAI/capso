@@ -1,4 +1,5 @@
 import type { Correction, Screenshot, Thread } from "@/lib/store";
+import { accountFetch } from "@/lib/supabase/client";
 
 /**
  * Per-capture classification. Calls the real MiniMax pass via /api/classify.
@@ -132,7 +133,7 @@ export async function classify(
   const abort = AbortSignal.timeout(CLASSIFY_TIMEOUT_MS);
 
   try {
-    const res = await fetch("/api/classify", {
+    const res = await accountFetch("/api/classify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       signal: abort,

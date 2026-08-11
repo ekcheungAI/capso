@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { deviceToken } from "@/lib/device";
+import { accountDeviceToken } from "@/lib/device";
+import { useAccount } from "@/components/account-gate";
 
 /** The origin never changes for the life of the page, so there is nothing to subscribe to. */
 const noSubscribe = () => () => {};
@@ -16,6 +17,8 @@ const noSubscribe = () => () => {};
  */
 export default function ExtensionPage() {
   const [info, setInfo] = useState<{ version: string; builtAt: string } | null>(null);
+  const [device, setDevice] = useState("");
+  const account = useAccount();
   /**
    * The origin this page is served from — which is the one the extension has to
    * be pointed at. It ships defaulting to `http://localhost:3000`, so a copy
@@ -32,19 +35,22 @@ export default function ExtensionPage() {
     () => window.location.origin,
     () => "",
   );
-  /**
-   * Pairs the extension with this browser. Read the same way as the origin and
-   * for the same reason — it is client-only state on a prerendered page, and it
-   * is a constant rather than something that changes.
-   */
-  const device = useSyncExternalStore(noSubscribe, deviceToken, () => "");
-
   useEffect(() => {
     fetch("/extension-version.json")
       .then((r) => (r.ok ? r.json() : null))
       .then(setInfo)
       .catch(() => setInfo(null));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void accountDeviceToken(account.userId).then((token) => {
+      if (active) setDevice(token);
+    });
+    return () => {
+      active = false;
+    };
+  }, [account.userId]);
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -60,7 +66,7 @@ export default function ExtensionPage() {
           <p className="text-sm font-medium">
             Capso for Chrome {info ? `v${info.version}` : ""}
           </p>
-          <p className="mt-0.5 text-[11px] text-muted">
+          <p className="mt-0.5 text-xs text-muted">
             {info
               ? `Built ${new Date(info.builtAt).toLocaleString("en-GB")}`
               : "Run pnpm build:extension to produce the download."}
@@ -76,18 +82,26 @@ export default function ExtensionPage() {
       </div>
 
       <section className="space-y-2 rounded-xl border border-line bg-surface p-4">
-        <h2 className="text-sm font-medium">This browser&apos;s device code</h2>
-        <p className="text-[11px] leading-relaxed text-muted">
-          Paste this into the extension&apos;s options. It pairs the extension with this browser,
-          so a capture can only ever be collected here — without it, another browser running
-          Capso could take it instead.
+        <h2 className="text-sm font-medium">
+          {account.mode === "signed_in" ? "This account’s extension code" : "This browser’s device code"}
+        </h2>
+        <p className="text-xs leading-relaxed text-muted">
+          Paste this into the extension&apos;s options. It pairs the extension with this browser
+          {account.mode === "signed_in" ? " and signed-in account" : ""}, so a capture can only
+          be collected by the intended library.
         </p>
-        <p className="text-[11px] leading-relaxed text-muted">
+        <p className="text-xs leading-relaxed text-muted">
           This code belongs to{" "}
           <code className="rounded bg-background px-1 break-all">{origin || "this address"}</code>.
-          Copy the address and the code from the same page — a different Capso address has a
+          Copy the address and the code from the same page - a different Capso address has a
           different code, and a preview deployment will refuse the extension outright.
         </p>
+        {account.mode === "signed_in" && (
+          <p className="text-xs leading-relaxed text-muted">
+            Switching accounts changes this code. Pending extension captures stay queued until
+            you paste the new account&apos;s code, so they cannot fall into the wrong library.
+          </p>
+        )}
         <code className="block rounded-lg border border-line bg-background px-3 py-2 font-mono text-xs break-all select-all">
           {device || "…"}
         </code>
@@ -121,13 +135,13 @@ export default function ExtensionPage() {
           </li>
           <li>
             Set the shortcut at{" "}
-            <code className="rounded bg-surface px-1">chrome://extensions/shortcuts</code> — default
+            <code className="rounded bg-surface px-1">chrome://extensions/shortcuts</code> - default
             is ⌘⇧U.
           </li>
           <li>
             Leave Capso open in a tab when you can. Captures are held inside the extension until
             this app confirms it has stored them, so nothing is lost if every Capso tab is
-            closed — they simply arrive the next time one is open.
+            closed - they simply arrive the next time one is open.
           </li>
         </ol>
       </section>
@@ -139,7 +153,7 @@ export default function ExtensionPage() {
           <code className="rounded bg-surface px-1">.crx</code> files served from a website unless
           the machine is managed by enterprise policy. So a self-hosted extension updates by
           replacing the folder and hitting Reload. The extension checks this page&apos;s version on
-          startup and notifies you when your copy is behind — that is the closest honest equivalent.
+          startup and notifies you when your copy is behind - that is the closest honest equivalent.
         </p>
         <p className="text-xs leading-relaxed text-muted">
           Publishing to the Web Store would give real auto-update. It needs a one-off US$5 developer

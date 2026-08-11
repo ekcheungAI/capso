@@ -8,6 +8,7 @@ import { ANSWERS_OFF, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/comp
 import { CapsoMark } from "@/components/mark.generated";
 import { retrieve } from "@/lib/retrieve";
 import { plural } from "@/lib/plural";
+import { accountFetch } from "@/lib/supabase/client";
 
 export default function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -48,8 +49,8 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
     setNote(null);
     await say({ threadId: id, role: "user", text: question, citedIds: [] });
 
-    // Retrieval: this project's captures ranked by relevance to the question —
-    // not every capture in chronological (effectively oldest-first) order —
+    // Retrieval: this project's captures ranked by relevance to the question -
+    // not every capture in chronological (effectively oldest-first) order -
     // then anything else matching, capped at 12 total like /search instead of
     // sending the whole project unranked and unbounded on every question.
     const CHAT_SCOPE_LIMIT = 12;
@@ -70,7 +71,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
     const scope = [...inProject, ...others];
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await accountFetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -125,7 +126,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
         <div className="space-y-4 border-t border-line pt-5">
           {messages.length === 0 && (
             <p className="text-xs text-muted">
-              Ask about these captures — &ldquo;what do these have in common?&rdquo;,
+              Ask about these captures - &ldquo;what do these have in common?&rdquo;,
               &ldquo;which one had the annual toggle?&rdquo;
             </p>
           )}
@@ -139,7 +140,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
               </div>
             ) : (
               <div key={m.id} className="max-w-xl text-sm leading-relaxed">
-                <p className="mb-2 text-[11px] text-muted">
+                <p className="mb-2 text-xs text-muted">
                   Searched your memory ·{" "}
                   {m.citedIds.length === 0 ? "no captures" : plural(m.citedIds.length, "capture")} cited
                 </p>
@@ -162,7 +163,9 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
         </div>
 
         <div className="flex gap-2">
+          <label htmlFor="thread-question" className="sr-only">Ask about this project</label>
           <input
+            id="thread-question"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void ask()}
@@ -184,7 +187,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
           fallback. Below lg it's a horizontal strip, matching the captures
           row above; at lg+ it's the original right-hand column. */}
       <aside className="w-full shrink-0 lg:w-64">
-        <p className="mb-2 text-[11px] uppercase tracking-wide text-muted">
+        <p className="mb-2 text-xs uppercase tracking-wide text-muted">
           {lastCited.length > 0 ? `Sources · ${rail.length}` : `In this project · ${rail.length}`}
         </p>
         <ul className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
@@ -193,8 +196,8 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
               <Link href={`/s/${s.id}`}>
                 <Thumb s={s} box="4 / 3" />
               </Link>
-              <p className="mt-1.5 truncate text-[11px] font-medium">{s.title}</p>
-              <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted">
+              <p className="mt-1.5 truncate text-xs font-medium">{s.title}</p>
+              <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
                 {s.ocrText.split("\n")[0]}
               </p>
               <div className="mt-1.5">
@@ -227,9 +230,9 @@ function Answer({
           <Link
             key={i}
             href={`/s/${shot.id}`}
-            className="mx-1 inline-flex items-center rounded border border-line px-1.5 py-0.5 align-middle text-[11px] text-muted hover:border-accent"
+            className="mx-1 inline-flex items-center rounded border border-line px-1.5 py-0.5 align-middle text-xs text-muted hover:border-accent"
           >
-            {shot.title.split(" — ")[0]}
+            {shot.title.split(" - ")[0]}
           </Link>
         );
       })}

@@ -62,7 +62,7 @@ export function ImportLocal() {
           setTimeout(() => location.reload(), 1200);
         } catch {
           setProgress(null);
-          toast("Import failed — nothing was lost; your captures are still in this browser.");
+          toast("Import failed - nothing was lost; your captures are still in this browser.");
         }
       }}
       className="text-left hover:text-accent disabled:opacity-60"

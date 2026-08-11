@@ -18,12 +18,12 @@ import { INTENT_LABEL } from "@/lib/intent";
  * is error-code language at the surface (15 §UI tone — codes go to tooltips and
  * logs). The variable name still lives on the sidebar status dot's `title`.
  */
-export const ANSWERS_OFF = "Answers are off right now — everything below is still real.";
+export const ANSWERS_OFF = "Answers are off right now. Everything below is still real.";
 
 /**
  * Intent is the only taxonomy the product already computes, and it rendered as
  * seven identical grey chips. The values live in packages/shared/src/tokens.json
- * so the extension, the Mac app and the asset builders all get the same six —
+ * so the extension, the Mac app and the asset builders all get the same six -
  * see tokens.ts for why they are mid-tone and low-chroma.
  *
  * `other` has no colour by design: it is the absence of a classification, not a
@@ -36,7 +36,7 @@ export const INTENT_COLOR: Record<Intent, string> = {
 
 export function IntentChip({ intent }: { intent: Intent }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-xs text-muted">
       <span
         aria-hidden="true"
         className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -57,7 +57,7 @@ export function ConfidenceBar({ value }: { value: number }) {
           style={{ width: `${Math.round(value * 100)}%` }}
         />
       </span>
-      <span className="text-[11px] tabular-nums text-muted">{Math.round(value * 100)}%</span>
+      <span className="text-xs tabular-nums text-muted">{Math.round(value * 100)}%</span>
     </span>
   );
 }
@@ -161,7 +161,7 @@ export function ScreenshotCard({
 }) {
   const processing = s.status === "processing";
   /**
-   * Plays the seat once on confirm. The commit still happens immediately —
+   * Plays the seat once on confirm. The commit still happens immediately -
    * optimistic UI is a requirement (15 §interaction principles), so the motion
    * runs alongside the state change rather than gating it. If the card leaves
    * the list as a result (Inbox), the animation is simply moot; where it stays
@@ -216,10 +216,10 @@ export function ScreenshotCard({
         <button
           onClick={() => onSelect(s.id)}
           aria-label={selected ? "Deselect" : "Select"}
-          className={`absolute top-3 left-3 z-10 h-6 w-6 rounded-md border text-[11px] leading-none ${
+          className={`absolute top-3 left-3 z-10 h-11 w-11 rounded-lg border text-xs leading-none ${
             selected
               ? "border-accent bg-accent text-accent-ink"
-              : "border-line bg-surface opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              : "border-line bg-surface opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
           }`}
         >
           {selected ? "✓" : ""}
@@ -229,7 +229,7 @@ export function ScreenshotCard({
       <Link href={`/s/${s.id}`} className="block">
         <div className="relative">
           {/* Capped, not boxed. The gallery is a moodboard and mixed heights are
-              the point — but an unbounded card meant a 1:5 phone screenshot ran
+              the point - but an unbounded card meant a 1:5 phone screenshot ran
               five column-widths tall and pushed everything after it off-screen.
               Cropped from the top, and only when the capture exceeds the cap. */}
           <Thumb s={s} className="max-h-[30rem] object-cover object-top" />
@@ -242,19 +242,19 @@ export function ScreenshotCard({
             />
           )}
         </div>
-        <div className="px-1 pt-2 pb-1">
+        <div className="px-1 pt-2 pb-1 sm:max-h-0 sm:overflow-hidden sm:py-0 sm:opacity-0 sm:transition-[max-height,opacity,padding] sm:duration-[120ms] sm:group-focus-within:max-h-32 sm:group-focus-within:pt-2 sm:group-focus-within:pb-1 sm:group-focus-within:opacity-100 sm:group-hover:max-h-32 sm:group-hover:pt-2 sm:group-hover:pb-1 sm:group-hover:opacity-100">
           {/* Provenance, before the title. A capture whose classification failed
-              or came from demo data must never read as a real one — its text was
+              or came from demo data must never read as a real one - its text was
               either absent or invented, and it is about to be indexed by search
               either way. */}
           {(s.status === "unprocessed" || s.simulated) && !processing && (
-            <p className="mb-1 inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[11px] text-muted">
+            <p className="mb-1 inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-xs text-muted">
               {s.status === "unprocessed" ? "Not read yet" : "Sample data"}
             </p>
           )}
           <p className="flex items-center gap-1.5 text-sm font-medium">
             {/* Intent is only meaningful once the model has classified it, so the
-                dot waits for the card to leave `processing`. Decorative here —
+                dot waits for the card to leave `processing`. Decorative here -
                 the full label lives on the detail view and in the Inbox chip. */}
             {!processing && (
               <span
@@ -286,7 +286,7 @@ export function ScreenshotCard({
           a button inside an anchor is invalid and swallows the click. Revealed
           on hover or focus so the resting card stays just the screenshot. */}
       {onTagClick && !processing && allTags(s).length > 0 && (
-        <div className="hidden flex-wrap gap-1 px-1 pt-1 group-focus-within:flex group-hover:flex">
+        <div className="flex flex-wrap gap-1 px-1 pt-1 sm:hidden sm:group-focus-within:flex sm:group-hover:flex">
           {allTags(s)
             .slice(0, 4)
             .map((t) => (
@@ -294,7 +294,7 @@ export function ScreenshotCard({
                 key={t}
                 onClick={() => onTagClick(t)}
                 title={`Show everything tagged “${t}”`}
-                className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                className={`min-h-11 rounded-full border px-3 text-xs ${
                   t === activeTag
                     ? "border-accent bg-accent text-accent-ink"
                     : "border-line text-muted hover:border-accent hover:text-accent"
@@ -313,17 +313,17 @@ export function ScreenshotCard({
               setSeating(true);
               suggestion.onConfirm();
             }}
-            className="rounded-full bg-accent px-2.5 py-0.5 text-[11px] font-medium text-accent-ink"
+            className="min-h-11 rounded-full bg-accent px-3 text-xs font-medium text-accent-ink"
           >
             ✓ Confirm
           </button>
           <Link
             href={`/s/${s.id}`}
-            className="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted hover:border-accent hover:text-accent"
+            className="flex min-h-11 items-center rounded-full border border-line px-3 text-xs text-muted hover:border-accent hover:text-accent"
           >
             Move to…
           </Link>
-          <span className="ml-auto text-[11px] text-muted tabular-nums">
+          <span className="ml-auto text-xs text-muted tabular-nums">
             {Math.round(s.confidence * 100)}%
           </span>
         </div>
@@ -350,7 +350,7 @@ export function Masonry({
   activeTag?: string;
 }) {
   return (
-    <div className="columns-2 gap-4 lg:columns-3 xl:columns-4">
+    <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4">
       {items.map((s) => (
         <ScreenshotCard
           key={s.id}

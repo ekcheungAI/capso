@@ -7,8 +7,10 @@
  * opened against the same deployment. A capture would simply arrive somewhere
  * the user was not looking, with nothing reporting it.
  *
- * Per browser profile, not per user: it is paired with one extension install,
- * and pairing a second browser is a deliberate act with its own code.
+ * The stored value is per browser profile. Signed-in owners never expose it
+ * directly: `accountDeviceToken` derives a separate code for each owner, so a
+ * pending capture for one account cannot land after the browser switches to
+ * another account.
  */
 const KEY = "capso.device";
 /** Matches the shape the relay validates — see api/ingest/route.ts. */
@@ -22,4 +24,23 @@ export function deviceToken(): string {
   const minted = `d_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
   window.localStorage.setItem(KEY, minted);
   return minted;
+}
+
+/** Pure derivation used by both the app and its contract test. */
+export async function deriveDeviceToken(browserToken: string, ownerId: string | null): Promise<string> {
+  if (!ownerId) return browserToken;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${browserToken}:${ownerId}`),
+  );
+  const scoped = [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `d_${scoped}`;
+}
+
+/** The code the current extension pairing must use. */
+export function accountDeviceToken(ownerId: string | null): Promise<string> {
+  return deriveDeviceToken(deviceToken(), ownerId);
 }

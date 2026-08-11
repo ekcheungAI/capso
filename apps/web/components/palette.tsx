@@ -94,7 +94,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           className="w-full border-b border-line bg-transparent px-4 py-3.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
         />
 
-        {!q && <p className="px-4 pt-3 text-[11px] uppercase tracking-wide text-muted">Recent</p>}
+        {!q && <p className="px-4 pt-3 text-xs uppercase tracking-wide text-muted">Recent</p>}
 
         <ul ref={listRef} className="max-h-80 overflow-y-auto py-2">
           {results.length === 0 && (
@@ -117,11 +117,11 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm">{s.title}</span>
-                  <span className="block truncate text-[11px] text-muted">
+                  <span className="block truncate text-xs text-muted">
                     {threadName(s.threadId)} · {s.summary}
                   </span>
                 </span>
-                <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-xs text-muted">
                   {INTENT_LABEL[s.intent]}
                 </span>
               </button>
@@ -129,7 +129,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           ))}
         </ul>
 
-        <div className="flex items-center gap-4 border-t border-line px-4 py-2 text-[11px] text-muted">
+        <div className="flex items-center gap-4 border-t border-line px-4 py-2 text-xs text-muted">
           <span>↑↓ navigate</span>
           <span>↵ open</span>
           <span className="ml-auto">esc close</span>

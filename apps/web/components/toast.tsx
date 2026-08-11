@@ -10,7 +10,7 @@ import { createContext, useCallback, useContext, useRef, useState } from "react"
 
 /**
  * `label` defaults to "Undo" because that is what almost every toast offers.
- * It is configurable so a toast can offer the obvious *next* step instead —
+ * It is configurable so a toast can offer the obvious *next* step instead -
  * an import's follow-up is reviewing what just landed, not undoing it.
  */
 type Toast = { id: number; text: string; undo?: () => void; label: string };

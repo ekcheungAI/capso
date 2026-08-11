@@ -375,6 +375,11 @@ export async function setIntent(s: Screenshot, intent: Screenshot["intent"]) {
 export async function deleteScreenshot(s: Screenshot) {
   const b = await backend();
 
+  if (b.deleteCapture) {
+    await b.deleteCapture(s);
+    return;
+  }
+
   // Pixels first: a Storage object whose row is already gone is unreachable, and
   // nothing would ever come back to clean it up.
   await b.removeImages(s);

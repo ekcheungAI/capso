@@ -94,3 +94,32 @@ test("the relay rejects unpaired and cross-site capture writes", async () => {
   );
   assert.equal(forged.status, 403);
 });
+
+test("the relay bounds actual request bytes and refuses malformed raster payloads", async () => {
+  const device = `device_${crypto.randomUUID()}`;
+  const malformed = await POST(
+    request("/api/ingest", {
+      method: "POST",
+      headers: { origin: EXTENSION, "content-type": "application/json" },
+      body: JSON.stringify({
+        id: `capture_${crypto.randomUUID()}`,
+        deviceToken: device,
+        imageDataUrl: "data:image/png;base64,AAAA=",
+      }),
+    }),
+  );
+  assert.equal(malformed.status, 400);
+
+  const oversized = await POST(
+    request("/api/ingest", {
+      method: "POST",
+      headers: { origin: EXTENSION, "content-type": "application/json" },
+      body: JSON.stringify({
+        id: `capture_${crypto.randomUUID()}`,
+        deviceToken: device,
+        imageDataUrl: `data:image/png;base64,${"A".repeat(10 * 1_024 * 1_024)}`,
+      }),
+    }),
+  );
+  assert.equal(oversized.status, 413);
+});

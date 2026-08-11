@@ -52,11 +52,11 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
         <div className="space-y-4">
           {GROUPS.map(([heading, rows]) => (
             <div key={heading}>
-              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-muted">{heading}</p>
+              <p className="mb-1.5 text-xs uppercase tracking-wide text-muted">{heading}</p>
               <ul className="space-y-1">
                 {rows.map(([keys, what]) => (
                   <li key={keys} className="flex items-baseline gap-3 text-xs">
-                    <kbd className="min-w-14 shrink-0 rounded border border-line px-1.5 py-0.5 text-center text-[11px] text-muted">
+                    <kbd className="min-w-14 shrink-0 rounded border border-line px-1.5 py-0.5 text-center text-xs text-muted">
                       {keys}
                     </kbd>
                     <span>{what}</span>

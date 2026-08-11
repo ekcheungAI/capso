@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { loadPermanentAccount, requirePermanentUserId } from "./account";
+import { bearerHeaders } from "@/lib/api/auth-guard";
+import { loadPermanentAccount, permanentAccountFromSession, requirePermanentUserId } from "./account";
 
 /**
  * The browser's one Supabase connection. Its persisted session is also the
@@ -48,4 +49,24 @@ export function supabase(): SupabaseClient {
  */
 export async function requireSession(): Promise<string> {
   return requirePermanentUserId(await loadPermanentAccount(supabase().auth));
+}
+
+/**
+ * Call a same-origin account API with the current access token. In an entirely
+ * unconfigured local build the request still reaches the route so its normal
+ * demo-mode 503 behavior remains available.
+ */
+export async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  if (!isConfigured()) return fetch(input, init);
+
+  const { data, error } = await supabase().auth.getSession();
+  const account = permanentAccountFromSession(data.session);
+  if (error || account.status !== "signed_in" || !data.session?.access_token) {
+    throw new Error("Sign in to use Capso AI.");
+  }
+
+  return fetch(input, {
+    ...init,
+    headers: bearerHeaders(init.headers, data.session.access_token),
+  });
 }

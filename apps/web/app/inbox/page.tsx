@@ -81,7 +81,7 @@ export default function InboxPage() {
         <h1 className="text-3xl font-semibold tracking-[-0.04em]">Today’s tray</h1>
         <p className="mt-1 text-xs text-muted">
           {inbox.length} {verb(inbox.length, "needs", "need")} a decision. Anything above 80% confidence was filed automatically.{" "}
-          <span className="text-[11px]">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
+          <span className="text-xs">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
         </p>
       </div>
 
@@ -107,11 +107,11 @@ export default function InboxPage() {
                 {/* A confidence bar over a classification that never happened
                     reads as a model judgement. It is not one. */}
                 {s.status === "unprocessed" ? (
-                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
-                    Couldn’t be read — try again
+                  <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
+                    Couldn’t be read. Try again
                   </span>
                 ) : s.simulated ? (
-                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
+                  <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
                     Sample data
                   </span>
                 ) : (
@@ -124,7 +124,7 @@ export default function InboxPage() {
 
               {s.suggestedThreadId && (
                 <p className="mt-2 text-xs">
-                  <span className="text-muted">Suggested — </span>
+                  <span className="text-muted">Suggested: </span>
                   <span className="font-medium">{threadName(s.suggestedThreadId)}</span>
                 </p>
               )}
@@ -136,15 +136,16 @@ export default function InboxPage() {
                   // Confirm assigns null → null: a visible no-op that still
                   // wrote a correction teaching the model to file into Inbox.
                   disabled={!s.suggestedThreadId}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+                  className="min-h-11 rounded-md bg-accent px-3 text-xs font-medium text-accent-ink disabled:opacity-40"
                 >
                   Confirm
                 </button>
 
                 <select
+                  aria-label={`Move ${s.title} to a project`}
                   defaultValue=""
                   onChange={(e) => e.target.value && void file(s, e.target.value)}
-                  className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+                  className="min-h-11 rounded-md border border-line bg-surface px-2 text-xs"
                 >
                   <option value="" disabled>
                     Move to…
@@ -159,11 +160,11 @@ export default function InboxPage() {
                 <button
                   disabled={busy === s.id}
                   onClick={() => void reread(s)}
-                  className="rounded-md border border-line px-3 py-1.5 text-xs disabled:opacity-40"
+                  className="min-h-11 rounded-md border border-line px-3 text-xs disabled:opacity-40"
                 >
                   {busy === s.id ? "Reading…" : "Try again"}
                 </button>
-                <span className="text-[11px] text-muted">Ignoring leaves it here</span>
+                <span className="text-xs text-muted">Ignoring leaves it here</span>
               </div>
             </div>
           </li>

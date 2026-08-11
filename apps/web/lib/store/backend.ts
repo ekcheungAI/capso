@@ -42,6 +42,8 @@ export type Backend = {
    */
   hydrateThumbs(rows: Screenshot[]): Promise<Screenshot[]>;
   removeImages(s: Screenshot): Promise<void>;
+  /** Coordinate a full remote delete behind one authenticated server boundary. */
+  deleteCapture?(s: Screenshot): Promise<void>;
   /** Drop every image this user owns — `resetAll` only. */
   clearImages(): Promise<void>;
 };
@@ -95,6 +97,9 @@ export const splitsOriginal = (s: Screenshot) => Boolean(s.imageDataUrl && s.thu
 
 // ------------------------------------------------------------- selection ----
 
+export type BackendPreference = "auto" | "local";
+
+let preference: BackendPreference = "auto";
 let chosen: Promise<Backend> | null = null;
 
 /**
@@ -106,6 +111,8 @@ let chosen: Promise<Backend> | null = null;
  */
 export function backend(): Promise<Backend> {
   chosen ??= (async (): Promise<Backend> => {
+    if (preference === "local") return local;
+
     const { isConfigured } = await import("@/lib/supabase/client");
     if (!isConfigured()) return local;
 
@@ -114,6 +121,16 @@ export function backend(): Promise<Backend> {
   })();
 
   return chosen;
+}
+
+/** Deliberate account-entry choice. Changing it invalidates the per-tab cache. */
+export function setBackendPreference(next: BackendPreference) {
+  preference = next;
+  chosen = null;
+}
+
+export function backendPreference(): BackendPreference {
+  return preference;
 }
 
 /** Test seam: forget the cached choice. */
