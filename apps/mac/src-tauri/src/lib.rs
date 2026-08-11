@@ -852,19 +852,9 @@ fn build_tray_menu<R: Runtime>(
         menu_builder = menu_builder.separator().item(item);
     }
 
-    let settings = MenuItem::with_id(
-        app,
-        OPEN_SETTINGS_MENU_ID,
-        "Settings…",
-        true,
-        Some("cmd+,"),
-    )?;
+    let settings = MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, Some("cmd+,"))?;
     let quit = MenuItem::with_id(app, "quit", "Quit Capso", true, Some("cmd+q"))?;
-    menu_builder
-        .separator()
-        .item(&settings)
-        .item(&quit)
-        .build()
+    menu_builder.separator().item(&settings).item(&quit).build()
 }
 
 fn current_system_status(app: &AppHandle) -> Result<system::SystemStatus, String> {
@@ -1385,19 +1375,11 @@ mod tests {
         // having to supply its own drag region.
         assert!(main.get("titleBarStyle").is_none());
 
-        // Reachability is what the old always-visible window really guaranteed. Every
-        // route back to Settings must survive: the menu item, a re-launch, a Reopen,
-        // and a first launch that still needs Screen Recording.
-        let source = include_str!("lib.rs");
-        assert!(source.contains(r#"MenuItem::with_id(
-        app,
-        OPEN_SETTINGS_MENU_ID,
-        "Settings…","#));
-        assert!(source.contains("tauri_plugin_single_instance::init"));
-        assert!(source.contains("RunEvent::Reopen"));
-        assert!(source.contains(
-            "if system_status.screen_recording == system::ScreenRecordingStatus::Required {"
-        ));
+        // Reachability is what the old always-visible window really guaranteed, and it
+        // is asserted against this file from `capture-parity.check.ts`. Scanning this
+        // source from inside it cannot work: the search string would match the
+        // assertion's own text and pass no matter what the menu actually builds.
+        assert_eq!(super::OPEN_SETTINGS_MENU_ID, "open-settings");
     }
 
     #[test]
