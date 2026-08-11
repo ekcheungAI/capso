@@ -21,7 +21,7 @@ type ShortcutSettings = {
 };
 
 type CaptureAction = keyof ShortcutSettings;
-type SettingsSection = "capture" | "sync" | "system";
+type SettingsSection = "general" | "shortcuts" | "account" | "advanced";
 
 type ShortcutConflict = {
   action: CaptureAction;
@@ -52,6 +52,14 @@ type AuthAccountStatus = {
   status: "signed_in" | "signed_out";
   userId: string | null;
   email: string | null;
+};
+
+type Diagnostics = {
+  latency_title: string;
+  latency_status: string;
+  latency_statistics: string | null;
+  queue_label: string | null;
+  queue_retryable: number;
 };
 
 type AuthFailureEvent = { message: string };
@@ -105,7 +113,12 @@ const MODIFIER_CODES = new Set([
   "ShiftRight",
 ]);
 
-const SETTINGS_SECTIONS: SettingsSection[] = ["capture", "sync", "system"];
+const SETTINGS_SECTIONS: SettingsSection[] = [
+  "general",
+  "shortcuts",
+  "account",
+  "advanced",
+];
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -155,7 +168,7 @@ function sameSettings(left: ShortcutSettings, right: ShortcutSettings) {
 
 function App() {
   const [activeSection, setActiveSection] =
-    useState<SettingsSection>("capture");
+    useState<SettingsSection>("general");
   const screenRecordingButtonRef = useRef<HTMLButtonElement>(null);
   const [settings, setSettings] = useState(DEFAULT_SHORTCUTS);
   const [savedSettings, setSavedSettings] = useState(DEFAULT_SHORTCUTS);
@@ -181,6 +194,15 @@ function App() {
   const [systemAction, setSystemAction] = useState<
     "permission" | "login" | null
   >(null);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [diagnosticsNotice, setDiagnosticsNotice] = useState(() =>
+    isTauriRuntime()
+      ? "Checking capture diagnostics…"
+      : "Preview mode - diagnostics activate in the installed app.",
+  );
+  const [diagnosticsNoticeIsError, setDiagnosticsNoticeIsError] = useState(
+    () => !isTauriRuntime(),
+  );
   const [authStatus, setAuthStatus] = useState(PREVIEW_AUTH_STATUS);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
@@ -224,6 +246,23 @@ function App() {
     } catch (error) {
       setSystemNotice(`Could not check macOS access: ${String(error)}`);
       setSystemNoticeIsError(true);
+    }
+  }
+
+  async function refreshDiagnostics() {
+    if (!nativeRuntime) return;
+
+    try {
+      const report = await invoke<Diagnostics>("get_diagnostics");
+      setDiagnostics(report);
+      setDiagnosticsNotice(
+        "Read-only. Quote these lines when you report a problem.",
+      );
+      setDiagnosticsNoticeIsError(false);
+    } catch (error) {
+      setDiagnostics(null);
+      setDiagnosticsNotice(`Could not load diagnostics: ${String(error)}`);
+      setDiagnosticsNoticeIsError(true);
     }
   }
 
@@ -359,6 +398,18 @@ function App() {
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [nativeRuntime]);
+
+  // Diagnostics are a snapshot, so they load once on mount and refresh whenever
+  // Advanced is opened again rather than polling in the background.
+  useEffect(() => {
+    if (!nativeRuntime) return;
+    void refreshDiagnostics();
+  }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime || activeSection !== "advanced") return;
+    void refreshDiagnostics();
+  }, [nativeRuntime, activeSection]);
 
   async function handleScreenRecording() {
     if (!nativeRuntime || screenRecordingGranted) return;
@@ -552,68 +603,42 @@ function App() {
   }
 
   function openSystemPermissions() {
-    setActiveSection("system");
+    setActiveSection("general");
     requestAnimationFrame(() => screenRecordingButtonRef.current?.focus());
   }
 
   return (
     <main className="popover">
-      {/* The window uses titleBarStyle "Overlay", so macOS draws no titlebar to
-          grab. Without an explicit drag region the window cannot be moved. */}
-      <header className="popover-header" data-tauri-drag-region>
-        <div data-tauri-drag-region>
-          <p className="eyebrow" data-tauri-drag-region>Capso</p>
-          <h1 data-tauri-drag-region>Capture on this Mac</h1>
-          <p className="header-copy" data-tauri-drag-region>
-            Start with a shortcut. Captures stay local unless cloud sync is
-            connected.
+      <header className="popover-header">
+        <div>
+          <p className="eyebrow">Capso</p>
+          <h1>Settings</h1>
+          <p className="header-copy">
+            {authStatus.status === "signed_in"
+              ? "Captures sync automatically to your library."
+              : "Sign in to sync captures to your library."}
           </p>
         </div>
-        <span
-          className="status-pill"
-          data-ready={screenRecordingGranted}
-          data-tauri-drag-region
-        >
+        <span className="status-pill" data-ready={screenRecordingGranted}>
           {screenRecordingGranted ? "All modes ready" : "Area ready"}
         </span>
       </header>
 
       <div className="settings-tabs" role="tablist" aria-label="Capso settings">
-        <button id="capture-tab" type="button" role="tab" aria-controls="capture-panel" aria-selected={activeSection === "capture"} tabIndex={activeSection === "capture" ? 0 : -1} onClick={() => setActiveSection("capture")} onKeyDown={(event) => moveSettingsTab("capture", event)}>Capture</button>
-        <button id="sync-tab" type="button" role="tab" aria-controls="sync-panel" aria-selected={activeSection === "sync"} tabIndex={activeSection === "sync" ? 0 : -1} onClick={() => setActiveSection("sync")} onKeyDown={(event) => moveSettingsTab("sync", event)}>Sync</button>
-        <button id="system-tab" type="button" role="tab" aria-controls="system-panel" aria-selected={activeSection === "system"} tabIndex={activeSection === "system" ? 0 : -1} onClick={() => setActiveSection("system")} onKeyDown={(event) => moveSettingsTab("system", event)}>System</button>
+        <button id="general-tab" type="button" role="tab" aria-controls="general-panel" aria-selected={activeSection === "general"} tabIndex={activeSection === "general" ? 0 : -1} onClick={() => setActiveSection("general")} onKeyDown={(event) => moveSettingsTab("general", event)}>General</button>
+        <button id="shortcuts-tab" type="button" role="tab" aria-controls="shortcuts-panel" aria-selected={activeSection === "shortcuts"} tabIndex={activeSection === "shortcuts" ? 0 : -1} onClick={() => setActiveSection("shortcuts")} onKeyDown={(event) => moveSettingsTab("shortcuts", event)}>Shortcuts</button>
+        <button id="account-tab" type="button" role="tab" aria-controls="account-panel" aria-selected={activeSection === "account"} tabIndex={activeSection === "account" ? 0 : -1} onClick={() => setActiveSection("account")} onKeyDown={(event) => moveSettingsTab("account", event)}>Account</button>
+        <button id="advanced-tab" type="button" role="tab" aria-controls="advanced-panel" aria-selected={activeSection === "advanced"} tabIndex={activeSection === "advanced" ? 0 : -1} onClick={() => setActiveSection("advanced")} onKeyDown={(event) => moveSettingsTab("advanced", event)}>Advanced</button>
       </div>
 
-      {activeSection === "capture" && (
-        <div id="capture-panel" role="tabpanel" aria-labelledby="capture-tab" className="settings-panel">
+      {activeSection === "shortcuts" && (
+        <div id="shortcuts-panel" role="tabpanel" aria-labelledby="shortcuts-tab" className="settings-panel">
           {!screenRecordingGranted && (
             <button type="button" className="permission-bridge" onClick={openSystemPermissions}>
               <strong>Area works now.</strong>
               <span>Enable Window &amp; Full Screen</span>
             </button>
           )}
-
-          <section className="capability-card" aria-labelledby="quick-access-heading">
-            <div className="section-heading">
-              <h2 id="quick-access-heading">Where to find them</h2>
-              <span>Local tools</span>
-            </div>
-            <div className="capability-grid">
-              <div>
-                <strong>Area capture in 5 seconds</strong>
-                <span>Tray menu</span>
-              </div>
-              <div>
-                <strong>Pin one capture</strong>
-                <span>Pin button in capture preview</span>
-              </div>
-              <div>
-                <strong>Recent captures</strong>
-                <span>Tray menu · last 8 shown</span>
-              </div>
-            </div>
-            <p className="capability-note">Local originals remain on this Mac beyond the tray list.</p>
-          </section>
 
           <section className="shortcut-section" aria-labelledby="shortcuts-heading">
         <div className="setup-heading">
@@ -699,8 +724,8 @@ function App() {
         </div>
       )}
 
-      {activeSection === "system" && (
-        <div id="system-panel" role="tabpanel" aria-labelledby="system-tab" className="settings-panel">
+      {activeSection === "general" && (
+        <div id="general-panel" role="tabpanel" aria-labelledby="general-tab" className="settings-panel">
           <section className="system-card" aria-labelledby="system-heading">
         <div className="section-heading">
           <h2 id="system-heading">Capture permissions</h2>
@@ -791,8 +816,8 @@ function App() {
         </div>
       )}
 
-      {activeSection === "sync" && (
-        <div id="sync-panel" role="tabpanel" aria-labelledby="sync-tab" className="settings-panel">
+      {activeSection === "account" && (
+        <div id="account-panel" role="tabpanel" aria-labelledby="account-tab" className="settings-panel">
           <section className="account-card" aria-labelledby="account-heading">
         <div className="section-heading">
           <h2 id="account-heading">Cloud sync</h2>
@@ -859,6 +884,56 @@ function App() {
             <span>{accountPresentation.message}</span>
           </div>
         )}
+          </section>
+        </div>
+      )}
+
+      {activeSection === "advanced" && (
+        <div id="advanced-panel" role="tabpanel" aria-labelledby="advanced-tab" className="settings-panel">
+          <section className="system-card" aria-labelledby="diagnostics-heading">
+            <div className="section-heading">
+              <h2 id="diagnostics-heading">Diagnostics</h2>
+              <span data-muted={true}>Read only</span>
+            </div>
+
+            {diagnostics !== null && (
+              <>
+                <div className="system-row">
+                  <div className="system-copy">
+                    <strong>{diagnostics.latency_title}</strong>
+                    <span>{diagnostics.latency_status}</span>
+                    {diagnostics.latency_statistics !== null && (
+                      <span className="diagnostic-metric">
+                        {diagnostics.latency_statistics}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="system-row">
+                  <div className="system-copy">
+                    <strong>Upload queue</strong>
+                    <span>
+                      {diagnostics.queue_label ??
+                        "Nothing is waiting to sync."}
+                    </span>
+                    {diagnostics.queue_retryable > 0 && (
+                      <span className="diagnostic-metric">
+                        {diagnostics.queue_retryable} waiting to retry
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div
+              className="system-notice"
+              data-error={diagnosticsNoticeIsError}
+              aria-live="polite"
+            >
+              {diagnosticsNotice}
+            </div>
           </section>
         </div>
       )}
