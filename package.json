@@ -3,13 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "packageManager": "pnpm@10.16.1",
+  "engines": {
+    "node": ">=22.14.0 <23"
+  },
   "scripts": {
     "dev:web": "pnpm --filter web dev",
     "dev:mac": "pnpm --filter mac tauri dev",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm brand:check && pnpm capture:check && pnpm -r --if-present lint",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm test:node && pnpm test:deno && pnpm test:rust",
+    "test:node": "pnpm -r --if-present test",
+    "test:deno": "deno task --cwd supabase/functions/v1-process-screenshot check && deno task --cwd supabase/functions/v1-process-screenshot test",
+    "test:rust": "cargo fmt --all --manifest-path apps/mac/src-tauri/Cargo.toml -- --check && cargo test --locked --manifest-path apps/mac/src-tauri/Cargo.toml",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test",
     "build:extension": "bash scripts/build-extension.sh",
     "brand:tokens": "node scripts/gen-tokens.mjs",
     "brand:check": "node scripts/gen-tokens.mjs --check",
