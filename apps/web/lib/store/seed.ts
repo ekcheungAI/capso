@@ -1,6 +1,15 @@
 import type { Screenshot, Thread } from "./types";
 
-/** First-run fixtures. Real ingests join these; "Reset demo data" restores them. */
+/**
+ * First-run fixtures. Real ingests join these; "Reset demo data" restores them.
+ *
+ * Every product named here is FICTIONAL — Verrick, Brellow, Palewick, Corveth,
+ * Skaldi, Weftly. They replaced Linear/Stripe/Notion/Superhuman/Raycast/Arc on
+ * 2026-08-12, when these rows stopped rendering an abstract placeholder and
+ * started rendering photoreal generated screenshots. A wireframe captioned
+ * "Stripe — checkout" is an annotation; a photoreal image captioned the same way
+ * is a fabricated depiction of somebody else's product. Keep them fictional.
+ */
 
 export const seedThreads: Thread[] = [
   {
@@ -69,14 +78,14 @@ type SeedInput = Omit<
 const raw: SeedInput[] = [
   {
     id: "s1",
-    title: "Linear — pricing, annual toggle",
+    title: "Verrick — pricing, annual toggle",
     summary:
       "Three-tier pricing with an annual/monthly toggle that shows the saving inline on the toggle itself.",
     whySaved: "The savings badge sits on the toggle, not under the price — worth stealing.",
     ocrText:
       "Pricing\nFree — for individuals\nBasic $8 /user /month\nBusiness $14 /user /month\nEnterprise — contact us\nBilled annually · Save 20%\nStart free trial",
     intent: "competitor",
-    tags: ["linear", "pricing table", "annual toggle", "three tiers"],
+    tags: ["verrick", "pricing table", "annual toggle", "three tiers"],
     type: "web_page",
     threadId: "pricing-redesign",
     confidence: 0.94,
@@ -86,12 +95,12 @@ const raw: SeedInput[] = [
   },
   {
     id: "s2",
-    title: "Stripe — checkout empty state",
+    title: "Brellow — checkout empty state",
     summary: "Empty cart state using a single line of copy and one primary action.",
-    whySaved: "Reference for our own empty states — one action, no illustration.",
+    whySaved: "Reference for our own empty states — the action carries it, not the copy.",
     ocrText: "Nothing here yet.\nAdd your first product to get started.\nAdd product",
     intent: "design_inspiration",
-    tags: ["stripe", "empty state", "checkout", "illustration"],
+    tags: ["brellow", "empty state", "checkout", "illustration"],
     type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.88,
@@ -117,12 +126,12 @@ const raw: SeedInput[] = [
   },
   {
     id: "s4",
-    title: "Notion — AI accept / discard menu",
+    title: "Palewick — AI accept / discard menu",
     summary: "Three-verb AI action menu: Accept, Discard, Try again.",
     whySaved: "Exactly the vocabulary our overlay chip should use.",
     ocrText: "Accept\nDiscard\nTry again\nGet unlimited AI",
     intent: "design_inspiration",
-    tags: ["notion", "ai menu", "accept discard", "dropdown"],
+    tags: ["palewick", "ai menu", "accept discard", "dropdown"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.86,
@@ -132,12 +141,12 @@ const raw: SeedInput[] = [
   },
   {
     id: "s5",
-    title: "Superhuman — onboarding step 3",
+    title: "Corveth — onboarding step 3",
     summary: "Keyboard-shortcut teaching screen with a single practice action per step.",
     whySaved: "One concept per screen — the pacing we want for hotkey onboarding.",
     ocrText: "Step 3 of 6\nPress ⌘K to jump anywhere.\nTry it now.",
     intent: "reference",
-    tags: ["superhuman", "onboarding", "step indicator", "keyboard shortcut"],
+    tags: ["corveth", "onboarding", "step indicator", "keyboard shortcut"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.79,
@@ -162,12 +171,12 @@ const raw: SeedInput[] = [
   },
   {
     id: "s7",
-    title: "Raycast — command palette",
+    title: "Skaldi — command palette",
     summary: "Command palette with inline result grouping and a persistent footer of actions.",
     whySaved: "Footer action bar pattern for our search omnibox.",
     ocrText: "Search for apps and commands…\nSuggestions\nCommands\n↵ Open   ⌘K Actions",
     intent: "design_inspiration",
-    tags: ["raycast", "command palette", "dark mode", "search input"],
+    tags: ["skaldi", "command palette", "dark mode", "search input"],
     type: "ui_screen",
     threadId: "pricing-redesign",
     confidence: 0.9,
@@ -177,12 +186,12 @@ const raw: SeedInput[] = [
   },
   {
     id: "s8",
-    title: "Arc — sidebar project grouping",
+    title: "Weftly — sidebar project grouping",
     summary: "Sidebar splits pinned spaces from loose tabs with a hairline divider.",
     whySaved: "Model for Inbox-above-projects ordering.",
     ocrText: "Spaces\nPinned\nToday",
     intent: "reference",
-    tags: ["arc browser", "sidebar", "spaces", "grouping"],
+    tags: ["weftly", "sidebar", "spaces", "grouping"],
     type: "ui_screen",
     threadId: "onboarding-teardown",
     confidence: 0.81,

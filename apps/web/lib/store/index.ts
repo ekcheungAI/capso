@@ -1,4 +1,5 @@
 import { backend, splitsOriginal } from "./backend";
+import { isOwnCapture, onboardingStage } from "@/lib/onboarding";
 import { uuidFromSeed } from "./map";
 import { seedScreenshots, seedThreads } from "./seed";
 import { roleById } from "@/lib/templates";
@@ -33,6 +34,15 @@ const uid = () => crypto.randomUUID();
  */
 const SETUP = "capso.setup";
 type Setup = "template" | "samples" | "empty";
+
+/**
+ * Whether this person has ever captured anything of their own. A one-way latch,
+ * deliberately separate from SETUP: SETUP records how the library began, this
+ * records that onboarding is over. Once set it is never cleared except by a full
+ * reset, so a user who captures and then deletes everything is not greeted as a
+ * newcomer — that would read as the app having forgotten them.
+ */
+const FIRST_CAPTURE = "capso.firstCapture";
 
 /** Threads written before descriptions existed read back without the field. */
 const withDescription = (t: Thread): Thread => ({ ...t, description: t.description ?? "" });
@@ -71,15 +81,52 @@ export async function loadAll() {
   const screenshots = await b.hydrateThumbs(rawScreenshots.map(withScreenshotDefaults));
 
   let setup = localStorage.getItem(SETUP) as Setup | null;
+  const libraryNotEmpty = threads.length > 0 || screenshots.length > 0;
 
   // Libraries that predate the picker are already set up by definition — never
   // interrupt an existing collection to ask what kind of person you are.
-  if (!setup && (threads.length > 0 || screenshots.length > 0)) {
+  if (!setup && libraryNotEmpty) {
     setup = "template";
     localStorage.setItem(SETUP, setup);
   }
 
-  return { threads, screenshots, corrections, revisits, messages, needsSetup: setup === null };
+  const ownCaptures = screenshots.filter(isOwnCapture).length;
+
+  // Same predates-the-flag write-back as SETUP, and it matters most for the
+  // signed-in-on-a-new-browser case: the rows are all remote, localStorage is
+  // empty, and without this the user is walked through onboarding on top of a
+  // library they already filled.
+  let firstCaptureDone = localStorage.getItem(FIRST_CAPTURE) === "1";
+  if (!firstCaptureDone && ownCaptures > 0) {
+    firstCaptureDone = true;
+    localStorage.setItem(FIRST_CAPTURE, "1");
+  }
+
+  const stage = onboardingStage({ setup, firstCaptureDone, ownCaptures, libraryNotEmpty });
+
+  return {
+    threads,
+    screenshots,
+    corrections,
+    revisits,
+    messages,
+    stage,
+    // Kept as its own field rather than inlined at the call site: shell.tsx
+    // documents what it means, and "is the picker showing" is a different
+    // question from "where in first run is this person".
+    needsSetup: stage === "pick_role",
+  };
+}
+
+/** Latch onboarding closed. Called once, on the first capture the user makes. */
+export function completeFirstCapture() {
+  localStorage.setItem(FIRST_CAPTURE, "1");
+}
+
+/** "Skip for now" from the role picker — a deliberate blank start. */
+export async function skipSetup() {
+  localStorage.setItem(SETUP, "empty");
+  return loadAll();
 }
 
 /**
@@ -122,6 +169,8 @@ export async function loadSamples() {
 export async function resetAll() {
   const b = await backend();
   localStorage.removeItem(SETUP);
+  // Both flags, or a reset library would keep claiming onboarding was finished.
+  localStorage.removeItem(FIRST_CAPTURE);
 
   // Children before parents: corrections, revisits and messages all reference
   // a screenshot or thread, and deleting the parent first would be rejected by
