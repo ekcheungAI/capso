@@ -41,7 +41,7 @@ continuously observe, sample, record, or ingest the screen.
 | OVL-01 | Overlay appears on the capture display, stays above windows, never steals focus, supports Copy, Save, Annotate, drag-out, and Close, and can be restored from recent history. | Focus/multi-display/manual QA |
 | ANN-01 | Arrow, box, text, and irreversible blur work; saved/copied/uploaded pixels are the flattened result. | Pixel test + manual QA |
 | DUR-01 | Original pixels are persisted locally before any network or AI call. Offline captures survive restart, retry idempotently, and are deleted locally only after confirmed remote persistence. | Automated queue test + offline drill |
-| HIS-01 | Every successful capture is recoverable from Capso history/library with timestamp and original pixels; the menu exposes the five most recent local records instantly. | Integration + manual QA |
+| HIS-01 | Every successful capture is recoverable from Capso history/library with timestamp and original pixels; the menu exposes the eight most recent local records instantly. | Integration + manual QA |
 | AI-01 | Upload, OCR, summary, intent, tags, and project routing complete in the background while all Capso browser tabs are closed. | End-to-end native test |
 | LRN-01 | Three equivalent project corrections cause the fourth similar capture to use the corrected destination, matching AC-COR-01. | Scripted evaluation |
 | RET-01 | OCR exact-text and vague-memory queries retrieve the expected capture under the existing search gates. | Golden query evaluation |
@@ -51,7 +51,7 @@ continuously observe, sample, record, or ingest the screen.
 
 - Scrolling capture.
 - Screen recording, GIF, microphone, camera, or computer audio.
-- Floating pinned screenshots.
+- Multiple or restart-persistent floating pinned screenshots; the one-pin v1 remains a dogfood feature until physical QA passes.
 - CleanShot Cloud-compatible sharing or public links.
 - Background/social-post composition tool.
 - Full CleanShot annotation breadth, editable CleanShot project files, or exact UI cloning.

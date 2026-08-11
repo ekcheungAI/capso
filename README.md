@@ -1,10 +1,32 @@
-# Capso Planning Pack
+# Capso
 
-This folder is a complete, agent-executable planning system for **Capso** — a Mac + Web screenshot-first AI memory tool (working name, unconfirmed). It was produced from the upstream concept document (`~/Downloads/AI_Capture_Tool_Concept (2).md`, 2026-07-31) plus a structured owner interview, and it is the source of truth for what gets built, in what order, and how "done" is judged.
+Capso is a Mac + web screenshot-first AI memory tool. This monorepo contains the product source, shared contracts, Supabase migrations and workers, automated checks, and the planning pack that defines scope and acceptance.
 
-**This pack contains no application code.** Code lives in the repos the build loops create; these docs govern them.
+## Repository map
 
-## What's in here
+- `apps/mac` — Tauri 2 menu-bar capture app (React, TypeScript, Rust).
+- `apps/web` — Next.js 16 library, search, triage, account, and extension-pairing surfaces.
+- `apps/extension` — MV3 browser capture extension with a durable local outbox.
+- `packages/shared` — cross-surface schemas and capture/ingest contracts.
+- `supabase` — database migrations and the background screenshot-processing worker.
+- root numbered Markdown files — product, architecture, build, and acceptance source of truth.
+
+## Local verification
+
+Use the pinned Node, Deno, and Rust toolchains, install with pnpm, then run:
+
+```bash
+pnpm verify
+pnpm test:e2e
+pnpm --filter web build
+pnpm --filter mac tauri build
+```
+
+`pnpm verify` covers generated-source checks, lint, TypeScript, Node, Deno, Rust formatting, and Rust tests. Browser E2E is separate so it can own an isolated Next.js server. Hosted Supabase migrations, function/Cron setup, web deployment, signing, and notarization are explicit release actions and are not performed by these commands.
+
+Current hosted web deployment: [capso-cyan.vercel.app](https://capso-cyan.vercel.app). The Supabase background screenshot worker and once-per-minute wake are active; hosted account-backed capture QA and Mac signing/notarization remain release gates.
+
+## Planning pack
 
 - `MASTER_PLAN.md` — canonical entry point: product summary, decision log, assumptions, open questions, status ledger, next action. **Always read this first.**
 - `01`–`04` — product core: brief, problems/JTBD, personas, and `04_MVP_SCOPE.md`, the scope authority every feature request is tested against.

@@ -99,19 +99,19 @@ All paths converge on the same pipeline: local file → `screenshots` row (captu
 |---|---|---|---|---|
 | Region capture (hotkey) | ✓ | ✓ | | |
 | Window capture | ✓ | ✓ | | |
-| Fullscreen capture | ✓ | via region (select all) | dedicated hotkey | |
+| Fullscreen capture | ✓ | ✓ (main display) | selected external display | |
 | Copy to clipboard | ✓ | ✓ | | |
 | Floating thumbnail overlay | ✓ | ✓ (+ AI chip — beyond parity) | | |
 | Annotate: arrow/box/text/blur | ✓ | ✓ | more tools (highlight, counters, crop) | |
 | Scrolling capture | ✓ | ✗ | ✓ post-MVP | |
 | Screen recording (video) | ✓ | ✗ | ✓ post-MVP | |
 | GIF recording | ✓ | ✗ | maybe | |
-| Self-timer capture | ✓ | ✗ | maybe | |
+| Self-timer capture | ✓ | ✓ (5-second area timer with visible countdown and Cancel) | richer timer options | |
 | Cloud upload + share link | ✓ (CleanShot Cloud) | upload yes; public share links no | share links post-MVP | |
 | Capture history browser | ✓ (limited) | ✓✓ (full searchable memory — beyond parity) | | |
 | Hide desktop icons | ✓ | | | ✗ never — off-mission utility |
 | Wallpaper tool / custom backdrops behind screenshots | ✓ | | | ✗ never — cosmetic, mymind-calm ethos says no |
-| Pin screenshot to screen | ✓ | ✗ | maybe | |
+| Pin screenshot to screen | ✓ | ✓ (single reusable pin with Copy, Close, and focused Escape; physical QA pending) | multiple/persistent pins | |
 | OCR "copy text from image" | ✓ | ✓ (from AI pass; copy OCR text in detail view) | on-device instant OCR | |
 | Multi-display / advanced capture settings matrix | ✓ | system defaults only | | ✗ never as a settings surface — keep settings tiny |
 

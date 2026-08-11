@@ -19,12 +19,13 @@
 
 | Component | Role | Stack |
 |-----------|------|-------|
-| Tauri Mac app | Menu-bar capture bar: hotkeys, region/window capture via `screencapture -i` / `-iw`, clipboard copy, basic annotation (arrow/box/text/blur), floating post-capture overlay with AI suggestion, background upload | Tauri 2, React + TS |
-| Next.js web app | Library, thread views, chat, search, Inbox triage, digest surface | Next.js 15 on Vercel |
-| Supabase | Postgres (+pgvector) = source of truth; Storage = images; Auth = identity; Edge Functions = workers + chat endpoint; jobs table + pg_cron = async pipeline | Supabase cloud |
-| AI providers | Haiku-class multimodal (W1), embeddings (W2/W5), Sonnet/Fable-class (W4/W6) — all behind `ai.ts` (09 §8) | HTTPS APIs |
-| PostHog | Product analytics: capture funnel, suggestion accuracy, revisit rate, gate counters | Cloud |
-| Sentry | Errors: Mac app (Rust + JS), web, Edge Functions | Cloud |
+| Tauri Mac app | Menu-bar capture bar: hotkeys, region/window capture via `screencapture -i` / `-iw`, clipboard copy, annotation, floating post-capture overlay, durable local queue, authenticated background upload | Tauri 2, React + TS, Rust |
+| Next.js web app | Library, project views, chat, search, Inbox triage, account entry, and extension pairing | Next.js 16 on Vercel |
+| Browser extension | Visible-tab capture with a durable IndexedDB outbox; paired delivery into the web capture layer | Chrome MV3, JavaScript |
+| Supabase | Postgres (+pgvector schema) = remote source of truth; Storage = private images; Auth = identity; Edge Function + jobs table = async classification pipeline | Supabase cloud |
+| AI provider | MiniMax multimodal classification in the web route and Edge worker. Embedding execution remains unimplemented. | HTTPS API |
+| PostHog (planned) | Product analytics: capture funnel, suggestion accuracy, revisit rate, gate counters. Not wired in the current source. | Cloud |
+| Sentry (planned) | Errors: Mac app (Rust + JS), web, Edge Functions. Not wired in the current source. | Cloud |
 
 ## 2. System diagram
 
@@ -38,31 +39,21 @@ flowchart LR
     subgraph supa [Supabase]
       ST[(Storage: originals/thumbs)]
       DB[(Postgres + pgvector\njobs + pg_cron)]
-      EF[Edge Functions:\nprocess-capture / chat / digest]
+      EF[Edge Function:\nprocess screenshot]
       AUTH[Auth]
     end
-    subgraph ai [AI providers via ai.ts]
-      H[Haiku-class W1]
-      E[Embeddings W2/W5]
-      S[Sonnet-class W4/W6]
-    end
-    WEB[Next.js web app\nVercel] --> DB
+    AI[MiniMax multimodal]
+    EXT[MV3 extension\ndurable outbox] -->|paired relay| WEB
+    WEB[Next.js 16 web app\nVercel] --> DB
     WEB --> ST
-    WEB -->|chat SSE| EF
+    WEB -->|authenticated classify / chat| AI
     UP --> ST
-    UP -->|insert screenshot + job| DB
+    UP -->|authenticated ingest RPC| DB
     mac --> AUTH
     WEB --> AUTH
     DB -->|pg_cron tick| EF
-    EF --> H
-    EF --> E
-    EF --> S
+    EF --> AI
     EF --> DB
-    mac -.-> SEN[Sentry]
-    WEB -.-> SEN
-    EF -.-> SEN
-    mac -.-> PH[PostHog]
-    WEB -.-> PH
 ```
 
 ## 3. Capture → searchable sequence
@@ -71,28 +62,36 @@ flowchart LR
 sequenceDiagram
     participant U as User
     participant M as Mac app
+    participant WEB as Web app
     participant ST as Storage
     participant DB as Postgres
     participant W as Edge Fn worker
-    participant AI as Haiku-class + Embeddings
+    participant AI as MiniMax multimodal
 
     U->>M: Hotkey → region/window select
     M->>M: screencapture writes PNG; overlay shows thumbnail
     par background
-      M->>ST: upload original (+ generate & upload WebP thumb)
-      M->>DB: INSERT screenshots(status=pending) + jobs(process_capture)
+      M->>ST: upload original + bounded PNG thumb
+      M->>DB: authenticated ingest RPC inserts screenshot + job atomically
     end
-    DB-->>W: pg_cron tick (~15s) dequeues job
+    DB-->>W: pg_cron tick (every minute) dequeues job
     W->>DB: few-shot corrections + candidate threads (W7/W3)
-    W->>AI: ONE multimodal call → CaptureAnalysis JSON, then embed
+    W->>AI: ONE multimodal call → CaptureAnalysis JSON
     AI-->>W: {ocr_text, summary, type, intent, project_suggestion, confidence, why_saved}
-    W->>DB: update screenshots (ocr/summary/tsv/embedding, status=processed), insert classification_suggestion; auto-assign if conf ≥ 0.8
-    M->>DB: overlay polls/Realtime-subscribes suggestion (~3–5s target)
-    M-->>U: "Looks like → Thread X" confirm / ignore
-    U->>M: confirm → outcome=confirmed (or correction row if overridden)
+    W->>DB: update screenshots (ocr/summary/tsv, status=processed), insert classification_suggestion; auto-assign if conf ≥ 0.8
+    U->>WEB: open the synced capture and correct its project if needed
+    WEB->>DB: owner-scoped read / correction writes
 ```
 
 Latency budget for the 3–5s inline suggestion: upload ≤1.5s (thumb-sized first if needed) + queue wait ≤2s + W1 ≤2s. If pg_cron's tick granularity threatens the budget, the uploader may also fire the worker Edge Function directly after insert ("kick"), with pg_cron as the sweeper for missed kicks — requirement: pipeline must not depend on the kick for correctness.
+
+### Implementation and deployment status — 2026-08-11
+
+The hosted Supabase project now has the hardened schema, native ingest contract, one-job Edge worker, Vault-backed worker secret, and an active once-per-minute Cron wake. The first scheduled invocation returned HTTP 200. The Next.js app is deployed on Vercel at `https://capso-cyan.vercel.app` with Node 22 and production Supabase/MiniMax configuration.
+
+Native and web Storage paths now share one canonical bucket-prefixed database format, while the Storage adapter accepts legacy unprefixed web rows. Permanent screenshot deletion is coordinated through an authenticated same-origin server endpoint that derives both object paths from the owner-scoped database row. Browser classification still uses authenticated Next.js AI routes, and the extension relay is device/account-addressed but process-memory-backed. Paginated server retrieval, embeddings, remaining server-owned mutations, a durable extension relay, Mac signing/notarization, and physical permissions/multi-display QA remain.
+
+The no-browser learning loop and web deployment gates are complete. Account-backed three-capture durability/tenant-isolation QA still needs an interactive magic-link session; Mac signing/notarization and physical macOS permission/multi-display QA also remain release gates rather than local-build side effects.
 
 ## 4. Decision tables (requirements — chosen options locked unless noted)
 

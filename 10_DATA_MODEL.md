@@ -92,7 +92,7 @@ Indexes: `(user_id)`, partial unique `(user_id) WHERE is_inbox`.
 | simulated | boolean NOT NULL DEFAULT false | Metadata came from canned demo output, not the model — see the loop-24 amendment |
 | assignment_source | assignment_source NULL | How the capture reached its project: `auto \| user_corrected \| inbox_triage \| manual`. NULL ⇒ never assigned (still in Inbox) |
 
-Two columns exist in `0001_core_schema.sql` but were never listed above: `title text NOT NULL DEFAULT ''` (W1 output) and `source text` (capture origin — `hotkey_region`, `extension`, `web_upload`, `seed`, …). Recorded here so the table matches the database.
+Two columns exist in `20260731171425_core_schema.sql` but were never listed above: `title text NOT NULL DEFAULT ''` (W1 output) and `source text` (capture origin — `hotkey_region`, `extension`, `web_upload`, `seed`, …). Recorded here so the table matches the database.
 
 Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`; GIN on `search_tsv`; GIN on `tags` and `user_tags`; **HNSW** on `embedding` (`vector_cosine_ops`) — HNSW over ivfflat: no training step, fine at MVP row counts, better recall; `(user_id, processing_status)` partial WHERE status <> 'processed' (worker + badge queries); `(user_id, content_hash)` partial WHERE not null.
 
@@ -108,8 +108,9 @@ Indexes: `(user_id, captured_at DESC)`; `(project_thread_id, captured_at DESC)`;
 ### jobs
 
 The browser-independent worker queue. Migration
-`20260808032950_background_processing_jobs.sql` is committed but deliberately not
-applied until the owner approves the production schema change.
+`20260810154432_background_processing_jobs.sql` is applied in the hosted Capso
+project; `20260810155303_fix_claim_job_ambiguity.sql` contains the forward-only
+repair found by the first live worker smoke test.
 
 | Column | Type | Notes |
 |--------|------|-------|

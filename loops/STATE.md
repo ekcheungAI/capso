@@ -12,7 +12,7 @@
 | Branch | `codex/capso-cleanshot-replacement` |
 | Baseline commit | `e8dd7e22adaf93ee1f023dcc0d1c58b4c038360d` |
 | Current phase | Native capture plus browser-independent processing |
-| Next objective | D16 resolves identity as a fresh authenticated library and the local website gate is implemented; AI-01a4 hosted redirect/deployment proof and AI-01b2 integration require owner approval; CAP-02b/offline QA and PKG-01 remain manual or owner gates |
+| Next objective | Hosted migrations, cron wake, Edge worker, and website deployment are live (verified 2026-08-11); AI-01c no-browser E2E proof and the live same-account handoff proof are next, then CAP-02b/offline physical QA and PKG-01 owner gates |
 | Exit authority | `27_CLEANSHOT_DAILY_DRIVER_PARITY.md` five-day dogfood gate |
 
 ## Protected pre-existing work
@@ -20,13 +20,11 @@
 These paths were already untracked when the loop was created. Every run must preserve
 them and must never stage, delete, rename, or rewrite them unless Elvin separately asks:
 
-- `.playwright-cli/`
 - `design-qa.md`
-- `drafts/2026-08-03_capso-image2-preview/`
-- `drafts/2026-08-03_capso-interactive-preview/`
-- `package-lock.json`
-- `qa/`
-- `supabase/.temp/`
+
+2026-08-11, with owner approval: `.playwright-cli/`, `qa/`, `supabase/.temp/`, and
+`drafts/*preview*/` are now gitignored (still on disk, never staged), and the stray
+npm `package-lock.json` was deleted. Only `design-qa.md` remains untracked and protected.
 
 Build outputs under ignored `target/`, `dist/`, and `.next/` are disposable caches, not
 candidate source files.
@@ -50,7 +48,7 @@ Status vocabulary: `NOT_STARTED`, `IN_PROGRESS`, `PASS`, `FAIL`, `BLOCKED`.
 | ANN-01 four-tool annotation | IN_PROGRESS | `42fcfbf` adds the native arrow/box/text/irreversible-pixelate editor and durable flatten path; `4651859` proves one cross-language golden redaction fixture byte-for-byte through production pixelation, editor input validation, canonical/original save, clipboard, queue crash recovery, and drain consumption; 129 Rust + 98 workspace tests pass | Physical four-tool editor/save/copy/relaunch QA plus a downloaded remote-object pixel comparison |
 | DUR-01 durable queue | IN_PROGRESS | `a5c5e80` proves synced pixels and restart FIFO; `b3b9641` proves the coordinator; `c3278ba` adds the ingest contract; Loop 48 composes Keychain with real Storage/RPC startup/capture wakes; Loop 50 connects session creation without capture-transition blocking; Loop 51 adds persisted-deadline wake/rearm plus event-driven ≤5s known-offline reconnect monitoring without consuming offline attempts | Hosted proof, then the physical three-capture offline/restart/reconnect drill |
 | HIS-01 reliable history | IN_PROGRESS | `8bd0888` provides exact-ID local restore without touching the pasteboard; `e0b1020` orders by durable queue capture time, attaches bounded 48×32 native thumbnails, and adds an explicit verified production-library route while retaining full-decode/path checks | Native relaunch/menu thumbnail/click/focus proof plus queued end-to-end cloud persistence |
-| AI-01 browser-independent processing | BLOCKED | `c3278ba` proves the PKCE/ingest contract; Loop 47 adds the local worker/migration; Loops 48/50 connect native auth/upload locally. D16 chooses a fresh library, and current website source now requires the same permanent email identity, clears legacy anonymous browser sessions locally, and never silently falls back from configured remote storage. No hosted handoff/website deployment, redirect allowlist, production worker apply, Vault/Cron schedule, or live database proof exists | Production-change approval; deploy/allowlist handoff and website; apply/deploy/Cron; same-account and no-browser E2E proof |
+| AI-01 browser-independent processing | IN_PROGRESS | `c3278ba` proves the PKCE/ingest contract; Loop 47 adds the local worker/migration; Loops 48/50 connect native auth/upload locally. D16 chooses a fresh library with the same permanent email identity and no silent remote-to-local fallback. 2026-08-11 verified via Supabase management API: all eleven timestamped migrations (including jobs, native ingest, RLS hardening, and the cron wake) are applied on hosted project `xbxedriuelwqjypdkvex`, and Edge function `v1-process-screenshot` v1 is ACTIVE; the web app is deployed at capso-cyan.vercel.app | Live same-account handoff proof and the no-browser end-to-end capture→classification proof |
 | LRN-01 correction learning | IN_PROGRESS | Last 20 project corrections reach prompt | Scripted 3→4 eval with native ingest |
 | RET-01 retrieval | IN_PROGRESS | Lexical retrieval passes; pgvector path absent | Hybrid search golden evaluation |
 | PKG-01 signed installer | BLOCKED | Local `.app`/`.dmg` build; ad-hoc signature fails Gatekeeper | Fix identifier; Developer ID/notarization owner gate |
@@ -121,8 +119,8 @@ is PASS; a skipped or unverified gate is not PASS.
 
 | Priority | Area | Debt | Disposition |
 |---|---|---|---|
-| P0 | Processing | Native startup/capture can now drive the real upload/job-registration transport behind an existing session, but hosted schema/function/Cron integration is unproven and inactive. | AI-01b2 production approval/apply plus live no-browser proof. |
-| P0 | Identity | Native email/PKCE and website permanent-email identity are connected locally under D16's fresh-library policy, but the handoff/website are not deployed or allowlisted and same-account data flow is unproven. | AI-01a4 owner-approved hosted redirect/website deployment plus live proof. |
+| P0 | Processing | Hosted schema, jobs migrations, cron wake, and the `v1-process-screenshot` Edge function are applied and ACTIVE (verified 2026-08-11), but no live no-browser capture→classification run has been observed. | AI-01c live no-browser proof. |
+| P0 | Identity | Native email/PKCE and the deployed website share the permanent-email identity under D16's fresh-library policy, but same-account data flow has not been proven with a live account. | AI-01a live same-account proof. |
 | P1 | Distribution | Bundle id ends in `.app`; build is ad-hoc signed and fails Gatekeeper. | PKG-01a. |
 | P1 | Permissions | Preflight/guidance and capture gating are implemented, but Screen Recording grant and multi-display behavior have no native E2E evidence. | CAP-01/UX-01 manual QA. |
 | P1 | Retrieval | Current search is lexical; embedding column is not used by the client path. | RET-01a. |
