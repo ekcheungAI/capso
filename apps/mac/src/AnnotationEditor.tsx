@@ -325,9 +325,15 @@ function Editor({
   return (
     <main className="annotation-shell">
       <header className="annotation-toolbar">
-        <div className="annotation-brand" aria-label="Capso annotation editor">
-          <span aria-hidden="true" />
-          <strong>Annotate</strong>
+        {/* titleBarStyle "Overlay" leaves no titlebar to grab. Only this
+            non-interactive brand block drags, so the tool buttons keep working. */}
+        <div
+          className="annotation-brand"
+          aria-label="Capso annotation editor"
+          data-tauri-drag-region
+        >
+          <span aria-hidden="true" data-tauri-drag-region />
+          <strong data-tauri-drag-region>Annotate</strong>
         </div>
         <div className="annotation-tools" role="toolbar" aria-label="Annotation tools">
           {(["arrow", "box", "text", "blur"] as Tool[]).map((candidate) => (

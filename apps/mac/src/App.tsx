@@ -558,11 +558,13 @@ function App() {
 
   return (
     <main className="popover">
-      <header className="popover-header">
-        <div>
-          <p className="eyebrow">Capso</p>
-          <h1>Capture on this Mac</h1>
-          <p className="header-copy">
+      {/* The window uses titleBarStyle "Overlay", so macOS draws no titlebar to
+          grab. Without an explicit drag region the window cannot be moved. */}
+      <header className="popover-header" data-tauri-drag-region>
+        <div data-tauri-drag-region>
+          <p className="eyebrow" data-tauri-drag-region>Capso</p>
+          <h1 data-tauri-drag-region>Capture on this Mac</h1>
+          <p className="header-copy" data-tauri-drag-region>
             Start with a shortcut. Captures stay local unless cloud sync is
             connected.
           </p>
@@ -570,6 +572,7 @@ function App() {
         <span
           className="status-pill"
           data-ready={screenRecordingGranted}
+          data-tauri-drag-region
         >
           {screenRecordingGranted ? "All modes ready" : "Area ready"}
         </span>
