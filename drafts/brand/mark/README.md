@@ -28,6 +28,18 @@ bash drafts/brand/mark/install.sh --apply
 with knocked-out eyes. That direction was dropped: there is no character in this
 brand. Nothing in the build reads them.
 
+Still true after 2026-08-12, when the illustration ban was lifted. The brand now
+ships generated still-life art (`drafts/brand/art/`), but a character was
+considered again and declined again. These two files stay superseded.
+
+## The other build chain
+
+`drafts/brand/art/` holds the generated art programme — masters, manifest and
+`build_art.py`. It is a sibling of this directory, not a part of it: the two have
+separate `install.sh` scripts on purpose, so rebuilding art can never clobber
+icons. The 24-grid glyph sources under `art/glyphs/` are compiled into components
+by `scripts/gen-tokens.mjs`, the same way `capso-lid.svg` becomes `mark.generated.tsx`.
+
 ## Why the plate is bone and the mark is ink
 
 There is no accent colour in this brand, so the plate had to be one of the two

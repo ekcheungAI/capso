@@ -50,6 +50,18 @@
     "sand": "#f6ede2",
     "muted": "#6a5241"
   },
+  "illustration": {
+    "$note": "Guardrails for generated raster art (D17, 2026-08-12). No new hues — ground/ground-alt/ink alias the marketing values. Raster cannot be tokenised into CSS, so the real content here is the ceilings, which drafts/brand/art/build_art.py asserts against every shipped asset. This block is deliberately invisible to css(): it reaches tokens.generated.json only. Units: OKLCH chroma and OKLab distance, both x100.",
+    "ground": "#f6ede2",
+    "ground-alt": "#ebdbcc",
+    "ink": "#311b0f",
+    "maxChroma": 12,
+    "maxMeanChroma": 4,
+    "groundDeltaE": 6,
+    "sampleMinChroma": 10,
+    "sampleMinGroundDeltaE": 3,
+    "$calibration": "Measured against the real palette: sand 1.8, clay 2.7, espresso 4.1, royalblue 18.8, magenta 32.2. maxChroma 12 leaves headroom above espresso for photographic shadow and highlight while still rejecting any actual hue — 22 was the first draft and would have passed royalblue, which defeats the point. Sample screenshots are checked the OTHER way: they must have a brand colour of their OWN (p99 >= sampleMinChroma) rather than merely sit far from bone, because a light SaaS UI is only dE 2.9 from bone and a distance gate would have forced every sample dark or heavily tinted — less believable, which is the one thing a sample cannot afford to be."
+  },
   "motion": {
     "ease-out-strong": "cubic-bezier(0.23, 1, 0.32, 1)",
     "ease-in-out-strong": "cubic-bezier(0.77, 0, 0.175, 1)",

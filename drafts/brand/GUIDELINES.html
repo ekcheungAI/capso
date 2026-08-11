@@ -237,7 +237,9 @@ failure. On a dark ground use the same file inverted; it is a silhouette, not a 
 </div></div>
 <p class="cap">The mark carries life through state, never a face. These map one-to-one onto the four
 states already in <code>capture.tsx:268-275</code>. There is no character in this brand and there
-should not be one.</p>
+should not be one. <b>Amended 2026-08-12:</b> the brand does now ship generated art — still-life
+photography of capsules in decks and trays — but that is imagery, not a character. Objects in
+order, zero characters, exactly as the reference boards always were.</p>
 </section>
 
 <hr/>
@@ -469,7 +471,7 @@ inferred, the rule is broken and the signal is worth nothing.</p>
 <h2>Motion</h2>
 <p>No animation dependency — all of it is CSS on opacity and transform. The table below is
 <strong>parsed from <code>globals.css</code> at build time</strong>, not retyped, so it cannot drift
-from what ships. 11 keyframes, in declaration order.</p>
+from what ships. 14 keyframes, in declaration order.</p>
 
 <div class="change">
   <p><strong>One rule decides most of this: the material is rigid.</strong> A coffee capsule is
@@ -481,7 +483,7 @@ from what ships. 11 keyframes, in declaration order.</p>
 
 <table style="margin-top:20px">
 <tr><th>Selector</th><th>Moment</th><th>Declaration</th><th>Runs</th><th>Note</th></tr>
-<tr><td><code>.capso-overlay</code></td><td><b>The capture overlay arrives</b></td><td><code>capso-overlay-in var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">from the Capture button, not fading in place</td></tr><tr><td><code>.capso-pop</code></td><td><b>⌘K palette</b></td><td><code>capso-pop-in var(--dur-pop) var(--ease-out-strong)</code></td><td>once</td><td class="why">no travel — keyboard-driven, hit many times a day</td></tr><tr><td><code>.capso-fade</code></td><td><b>Small state swaps</b></td><td><code>capso-fade-in var(--dur-pop) ease-out</code></td><td>once</td><td class="why">opacity only</td></tr><tr><td><code>.capso-reading</code></td><td><b>Capso is reading a capture</b></td><td><code>capso-reading 1.6s ease-in-out infinite</code></td><td><span class='loop'>loops</span></td><td class="why">the only looping <em>brand</em> motion</td></tr><tr><td><code>.capso-skeleton</code></td><td><b>Content placeholder</b></td><td><code>capso-shimmer 1.6s linear infinite</code></td><td><span class='loop'>loops</span></td><td class="why">functional loop — not brand</td></tr><tr><td><code>.capso-toast</code></td><td><b>A toast</b></td><td><code>capso-toast-in var(--dur-pop) var(--ease-out-strong)</code></td><td>once</td><td class="why">an 8px rise</td></tr><tr><td><code>.capso-seat</code></td><td><b>Confirm — the capsule seats</b></td><td><code>capso-seat var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">dips and returns; the satisfaction is the deceleration</td></tr><tr><td><code>.capso-arrive</code></td><td><b>A capture lands in the grid</b></td><td><code>capso-arrive var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">the most frequent moment in the product</td></tr><tr><td><code>.capso-crimp::after</code></td><td><b>The seal</b></td><td><code>capso-crimp var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">inset ring, one tighten, no rebound</td></tr><tr><td><code>[data-crimp] .capso-rack</code></td><td><b>A capsule drops into a rack slot</b></td><td><code>capso-slot-crimp var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">the slot acknowledges</td></tr><tr><td><code>.capso-progress::after</code></td><td><b>In-flight capture, on the thumbnail edge</b></td><td><code>capso-progress-sweep 1.1s var(--ease-in-out-strong) infinite</code></td><td><span class='loop'>loops</span></td><td class="why">functional loop — not brand</td></tr>
+<tr><td><code>.capso-overlay</code></td><td><b>The capture overlay arrives</b></td><td><code>capso-overlay-in var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">from the Capture button, not fading in place</td></tr><tr><td><code>.capso-panel</code></td><td><b>—</b></td><td><code>capso-panel-in var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why"></td></tr><tr><td><code>.capso-pop</code></td><td><b>⌘K palette</b></td><td><code>capso-pop-in var(--dur-pop) var(--ease-out-strong)</code></td><td>once</td><td class="why">no travel — keyboard-driven, hit many times a day</td></tr><tr><td><code>.capso-fade</code></td><td><b>Small state swaps</b></td><td><code>capso-fade-in var(--dur-pop) ease-out</code></td><td>once</td><td class="why">opacity only</td></tr><tr><td><code>.capso-reading</code></td><td><b>Capso is reading a capture</b></td><td><code>capso-reading 1.6s ease-in-out infinite</code></td><td><span class='loop'>loops</span></td><td class="why">the only looping <em>brand</em> motion</td></tr><tr><td><code>.capso-skeleton</code></td><td><b>Content placeholder</b></td><td><code>capso-shimmer 1.6s linear infinite</code></td><td><span class='loop'>loops</span></td><td class="why">functional loop — not brand</td></tr><tr><td><code>.capso-toast</code></td><td><b>A toast</b></td><td><code>capso-toast-in var(--dur-pop) var(--ease-out-strong)</code></td><td>once</td><td class="why">an 8px rise</td></tr><tr><td><code>.capso-seat</code></td><td><b>Confirm — the capsule seats</b></td><td><code>capso-seat var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">dips and returns; the satisfaction is the deceleration</td></tr><tr><td><code>.capso-arrive</code></td><td><b>A capture lands in the grid</b></td><td><code>capso-arrive var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">the most frequent moment in the product</td></tr><tr><td><code>.capso-crimp::after</code></td><td><b>The seal</b></td><td><code>capso-crimp var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">inset ring, one tighten, no rebound</td></tr><tr><td><code>[data-crimp] .capso-rack</code></td><td><b>A capsule drops into a rack slot</b></td><td><code>capso-slot-crimp var(--dur-panel) var(--ease-out-strong)</code></td><td>once</td><td class="why">the slot acknowledges</td></tr><tr><td><code>.capso-tile-decision</code></td><td><b>—</b></td><td><code>capso-tile-decision-in var(--dur-pop) var(--ease-out-strong) both</code></td><td>once</td><td class="why"></td></tr><tr><td><code>.capso-selected-seal</code></td><td><b>—</b></td><td><code>capso-selected-seal var(--dur-pop) var(--ease-out-strong)</code></td><td>once</td><td class="why"></td></tr><tr><td><code>.capso-progress::after</code></td><td><b>In-flight capture, on the thumbnail edge</b></td><td><code>capso-progress-sweep 1.1s var(--ease-in-out-strong) infinite</code></td><td><span class='loop'>loops</span></td><td class="why">functional loop — not brand</td></tr>
 </table>
 
 <h4 style="margin-top:32px">The looping rule, stated precisely</h4>
@@ -526,7 +528,7 @@ override to full. Any future loop needs the same treatment; assume the global ru
     <li>Give every resurfaced capture a stated reason</li>
   </ul></div>
   <div><h4>Don't</h4><ul>
-    <li>No mascot, no face, no eyes. Ever</li>
+    <li>No mascot, no face, no eyes. Ever — generated art included (2026-08-12)</li>
     <li>No accent colour on buttons — buttons are ink</li>
     <li>Never use intent colours as text, only as dots</li>
     <li>No gradients, no glow, no sparkles for AI — the mark is the signal</li>

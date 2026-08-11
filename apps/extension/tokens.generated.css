@@ -18,6 +18,10 @@
   --intent-marketing-hook: #6a5ba8;
   --intent-content-idea: #3e7a75;
   --intent-ux-bug: #a8465c;
+  --marketing-clay: #ebdbcc;
+  --marketing-espresso: #311b0f;
+  --marketing-sand: #f6ede2;
+  --marketing-muted: #6a5241;
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
   --dur-press: 120ms;
@@ -28,6 +32,7 @@
   --radius-panel: 16px;
   --radius-pill: 999px;
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  --font-display: Fraunces, Georgia, serif;
   --font-mono: ui-monospace, Menlo, monospace;
 }
 

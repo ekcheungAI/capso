@@ -345,7 +345,9 @@ failure. On a dark ground use the same file inverted; it is a silhouette, not a 
 </div></div>
 <p class="cap">The mark carries life through state, never a face. These map one-to-one onto the four
 states already in <code>capture.tsx:268-275</code>. There is no character in this brand and there
-should not be one.</p>
+should not be one. <b>Amended 2026-08-12:</b> the brand does now ship generated art — still-life
+photography of capsules in decks and trays — but that is imagery, not a character. Objects in
+order, zero characters, exactly as the reference boards always were.</p>
 </section>
 
 <hr/>
@@ -580,7 +582,7 @@ override to full. Any future loop needs the same treatment; assume the global ru
     <li>Give every resurfaced capture a stated reason</li>
   </ul></div>
   <div><h4>Don't</h4><ul>
-    <li>No mascot, no face, no eyes. Ever</li>
+    <li>No mascot, no face, no eyes. Ever — generated art included (2026-08-12)</li>
     <li>No accent colour on buttons — buttons are ink</li>
     <li>Never use intent colours as text, only as dots</li>
     <li>No gradients, no glow, no sparkles for AI — the mark is the signal</li>
