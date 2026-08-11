@@ -12,8 +12,14 @@ import { expect, test, type Page } from "@playwright/test";
  * directly. That is also why these tests can navigate straight to "/".
  */
 
-const onePixelPng =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+8xwAAAAASUVORK5CYII=";
+/**
+ * Note for anyone adding a capture test: do NOT reuse review-ready.spec.ts's
+ * `onePixelPng`. That fixture is only ever written straight into IndexedDB as a
+ * stored `imageDataUrl`, so nothing decodes it — and `createImageBitmap` rejects
+ * it outright with "the source image could not be decoded". Capture runs every
+ * file through `downscale`, which decodes, so it needs an image that really is
+ * one. `paste()` below paints a real PNG in-page instead.
+ */
 
 /**
  * Inverse of review-ready.spec.ts's seedReviewLibrary. Reached via /extension for
@@ -33,20 +39,23 @@ async function clearLibrary(page: Page) {
   });
 }
 
-/**
- * A real ClipboardEvent, not an Event with `clipboardData` assigned onto it.
- * The handler in capture.tsx reads `e.clipboardData.items`, and only a genuine
- * ClipboardEvent constructed with a DataTransfer populates that — the assigned
- * plain-Event version dispatches happily and delivers an empty item list, so the
- * test passed the dispatch and then timed out waiting for a capture.
- */
+/** Paste a real, decodable image the way a user would. */
 async function paste(page: Page) {
-  await page.evaluate(async (dataUrl) => {
-    const blob = await (await fetch(dataUrl)).blob();
+  await page.evaluate(async () => {
+    const c = document.createElement("canvas");
+    c.width = 240;
+    c.height = 160;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#3355aa";
+    ctx.fillRect(0, 0, 240, 160);
+    const blob = await new Promise<Blob>((resolve) => c.toBlob((b) => resolve(b!), "image/png"));
+
     const data = new DataTransfer();
     data.items.add(new File([blob], "capture.png", { type: "image/png" }));
+    // A genuine ClipboardEvent: capture.tsx reads `e.clipboardData.items`, and
+    // only the real constructor populates that.
     window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
-  }, onePixelPng);
+  });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -145,6 +154,9 @@ test("every first-run control clears 44px at 390px wide", async ({ page }) => {
   // The role cards carried no minimum height before this change.
   await page.setViewportSize({ width: 390, height: 780 });
   await page.goto("/");
+  // count() does not auto-wait, so this has to gate on something that does or it
+  // measures an unhydrated page and finds nothing.
+  await expect(page.getByRole("heading", { name: /what kind of work/i })).toBeVisible();
 
   const buttons = page.locator("main button");
   const count = await buttons.count();
