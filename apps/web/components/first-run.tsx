@@ -49,10 +49,15 @@ export function FirstRun() {
             className="group min-h-11 overflow-hidden rounded-xl bg-surface text-left ring-1 ring-line transition-[box-shadow,transform] duration-[120ms] ease-out hover:-translate-y-0.5 hover:ring-accent disabled:opacity-50"
           >
             {ROLE_ART[role.id] && (
+              // aspect-[2/1], not a fixed short strip. The first cut used h-28,
+              // which crops a 3:2 frame to about 3.4:1 — and because the art is
+              // composed with deliberate negative space, that centre crop landed
+              // on empty paper and the cards looked blank. The subject sits
+              // roughly centred in all four, so 2:1 keeps it.
               <Art
                 name={ROLE_ART[role.id]}
-                sizes="(min-width: 640px) 340px, 100vw"
-                className="h-28 w-full object-cover"
+                sizes="(min-width: 640px) 380px, 100vw"
+                className="aspect-[2/1] w-full object-cover"
               />
             )}
             <div className="p-4">
