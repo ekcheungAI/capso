@@ -8,8 +8,10 @@ mod history;
 mod ingest;
 mod latency;
 mod overlay;
+mod pin;
 mod queue;
 mod retry;
+mod self_timer;
 mod shortcuts;
 mod sync;
 mod system;
@@ -20,7 +22,7 @@ use std::{
     path::PathBuf,
     sync::{Mutex, MutexGuard},
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{IconMenuItemBuilder, Menu, MenuBuilder, MenuItem, SubmenuBuilder},
@@ -471,6 +473,110 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
     });
 }
 
+fn launch_region_self_timer(app: AppHandle) {
+    let outcome = match app.state::<Mutex<self_timer::RegionTimerRuntime>>().lock() {
+        Ok(mut runtime) => runtime.start(),
+        Err(_) => return,
+    };
+    let status = match outcome {
+        self_timer::StartOutcome::Started(status) => status,
+        self_timer::StartOutcome::AlreadyRunning(status) => {
+            if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
+                let _ = window.show();
+            }
+            let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_tooltip(Some("Capso — a 5-second area timer is already running"));
+            }
+            return;
+        }
+    };
+
+    if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
+        let _ = window.show();
+    }
+    let _ = app.emit_to(
+        self_timer::TIMER_LABEL,
+        "region-timer-changed",
+        status.clone(),
+    );
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(
+            "Capso — area capture starts in 5 seconds; Cancel is available",
+        ));
+    }
+
+    let generation = status.generation;
+    let _timer_task = tauri::async_runtime::spawn_blocking(move || {
+        for seconds_remaining in (1..self_timer::TIMER_SECONDS).rev() {
+            thread::sleep(Duration::from_secs(1));
+            let status = app
+                .state::<Mutex<self_timer::RegionTimerRuntime>>()
+                .lock()
+                .ok()
+                .and_then(|mut runtime| runtime.tick(generation, seconds_remaining));
+            let Some(status) = status else {
+                return;
+            };
+            let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+        }
+
+        thread::sleep(Duration::from_secs(1));
+        let should_capture = app
+            .state::<Mutex<self_timer::RegionTimerRuntime>>()
+            .lock()
+            .map(|mut runtime| runtime.finish(generation))
+            .unwrap_or(false);
+        if !should_capture {
+            return;
+        }
+        if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
+            let _ = window.hide();
+        }
+        launch_capture(app, shortcuts::CaptureAction::Region);
+    });
+}
+
+#[tauri::command]
+fn get_region_self_timer_status(
+    state: State<'_, Mutex<self_timer::RegionTimerRuntime>>,
+) -> Result<self_timer::RegionTimerStatus, String> {
+    state
+        .lock()
+        .map(|runtime| runtime.status())
+        .map_err(|_| "The area capture timer is temporarily unavailable.".to_string())
+}
+
+#[tauri::command]
+fn cancel_region_self_timer(
+    app: AppHandle,
+    state: State<'_, Mutex<self_timer::RegionTimerRuntime>>,
+) -> Result<bool, String> {
+    let cancelled = state
+        .lock()
+        .map_err(|_| "The area capture timer is temporarily unavailable.".to_string())?
+        .cancel();
+    let Some(status) = cancelled else {
+        return Ok(false);
+    };
+
+    let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+    if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
+        let _ = window.hide();
+    }
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some("Capso — area capture timer cancelled"));
+    }
+    Ok(true)
+}
+
+fn cancel_region_self_timer_from_window(app: &AppHandle) {
+    let state = app.state::<Mutex<self_timer::RegionTimerRuntime>>();
+    if let Ok(mut runtime) = state.lock() {
+        let _ = runtime.cancel();
+    };
+}
+
 fn show_permission_guidance(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -594,7 +700,7 @@ fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
     }
     if status.summary.failed > 0 {
         return Some(format!(
-            "{} {} need manual retry",
+            "{} {} could not sync — originals stay local",
             status.summary.failed,
             if status.summary.failed == 1 {
                 "capture"
@@ -606,11 +712,13 @@ fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
     let queued = status.summary.queued();
     (queued > 0).then(|| {
         format!(
-            "{queued} {} saved locally — sync pending",
+            "{queued} {} saved locally — choose Retry Sync Now",
             if queued == 1 { "capture" } else { "captures" }
         )
     })
 }
+
+const RETRY_UPLOADS_MENU_ID: &str = "retry-uploads";
 
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
@@ -632,6 +740,10 @@ fn build_tray_menu<R: Runtime>(
         };
         menu_builder = menu_builder.text(definition.menu_id, label);
     }
+    menu_builder = menu_builder.text(
+        shortcuts::CAPTURE_REGION_TIMER_MENU_ID,
+        "Capture Region in 5 Seconds",
+    );
 
     let mut recent_builder = SubmenuBuilder::with_id(app, "recent-captures", "Recent Captures");
     match history::recent_menu_entries_for_app(app) {
@@ -707,6 +819,19 @@ fn build_tray_menu<R: Runtime>(
     if let Some(label) = queue_menu_label(queue_status) {
         let queue_item = MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
         menu_builder = menu_builder.item(&queue_item);
+        let retryable = queue_status.summary.pending
+            + queue_status.summary.uploading
+            + queue_status.summary.retrying;
+        if retryable > 0 {
+            let retry_item = MenuItem::with_id(
+                app,
+                RETRY_UPLOADS_MENU_ID,
+                "Retry Sync Now",
+                true,
+                None::<&str>,
+            )?;
+            menu_builder = menu_builder.item(&retry_item);
+        }
     }
 
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
@@ -900,9 +1025,20 @@ fn open_login_item_settings() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // This must remain the first plugin. A second Capso process can otherwise
+        // compete for the same global shortcuts and make a healthy binding appear
+        // inert depending on which bundle launched first.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
         .manage(Mutex::new(system::PermissionRuntime::default()))
+        .manage(Mutex::new(self_timer::RegionTimerRuntime::default()))
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
+        .manage(Mutex::new(pin::PinRuntime::default()))
         .manage(Mutex::new(annotation::AnnotationRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
@@ -947,6 +1083,8 @@ pub fn run() {
             open_screen_recording_settings,
             set_launch_at_login_enabled,
             open_login_item_settings,
+            get_region_self_timer_status,
+            cancel_region_self_timer,
             get_auth_status,
             request_sign_in_email,
             sign_out,
@@ -957,6 +1095,11 @@ pub fn run() {
             overlay::overlay_save_capture,
             overlay::overlay_start_drag,
             overlay::overlay_dismiss,
+            pin::pin_overlay_capture,
+            pin::get_pin_capture,
+            pin::pin_image_ready,
+            pin::copy_pin_capture,
+            pin::close_pin_capture,
             annotation::open_annotation_editor,
             annotation::get_annotation_capture,
             annotation::cancel_annotation_editor,
@@ -1048,7 +1191,10 @@ pub fn run() {
                 // Left click toggles the popover; the menu stays on right click.
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| {
-                    if let Some(action) = shortcuts::action_for_menu_id(event.id().as_ref()) {
+                    if event.id() == shortcuts::CAPTURE_REGION_TIMER_MENU_ID {
+                        launch_region_self_timer(app.clone());
+                    } else if let Some(action) = shortcuts::action_for_menu_id(event.id().as_ref())
+                    {
                         launch_capture(app.clone(), action);
                     } else if event.id() == history::OPEN_LIBRARY_MENU_ID {
                         if let Err(error) = history::open_library() {
@@ -1066,6 +1212,8 @@ pub fn run() {
                                 )));
                             }
                         }
+                    } else if event.id() == RETRY_UPLOADS_MENU_ID {
+                        spawn_background_sync(app.clone(), drain::DrainWake::RetryDeadline);
                     } else if event.id() == "quit" {
                         app.exit(0);
                     }
@@ -1095,6 +1243,18 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Closing the popover hides it — the app lives in the menu bar.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == self_timer::TIMER_LABEL {
+                    api.prevent_close();
+                    cancel_region_self_timer_from_window(window.app_handle());
+                    let _ = window.hide();
+                    return;
+                }
+                if window.label() == pin::PIN_LABEL {
+                    api.prevent_close();
+                    pin::clear_from_window_close(window.app_handle());
+                    let _ = window.hide();
+                    return;
+                }
                 api.prevent_close();
                 if window.label() == annotation::ANNOTATION_LABEL {
                     if annotation::cancel_from_window_close(window.app_handle()) {
@@ -1315,7 +1475,7 @@ mod tests {
         };
         assert_eq!(
             super::queue_menu_label(&one).as_deref(),
-            Some("1 capture saved locally — sync pending")
+            Some("1 capture saved locally — choose Retry Sync Now")
         );
 
         let failed = queue::QueueRuntimeStatus {
@@ -1328,7 +1488,7 @@ mod tests {
         };
         assert_eq!(
             super::queue_menu_label(&failed).as_deref(),
-            Some("2 captures need manual retry")
+            Some("2 captures could not sync — originals stay local")
         );
     }
 

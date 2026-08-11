@@ -317,7 +317,7 @@ function Editor({
   }
 
   const guidance = tool === "blur"
-    ? "Pixelate destroys detail before upload — it is baked into the PNG."
+    ? "Pixelate destroys detail before upload - it is baked into the PNG."
     : selected !== null
       ? "Drag to move · Delete removes · Escape deselects"
       : "Drag to draw · Drag a mark to move · ⌘Z to undo";

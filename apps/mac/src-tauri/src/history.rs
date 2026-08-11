@@ -9,7 +9,7 @@ use std::{
 use tauri::{AppHandle, Manager, Runtime};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-const RECENT_CAPTURE_LIMIT: usize = 5;
+const RECENT_CAPTURE_LIMIT: usize = 8;
 const RECENT_MENU_PREFIX: &str = "recent-capture:";
 const MENU_THUMBNAIL_WIDTH: u32 = 48;
 const MENU_THUMBNAIL_HEIGHT: u32 = 32;
@@ -132,7 +132,7 @@ fn ordered_newest(mut captures: Vec<RecentCapture>) -> Vec<RecentCapture> {
 }
 
 #[cfg(test)]
-fn newest_five(captures: Vec<RecentCapture>) -> Vec<RecentCapture> {
+fn newest_recent(captures: Vec<RecentCapture>) -> Vec<RecentCapture> {
     ordered_newest(captures)
         .into_iter()
         .take(RECENT_CAPTURE_LIMIT)
@@ -266,9 +266,9 @@ pub(crate) fn open_library() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        newest_five, open_library_with, parse_recent_menu_id, recent_capture_label, recent_menu_id,
-        resolve_recent_capture, scan_recent_captures, scan_recent_menu_entries, RecentCapture,
-        LIBRARY_URL, PNG_SIGNATURE,
+        newest_recent, open_library_with, parse_recent_menu_id, recent_capture_label,
+        recent_menu_id, resolve_recent_capture, scan_recent_captures, scan_recent_menu_entries,
+        RecentCapture, LIBRARY_URL, PNG_SIGNATURE,
     };
     use image::{Rgba, RgbaImage};
     use std::{cell::RefCell, collections::HashMap, fs, path::Path, time::SystemTime};
@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn newest_five_are_deterministic_and_limited() {
+    fn newest_eight_are_deterministic_and_limited() {
         let ids = [
             "018f22c4-cada-7c6b-9d5b-fc35f7f92270",
             "018f22c4-cada-7c6b-9d5b-fc35f7f92271",
@@ -304,6 +304,9 @@ mod tests {
             "018f22c4-cada-7c6b-9d5b-fc35f7f92274",
             "018f22c4-cada-7c6b-9d5b-fc35f7f92275",
             "018f22c4-cada-7c6b-9d5b-fc35f7f92276",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92277",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92278",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
         ];
         let unordered = vec![
             recent(ids[0], 100),
@@ -313,17 +316,20 @@ mod tests {
             recent(ids[5], 600),
             recent(ids[2], 300),
             recent(ids[4], 500),
+            recent(ids[7], 700),
+            recent(ids[8], 800),
+            recent(ids[9], 900),
         ];
 
-        let selected = newest_five(unordered);
+        let selected = newest_recent(unordered);
 
-        assert_eq!(selected.len(), 5);
+        assert_eq!(selected.len(), 8);
         assert_eq!(
             selected
                 .iter()
                 .map(|item| item.id.as_str())
                 .collect::<Vec<_>>(),
-            vec![ids[5], ids[4], ids[6], ids[3], ids[2]]
+            vec![ids[9], ids[8], ids[7], ids[5], ids[4], ids[6], ids[3], ids[2]]
         );
     }
 

@@ -465,6 +465,17 @@ fn current_capture_path(
         .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
 }
 
+pub(crate) fn current_capture_for_action(
+    state: &Mutex<OverlayRuntime>,
+    path: &str,
+    presentation_id: u64,
+) -> Result<PathBuf, String> {
+    let runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    current_capture_path(&runtime, path, presentation_id)
+}
+
 pub(crate) fn annotation_candidate(
     runtime: &OverlayRuntime,
     path: &str,

@@ -35,6 +35,11 @@ type OverlayDragStarted = {
   bytes: number;
 };
 
+type PinCaptureResult = {
+  path: string;
+  presentationId: number;
+};
+
 type OverlayDragEnded = {
   path: string;
   presentationId: number;
@@ -89,6 +94,15 @@ function SaveIcon() {
       <path d="M10 3.5v8" />
       <path d="m6.75 8.75 3.25 3.25 3.25-3.25" />
       <path d="M4 13.5v1A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5v-1" />
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M7 4h6l-1 4 2.5 2.5v1H5.5v-1L8 8 7 4Z" />
+      <path d="M10 11.5V17" />
     </svg>
   );
 }
@@ -366,6 +380,27 @@ export default function CaptureOverlay() {
     }
   }
 
+  async function pinCapture() {
+    if (!nativeRuntime || !capture?.path || imageFailed) return;
+    const path = capture.path;
+    const presentationId = capture.presentationId;
+    const action = actionCoordinator.current?.begin(path, "pin");
+    if (!action) return;
+    setBusyAction("pin");
+    setNoticeIsWarning(false);
+    try {
+      await invoke<PinCaptureResult>("pin_overlay_capture", { path, presentationId });
+      if (actionCoordinator.current?.isCurrent(action)) setNotice("Pinned above your work");
+    } catch (error) {
+      if (actionCoordinator.current?.isCurrent(action)) {
+        setNotice(`Pin failed: ${String(error)}`);
+        setNoticeIsWarning(true);
+      }
+    } finally {
+      if (actionCoordinator.current?.finish(action)) setBusyAction(null);
+    }
+  }
+
   async function startDragCapture() {
     if (!nativeRuntime || !capture?.path || !imageReady || imageFailed) return;
     const path = capture.path;
@@ -495,6 +530,17 @@ export default function CaptureOverlay() {
           </small>
         </span>
         <span className="capture-overlay__actions" role="toolbar" aria-label="Capture actions">
+          <button
+            type="button"
+            className="capture-overlay__action"
+            aria-label="Pin capture"
+            title="Pin above your work"
+            data-busy={busyAction === "pin"}
+            disabled={busyAction !== null || imageFailed}
+            onClick={() => void pinCapture()}
+          >
+            <PinIcon />
+          </button>
           <button
             type="button"
             className="capture-overlay__action"

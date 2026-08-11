@@ -54,6 +54,8 @@ const CAPTURE_SHORTCUTS: [CaptureShortcut; 3] = [
     },
 ];
 
+pub(crate) const CAPTURE_REGION_TIMER_MENU_ID: &str = "capture-region-timer";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ShortcutSettings {
@@ -304,6 +306,9 @@ pub(crate) fn action_for_event(
 }
 
 pub(crate) fn action_for_menu_id(id: &str) -> Option<CaptureAction> {
+    if id == CAPTURE_REGION_TIMER_MENU_ID {
+        return Some(CaptureAction::Region);
+    }
     definitions()
         .iter()
         .find(|definition| definition.menu_id == id)
@@ -633,6 +638,10 @@ mod tests {
         assert_eq!(
             action_for_menu_id("capture-fullscreen"),
             Some(CaptureAction::Fullscreen)
+        );
+        assert_eq!(
+            action_for_menu_id("capture-region-timer"),
+            Some(CaptureAction::Region)
         );
         assert_eq!(action_for_menu_id("quit"), None);
     }

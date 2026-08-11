@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
@@ -20,6 +21,7 @@ type ShortcutSettings = {
 };
 
 type CaptureAction = keyof ShortcutSettings;
+type SettingsSection = "capture" | "sync" | "system";
 
 type ShortcutConflict = {
   action: CaptureAction;
@@ -103,6 +105,8 @@ const MODIFIER_CODES = new Set([
   "ShiftRight",
 ]);
 
+const SETTINGS_SECTIONS: SettingsSection[] = ["capture", "sync", "system"];
+
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
 }
@@ -150,6 +154,9 @@ function sameSettings(left: ShortcutSettings, right: ShortcutSettings) {
 }
 
 function App() {
+  const [activeSection, setActiveSection] =
+    useState<SettingsSection>("capture");
+  const screenRecordingButtonRef = useRef<HTMLButtonElement>(null);
   const [settings, setSettings] = useState(DEFAULT_SHORTCUTS);
   const [savedSettings, setSavedSettings] = useState(DEFAULT_SHORTCUTS);
   const [conflicts, setConflicts] = useState<ShortcutConflict[]>([]);
@@ -157,7 +164,7 @@ function App() {
   const [notice, setNotice] = useState(() =>
     isTauriRuntime()
       ? "Loading shortcuts…"
-      : "Preview mode — changes activate in the installed app.",
+      : "Preview mode - changes activate in the installed app.",
   );
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -166,7 +173,7 @@ function App() {
   const [systemNotice, setSystemNotice] = useState(() =>
     isTauriRuntime()
       ? "Checking macOS access…"
-      : "Preview mode — system controls activate in the installed app.",
+      : "Preview mode - system controls activate in the installed app.",
   );
   const [systemNoticeIsError, setSystemNoticeIsError] = useState(
     () => !isTauriRuntime(),
@@ -183,7 +190,7 @@ function App() {
   const [authNotice, setAuthNotice] = useState(() =>
     isTauriRuntime()
       ? "Checking your Capso account…"
-      : "Preview mode — sign-in activates in the installed app.",
+      : "Preview mode - sign-in activates in the installed app.",
   );
   const [authNoticeIsError, setAuthNoticeIsError] = useState(
     () => !isTauriRuntime(),
@@ -222,7 +229,7 @@ function App() {
 
   useEffect(() => {
     if (!nativeRuntime) {
-      setNotice("Preview mode — changes activate in the installed app.");
+      setNotice("Preview mode - changes activate in the installed app.");
       setNoticeIsError(false);
       return;
     }
@@ -491,7 +498,7 @@ function App() {
       setSettings(status.settings);
       setSavedSettings(status.settings);
       setConflicts(status.conflicts);
-      setNotice("Saved. Shortcuts are active globally.");
+      setNotice("Saved. Switch to another app to use your shortcuts.");
       setNoticeIsError(false);
       setNeedsRetry(false);
     } catch (error) {
@@ -518,6 +525,37 @@ function App() {
     setNeedsRetry(true);
   }
 
+  function moveSettingsTab(
+    section: SettingsSection,
+    event: KeyboardEvent<HTMLButtonElement>,
+  ) {
+    const currentIndex = SETTINGS_SECTIONS.indexOf(section);
+    const nextIndex =
+      event.key === "ArrowRight"
+        ? (currentIndex + 1) % SETTINGS_SECTIONS.length
+        : event.key === "ArrowLeft"
+          ? (currentIndex - 1 + SETTINGS_SECTIONS.length) %
+            SETTINGS_SECTIONS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? SETTINGS_SECTIONS.length - 1
+              : null;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    setActiveSection(SETTINGS_SECTIONS[nextIndex]);
+    const tabs = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+      '[role="tab"]',
+    );
+    tabs?.[nextIndex]?.focus();
+  }
+
+  function openSystemPermissions() {
+    setActiveSection("system");
+    requestAnimationFrame(() => screenRecordingButtonRef.current?.focus());
+  }
+
   return (
     <main className="popover">
       <header className="popover-header">
@@ -537,7 +575,44 @@ function App() {
         </span>
       </header>
 
-      <section className="shortcut-section" aria-labelledby="shortcuts-heading">
+      <div className="settings-tabs" role="tablist" aria-label="Capso settings">
+        <button id="capture-tab" type="button" role="tab" aria-controls="capture-panel" aria-selected={activeSection === "capture"} tabIndex={activeSection === "capture" ? 0 : -1} onClick={() => setActiveSection("capture")} onKeyDown={(event) => moveSettingsTab("capture", event)}>Capture</button>
+        <button id="sync-tab" type="button" role="tab" aria-controls="sync-panel" aria-selected={activeSection === "sync"} tabIndex={activeSection === "sync" ? 0 : -1} onClick={() => setActiveSection("sync")} onKeyDown={(event) => moveSettingsTab("sync", event)}>Sync</button>
+        <button id="system-tab" type="button" role="tab" aria-controls="system-panel" aria-selected={activeSection === "system"} tabIndex={activeSection === "system" ? 0 : -1} onClick={() => setActiveSection("system")} onKeyDown={(event) => moveSettingsTab("system", event)}>System</button>
+      </div>
+
+      {activeSection === "capture" && (
+        <div id="capture-panel" role="tabpanel" aria-labelledby="capture-tab" className="settings-panel">
+          {!screenRecordingGranted && (
+            <button type="button" className="permission-bridge" onClick={openSystemPermissions}>
+              <strong>Area works now.</strong>
+              <span>Enable Window &amp; Full Screen</span>
+            </button>
+          )}
+
+          <section className="capability-card" aria-labelledby="quick-access-heading">
+            <div className="section-heading">
+              <h2 id="quick-access-heading">Where to find them</h2>
+              <span>Local tools</span>
+            </div>
+            <div className="capability-grid">
+              <div>
+                <strong>Area capture in 5 seconds</strong>
+                <span>Tray menu</span>
+              </div>
+              <div>
+                <strong>Pin one capture</strong>
+                <span>Pin button in capture preview</span>
+              </div>
+              <div>
+                <strong>Recent captures</strong>
+                <span>Tray menu · last 8 shown</span>
+              </div>
+            </div>
+            <p className="capability-note">Local originals remain on this Mac beyond the tray list.</p>
+          </section>
+
+          <section className="shortcut-section" aria-labelledby="shortcuts-heading">
         <div className="setup-heading">
           <div>
             <h2 id="shortcuts-heading">Keyboard shortcuts</h2>
@@ -558,7 +633,8 @@ function App() {
                 data-recording={recording === action}
                 aria-pressed={recording === action}
                 aria-label={`Change ${label} shortcut`}
-                onClick={() => {
+                onClick={(event) => {
+                  event.currentTarget.focus();
                   setRecording(action);
                   setNotice("Press your new shortcut. Escape cancels.");
                   setNoticeIsError(false);
@@ -588,7 +664,7 @@ function App() {
           <ul className="conflict-list" aria-label="Shortcut conflicts">
             {conflicts.map((conflict) => (
               <li key={conflict.action}>
-                {formatShortcut(conflict.display)} — {conflict.error}
+                {formatShortcut(conflict.display)} - {conflict.error}
               </li>
             ))}
           </ul>
@@ -616,9 +692,13 @@ function App() {
                 : "Save changes"}
           </button>
         </footer>
-      </section>
+          </section>
+        </div>
+      )}
 
-      <section className="system-card" aria-labelledby="system-heading">
+      {activeSection === "system" && (
+        <div id="system-panel" role="tabpanel" aria-labelledby="system-tab" className="settings-panel">
+          <section className="system-card" aria-labelledby="system-heading">
         <div className="section-heading">
           <h2 id="system-heading">Capture permissions</h2>
           <span data-ready={screenRecordingGranted}>
@@ -636,6 +716,7 @@ function App() {
             </span>
           </div>
           <button
+            ref={screenRecordingButtonRef}
             type="button"
             className="compact-button"
             data-granted={screenRecordingGranted}
@@ -666,7 +747,7 @@ function App() {
                   ? "Starts automatically after login"
                   : systemStatus.launchAtLogin === "unavailable"
                     ? "Unavailable outside the installed Mac app"
-                    : "Optional — off until you enable it"}
+                    : "Optional - off until you enable it"}
             </span>
           </div>
           <button
@@ -703,9 +784,13 @@ function App() {
         >
           {systemNotice}
         </div>
-      </section>
+          </section>
+        </div>
+      )}
 
-      <section className="account-card" aria-labelledby="account-heading">
+      {activeSection === "sync" && (
+        <div id="sync-panel" role="tabpanel" aria-labelledby="sync-tab" className="settings-panel">
+          <section className="account-card" aria-labelledby="account-heading">
         <div className="section-heading">
           <h2 id="account-heading">Cloud sync</h2>
           <span
@@ -771,7 +856,9 @@ function App() {
             <span>{accountPresentation.message}</span>
           </div>
         )}
-      </section>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import CaptureOverlay from "./CaptureOverlay";
 import AnnotationEditor from "./AnnotationEditor";
+import PinCapture from "./PinCapture";
+import CaptureTimer from "./CaptureTimer";
 import { color, type Scheme } from "@capso/shared/tokens";
 
 const parameters = new URLSearchParams(window.location.search);
@@ -25,6 +27,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <CaptureOverlay />
     ) : surface === "annotate" ? (
       <AnnotationEditor />
+    ) : surface === "pin" ? (
+      <PinCapture />
+    ) : surface === "timer" ? (
+      <CaptureTimer />
     ) : (
       <App />
     )}

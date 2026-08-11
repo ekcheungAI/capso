@@ -17,6 +17,16 @@ pub(crate) enum ClipboardStatus {
     Failed { code: &'static str, message: String },
 }
 
+impl ClipboardStatus {
+    pub(crate) fn user_message(&self) -> String {
+        match self {
+            Self::Copied { .. } => "Copied to clipboard".into(),
+            Self::Unchanged => "The clipboard was left unchanged.".into(),
+            Self::Failed { message, .. } => message.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum RestoredCapturePublicationError<E> {
     Clipboard(ClipboardStatus),
@@ -344,6 +354,74 @@ pub(crate) async fn recopy_current_capture_to_general_pasteboard(
         }
     };
     copy_registered_png_to_general_pasteboard(app, ticket).await
+}
+
+/// Schedules the AppKit mutation but does not hold the invoking webview open
+/// while macOS services the main-thread pasteboard write. Completion is
+/// delivered by the caller, which keeps secondary always-on-top surfaces from
+/// getting stuck in a permanently busy state.
+pub(crate) async fn schedule_recopy_current_capture_to_general_pasteboard<F>(
+    app: AppHandle,
+    path: PathBuf,
+    on_complete: F,
+) -> Result<(), ClipboardStatus>
+where
+    F: FnOnce(ClipboardStatus) + Send + 'static,
+{
+    let ticket = match app.state::<Mutex<ClipboardRuntime>>().lock() {
+        Ok(runtime) => runtime.ticket_for_current(&path)?,
+        Err(_) => {
+            return Err(clipboard_failure(
+                "clipboard_state_failed",
+                "The clipboard state is temporarily unavailable.",
+            ))
+        }
+    };
+    let payload = match tauri::async_runtime::spawn_blocking(move || read_png_payload(&path)).await
+    {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(status)) => return Err(status),
+        Err(error) => {
+            return Err(clipboard_failure(
+                "clipboard_read_task_failed",
+                format!("Could not prepare the saved capture for copying: {error}"),
+            ))
+        }
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let commit_app = app.clone();
+        app.run_on_main_thread(move || {
+            let status = match commit_app.state::<Mutex<ClipboardRuntime>>().lock() {
+                Ok(runtime) => {
+                    let mut writer = MacClipboard;
+                    commit_registered_payload(&runtime, &ticket, &payload, &mut writer)
+                }
+                Err(_) => clipboard_failure(
+                    "clipboard_state_failed",
+                    "The clipboard state is temporarily unavailable.",
+                ),
+            };
+            on_complete(status);
+        })
+        .map_err(|error| {
+            clipboard_failure(
+                "clipboard_schedule_failed",
+                format!("Could not schedule the macOS clipboard copy: {error}"),
+            )
+        })?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, ticket, payload, on_complete);
+        Err(clipboard_failure(
+            "clipboard_unavailable",
+            "Image clipboard copy is only available in the macOS app",
+        ))
+    }
 }
 
 #[cfg(test)]
