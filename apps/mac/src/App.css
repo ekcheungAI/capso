@@ -13,10 +13,10 @@
 }
 
 body {
-  min-width: 320px;
+  min-width: 520px;
   min-height: 100vh;
   margin: 0;
-  overflow: auto;
+  overflow: hidden;
   background: var(--background);
   color: var(--foreground);
 }
@@ -834,20 +834,24 @@ html[data-surface="timer"] #root {
   }
 }
 
+/* The main window is a real 620x540 settings window with a native titlebar, so
+   the shell is a fixed three-row grid: header, tab strip, then the only region
+   that scrolls. */
 .popover {
-  min-height: 100vh;
-  padding: 1.35rem 1rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
+  height: 100vh;
+  padding: 1.1rem 1.35rem 1.1rem;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0.85rem;
+  overflow: hidden;
 }
 
 .popover-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0 0.25rem;
+  gap: 1rem;
+  padding: 0 0.15rem;
 }
 
 .popover-header > div {
@@ -871,7 +875,7 @@ html[data-surface="timer"] #root {
 }
 
 .header-copy {
-  max-width: 15rem;
+  max-width: 26rem;
   margin: 0.35rem 0 0;
   color: var(--muted);
   font-size: 0.75rem;
@@ -898,13 +902,10 @@ html[data-surface="timer"] #root {
 }
 
 .settings-tabs {
-  position: sticky;
-  z-index: 5;
-  top: 0;
-  padding: 0.18rem;
+  padding: 0.2rem;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.18rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.2rem;
   border: 1px solid var(--line);
   border-radius: var(--radius-input);
   background: color-mix(in srgb, var(--background) 88%, transparent);
@@ -912,8 +913,8 @@ html[data-surface="timer"] #root {
 }
 
 .settings-tabs button {
-  min-height: 2rem;
-  padding: 0.35rem 0.5rem;
+  min-height: 2.15rem;
+  padding: 0.35rem 0.6rem;
   border: 0;
   border-radius: calc(var(--radius-input) - 0.14rem);
   background: transparent;
@@ -936,8 +937,13 @@ html[data-surface="timer"] #root {
 }
 
 .settings-panel {
+  min-height: 0;
+  padding: 0.1rem 0.35rem 0.35rem 0.15rem;
   display: grid;
-  gap: 0.7rem;
+  align-content: start;
+  gap: 0.85rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .permission-bridge {
@@ -968,52 +974,6 @@ html[data-surface="timer"] #root {
 .permission-bridge:focus-visible {
   outline: 2px solid var(--intent-reference);
   outline-offset: 2px;
-}
-
-.capability-card {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-
-.capability-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  border-top: 1px solid var(--line);
-}
-
-.capability-grid > div {
-  min-width: 0;
-  padding: 0.62rem 0.58rem;
-  display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.capability-grid > div + div {
-  border-top: 1px solid var(--line);
-}
-
-.capability-grid strong {
-  font-size: 0.75rem;
-  font-weight: 640;
-}
-
-.capability-grid span {
-  color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.35;
-}
-
-.capability-note {
-  margin: 0;
-  padding: 0.48rem 0.58rem;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.35;
 }
 
 .system-card,
@@ -1184,6 +1144,15 @@ html[data-surface="timer"] #root {
   color: var(--muted);
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+/* Diagnostics are evidence, not prose - the numbers get the mono treatment the
+   shortcut recorders already use. */
+.diagnostic-metric {
+  margin-top: 0.12rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
 }
 
 .compact-button,

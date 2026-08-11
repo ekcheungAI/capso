@@ -600,6 +600,16 @@ fn toggle_popover(window: &WebviewWindow) -> tauri::Result<()> {
     }
 }
 
+/// Settings is a destination, not a toggle: an already-open window is raised and
+/// focused rather than hidden, so choosing "Settings…" always shows settings.
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 fn should_reveal_main_on_reopen(has_visible_windows: bool) -> bool {
     !has_visible_windows
 }
@@ -719,6 +729,7 @@ fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
 }
 
 const RETRY_UPLOADS_MENU_ID: &str = "retry-uploads";
+const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
@@ -793,36 +804,19 @@ fn build_tray_menu<R: Runtime>(
         .item(&open_library)
         .item(&recent_submenu);
 
-    let latency_copy = latency_menu_copy(latency_report);
-    let mut latency_builder =
-        SubmenuBuilder::with_id(app, "overlay-speed-check", latency_copy.title);
-    let latency_status = MenuItem::with_id(
-        app,
-        "overlay-speed-status",
-        latency_copy.status,
-        false,
-        None::<&str>,
-    )?;
-    latency_builder = latency_builder.item(&latency_status);
-    if let Some(statistics) = latency_copy.statistics {
-        let latency_statistics = MenuItem::with_id(
-            app,
-            "overlay-speed-statistics",
-            statistics,
-            false,
-            None::<&str>,
-        )?;
-        latency_builder = latency_builder.item(&latency_statistics);
-    }
-    menu_builder = menu_builder.item(&latency_builder.build()?);
+    // Only actionable problems earn a place in the daily menu. The overlay-speed
+    // evidence and the full queue breakdown now live in Settings → Advanced.
+    let mut has_alert = false;
 
     if let Some(label) = queue_menu_label(queue_status) {
-        let queue_item = MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
-        menu_builder = menu_builder.item(&queue_item);
         let retryable = queue_status.summary.pending
             + queue_status.summary.uploading
             + queue_status.summary.retrying;
         if retryable > 0 {
+            let queue_item =
+                MenuItem::with_id(app, "upload-queue-status", label, false, None::<&str>)?;
+            menu_builder = menu_builder.separator().item(&queue_item);
+            has_alert = true;
             let retry_item = MenuItem::with_id(
                 app,
                 RETRY_UPLOADS_MENU_ID,
@@ -837,12 +831,15 @@ fn build_tray_menu<R: Runtime>(
     if system_status.screen_recording == system::ScreenRecordingStatus::Required {
         let permission_warning = MenuItem::with_id(
             app,
-            "screen-recording-warning",
-            "Screen Recording required — open Capso to grant",
-            false,
+            OPEN_SETTINGS_MENU_ID,
+            "Screen Recording required — open Settings to grant",
+            true,
             None::<&str>,
         )?;
-        menu_builder = menu_builder.separator().item(&permission_warning);
+        if !has_alert {
+            menu_builder = menu_builder.separator();
+        }
+        menu_builder = menu_builder.item(&permission_warning);
     }
 
     let warning_label = shortcuts::conflict_label(&shortcut_status.conflicts)
@@ -855,8 +852,9 @@ fn build_tray_menu<R: Runtime>(
         menu_builder = menu_builder.separator().item(item);
     }
 
+    let settings = MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "Settings…", true, Some("cmd+,"))?;
     let quit = MenuItem::with_id(app, "quit", "Quit Capso", true, Some("cmd+q"))?;
-    menu_builder.separator().item(&quit).build()
+    menu_builder.separator().item(&settings).item(&quit).build()
 }
 
 fn current_system_status(app: &AppHandle) -> Result<system::SystemStatus, String> {
@@ -974,6 +972,34 @@ fn get_system_status(
         .map_err(|_| "System settings are temporarily unavailable".into())
 }
 
+/// Read-only diagnostics for Settings → Advanced. It reuses the exact copy the tray
+/// menu builds, so the window and the menu can never disagree about sync or latency.
+#[derive(serde::Serialize)]
+struct Diagnostics {
+    latency_title: String,
+    latency_status: String,
+    latency_statistics: Option<String>,
+    queue_label: Option<String>,
+    queue_retryable: u32,
+}
+
+#[tauri::command]
+fn get_diagnostics(app: AppHandle) -> Result<Diagnostics, String> {
+    let latency_report = latency::current_report(&app)?;
+    let latency_copy = latency_menu_copy(&latency_report);
+    let queue_status = current_queue_status(&app)?;
+    let retryable = queue_status.summary.pending
+        + queue_status.summary.uploading
+        + queue_status.summary.retrying;
+    Ok(Diagnostics {
+        latency_title: latency_copy.title,
+        latency_status: latency_copy.status,
+        latency_statistics: latency_copy.statistics,
+        queue_label: queue_menu_label(&queue_status),
+        queue_retryable: u32::try_from(retryable).unwrap_or(u32::MAX),
+    })
+}
+
 #[tauri::command]
 fn request_screen_recording_permission(
     app: AppHandle,
@@ -1079,6 +1105,7 @@ pub fn run() {
             get_shortcut_settings,
             update_shortcut_settings,
             get_system_status,
+            get_diagnostics,
             request_screen_recording_permission,
             open_screen_recording_settings,
             set_launch_at_login_enabled,
@@ -1188,8 +1215,9 @@ pub fn run() {
                     &latency_report,
                 ))
                 .menu(&menu)
-                // Left click toggles the popover; the menu stays on right click.
-                .show_menu_on_left_click(false)
+                // One menu on either click. Capture actions are the reason to open the
+                // icon; Settings is a rare destination behind its own item.
+                .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| {
                     if event.id() == shortcuts::CAPTURE_REGION_TIMER_MENU_ID {
                         launch_region_self_timer(app.clone());
@@ -1214,23 +1242,22 @@ pub fn run() {
                         }
                     } else if event.id() == RETRY_UPLOADS_MENU_ID {
                         spawn_background_sync(app.clone(), drain::DrainWake::RetryDeadline);
+                    } else if event.id() == OPEN_SETTINGS_MENU_ID {
+                        open_settings_window(app);
                     } else if event.id() == "quit" {
                         app.exit(0);
                     }
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = toggle_popover(&window);
-                        }
-                    }
-                })
                 .build(app)?;
+
+            // The app lives in the menu bar, so it starts with no window. A first
+            // launch that still needs Screen Recording is the one case where staying
+            // silent would look like a failed launch, so Settings opens to be granted.
+            // Re-launching an already-running copy reveals it via single-instance and
+            // Reopen, so an already-configured Mac boots straight to the menu bar.
+            if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+                open_settings_window(app.handle());
+            }
 
             #[cfg(target_os = "macos")]
             spawn_background_retry_monitor(app.handle().clone())?;
@@ -1330,7 +1357,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_app_launch_opens_the_main_control_surface() {
+    fn the_menu_bar_app_starts_windowless_but_is_always_reachable() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
         let main = config["app"]["windows"]
@@ -1340,8 +1367,19 @@ mod tests {
             .find(|window| window["label"] == "main")
             .expect("main control surface");
 
-        assert_eq!(main["visible"], true);
+        // Settings is a destination, not the app itself: a configured Mac boots to the
+        // menu bar alone, and never steals focus at login.
+        assert_eq!(main["visible"], false);
         assert_eq!(main["skipTaskbar"], true);
+        // A standard titlebar keeps the window movable and closable without the app
+        // having to supply its own drag region.
+        assert!(main.get("titleBarStyle").is_none());
+
+        // Reachability is what the old always-visible window really guaranteed, and it
+        // is asserted against this file from `capture-parity.check.ts`. Scanning this
+        // source from inside it cannot work: the search string would match the
+        // assertion's own text and pass no matter what the menu actually builds.
+        assert_eq!(super::OPEN_SETTINGS_MENU_ID, "open-settings");
     }
 
     #[test]

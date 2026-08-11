@@ -13,15 +13,12 @@
     "windows": [
       {
         "label": "main",
-        "title": "Capso",
-        "width": 360,
-        "height": 720,
-        "visible": true,
+        "title": "Capso Settings",
+        "width": 620,
+        "height": 540,
+        "visible": false,
         "resizable": false,
-        "skipTaskbar": true,
-        "alwaysOnTop": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "skipTaskbar": true
       },
       {
         "label": "capture-overlay",

@@ -7,6 +7,12 @@
       "runtimeArgs": ["--filter", "web", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "capso-mac-ui",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "mac", "dev"],
+      "port": 1420
     }
   ]
 }

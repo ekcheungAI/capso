@@ -32,13 +32,14 @@ test("the quick access overlay can turn a capture into an always-on-top pin", as
   );
 });
 
-test("settings separate capture, sync, and system decisions", async () => {
+test("settings separate general, shortcuts, account, and advanced decisions", async () => {
   const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
 
   assert.match(app, /role="tablist"/);
-  assert.match(app, />Capture<\/button>/);
-  assert.match(app, />Sync<\/button>/);
-  assert.match(app, />System<\/button>/);
+  assert.match(app, />General<\/button>/);
+  assert.match(app, />Shortcuts<\/button>/);
+  assert.match(app, />Account<\/button>/);
+  assert.match(app, />Advanced<\/button>/);
   assert.match(app, /aria-selected=/);
   assert.match(app, /role="tabpanel"/);
   assert.match(app, /aria-controls=/);
@@ -46,9 +47,40 @@ test("settings separate capture, sync, and system decisions", async () => {
   assert.match(app, /ArrowRight/);
   assert.match(app, /ArrowLeft/);
   assert.match(app, /Enable Window &amp; Full Screen/);
-  assert.match(app, /Area capture in 5 seconds/);
-  assert.match(app, /Pin one capture/);
-  assert.match(app, /last 8 shown/);
+});
+
+test("the parity features are discoverable from the tray menu, not a settings table", async () => {
+  const [app, native, history] = await Promise.all([
+    readFile(new URL("./App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/history.rs", import.meta.url), "utf8"),
+  ]);
+
+  // The old "Where to find them" table documented features the menu now shows
+  // directly. Documentation is only redundant while the menu items really exist.
+  assert.doesNotMatch(app, /quick-access-heading/);
+  assert.doesNotMatch(app, /Where to find them/);
+
+  assert.match(native, /"Capture (?:Area|Region) in 5 Seconds"/);
+  assert.match(native, /"Recent Captures"/);
+  assert.match(native, /"Settings…"/);
+  assert.match(history, /RECENT_CAPTURE_LIMIT: usize = 8;/);
+});
+
+test("advanced settings surface read-only capture diagnostics", async () => {
+  const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
+
+  assert.match(app, /invoke<Diagnostics>\("get_diagnostics"\)/);
+  assert.match(app, /latency_title/);
+  assert.match(app, /latency_status/);
+  assert.match(app, /latency_statistics/);
+  assert.match(app, /queue_label/);
+  assert.match(app, /queue_retryable/);
+  assert.match(
+    app,
+    /Could not load diagnostics: \$\{String\(error\)\}/,
+    "a failing diagnostics command must surface its error instead of blanking the panel",
+  );
 });
 
 test("only one Capso process can own the global shortcuts", async () => {
