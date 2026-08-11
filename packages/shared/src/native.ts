@@ -55,6 +55,7 @@ export const nativeIngestRequest = z
   .object({
     screenshot_id: z.string().regex(UUID),
     storage_path: z.string().max(512),
+    thumb_path: z.string().max(512),
     captured_at: capturedAt,
     source: nativeIngestSource,
     content_hash: z.string().regex(SHA256),
@@ -66,6 +67,7 @@ export const nativeIngestRequest = z
   .strict()
   .superRefine((request, context) => {
     const parts = request.storage_path.split("/");
+    const thumbParts = request.thumb_path.split("/");
     const expectedName = `${request.screenshot_id}.png`;
     if (
       parts.length !== 3 ||
@@ -77,6 +79,18 @@ export const nativeIngestRequest = z
         code: "custom",
         path: ["storage_path"],
         message: "storage_path must be originals/<authenticated UUID>/<screenshot_id>.png",
+      });
+    }
+    if (
+      thumbParts.length !== 3 ||
+      thumbParts[0] !== "thumbs" ||
+      !UUID.test(thumbParts[1] ?? "") ||
+      thumbParts[2] !== expectedName
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["thumb_path"],
+        message: "thumb_path must be thumbs/<authenticated UUID>/<screenshot_id>.png",
       });
     }
   });

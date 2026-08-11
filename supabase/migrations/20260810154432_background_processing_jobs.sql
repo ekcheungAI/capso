@@ -123,10 +123,15 @@ begin
      and j.id = (
        select min(head.id)
          from public.jobs as head
+         join public.screenshots as head_s
+           on head_s.id::text = head.payload ->> 'screenshot_id'
+          and head_s.user_id = head.user_id
         where head.user_id = j.user_id
           and head.kind = 'process_capture'
           and head.status = 'pending'
           and head.run_after <= clock_timestamp()
+          and head_s.processing_status <> 'processed'
+          and head_s.storage_path is not null
      )
    order by j.run_after, j.id
    for update of j skip locked
@@ -254,7 +259,8 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_job public.jobs%rowtype;
+  v_attempts int;
+  v_max_attempts int;
   v_screenshot_id uuid;
   v_delay interval;
 begin
@@ -262,8 +268,8 @@ begin
     raise exception 'invalid worker error code' using errcode = '22023';
   end if;
 
-  select j, s.id
-    into v_job, v_screenshot_id
+  select j.attempts, j.max_attempts, s.id
+    into v_attempts, v_max_attempts, v_screenshot_id
     from public.jobs as j
     join public.screenshots as s
       on s.id::text = j.payload ->> 'screenshot_id'
@@ -278,7 +284,7 @@ begin
     raise exception 'worker does not own this job' using errcode = '55000';
   end if;
 
-  if v_job.attempts >= v_job.max_attempts then
+  if v_attempts >= v_max_attempts then
     update public.jobs
        set status = 'failed', locked_at = null, locked_by = null, last_error = p_error_code
      where id = p_job_id;
@@ -288,7 +294,7 @@ begin
     return 'terminal';
   end if;
 
-  v_delay := case v_job.attempts
+  v_delay := case v_attempts
     when 1 then interval '5 seconds'
     when 2 then interval '30 seconds'
     else interval '2 minutes'

@@ -5,9 +5,14 @@
 alter table public.screenshots
   add column if not exists annotated boolean not null default false;
 
+drop function if exists public.ingest_native_capture(
+  uuid, text, timestamptz, text, text, boolean, int, int, bigint
+);
+
 create or replace function public.ingest_native_capture(
   p_screenshot_id uuid,
   p_storage_path text,
+  p_thumb_path text,
   p_captured_at timestamptz,
   p_source text,
   p_content_hash text,
@@ -24,6 +29,7 @@ as $$
 declare
   v_user_id uuid;
   v_expected_path text;
+  v_expected_thumb_path text;
   v_existing public.screenshots%rowtype;
   v_inserted int := 0;
   v_deduped boolean := false;
@@ -40,7 +46,13 @@ begin
     v_user_id::text,
     p_screenshot_id::text
   );
+  v_expected_thumb_path := format(
+    'thumbs/%s/%s.png',
+    v_user_id::text,
+    p_screenshot_id::text
+  );
   if p_storage_path is distinct from v_expected_path
+     or p_thumb_path is distinct from v_expected_thumb_path
      or p_content_hash !~ '^sha256:[0-9a-f]{64}$'
      or p_source not in (
        'hotkey_region', 'hotkey_window', 'hotkey_fullscreen', 'drag', 'clipboard'
@@ -56,6 +68,7 @@ begin
     id,
     user_id,
     storage_path,
+    thumb_path,
     width,
     height,
     bytes,
@@ -69,6 +82,7 @@ begin
     p_screenshot_id,
     v_user_id,
     p_storage_path,
+    p_thumb_path,
     p_width,
     p_height,
     p_bytes,
@@ -93,6 +107,7 @@ begin
   v_deduped := v_inserted = 0;
   if v_existing.user_id is distinct from v_user_id
      or v_existing.storage_path is distinct from p_storage_path
+     or v_existing.thumb_path is distinct from p_thumb_path
      or v_existing.content_hash is distinct from p_content_hash
      or v_existing.captured_at is distinct from p_captured_at
      or v_existing.source is distinct from p_source
@@ -127,11 +142,11 @@ end;
 $$;
 
 revoke execute on function public.ingest_native_capture(
-  uuid, text, timestamptz, text, text, boolean, int, int, bigint
+  uuid, text, text, timestamptz, text, text, boolean, int, int, bigint
 ) from public;
 revoke execute on function public.ingest_native_capture(
-  uuid, text, timestamptz, text, text, boolean, int, int, bigint
+  uuid, text, text, timestamptz, text, text, boolean, int, int, bigint
 ) from anon;
 grant execute on function public.ingest_native_capture(
-  uuid, text, timestamptz, text, text, boolean, int, int, bigint
+  uuid, text, text, timestamptz, text, text, boolean, int, int, bigint
 ) to authenticated;

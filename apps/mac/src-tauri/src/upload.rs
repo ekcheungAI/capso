@@ -9,12 +9,15 @@ use crate::{
     },
     queue::{QueueItem, QueueSource},
 };
-use image::ImageDecoder;
+use image::{ImageDecoder, ImageFormat};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Cursor, time::Duration};
 
 const MAX_ORIGINAL_BYTES: u64 = 25 * 1_024 * 1_024;
+const MAX_DECODE_PIXELS: u64 = 80_000_000;
+const MAX_THUMB_BYTES: usize = 5 * 1_024 * 1_024;
+const THUMB_EDGE: u32 = 640;
 const MAX_RESPONSE_BYTES: usize = 64 * 1_024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -164,6 +167,27 @@ fn ingest_source(source: QueueSource) -> NativeIngestSource {
     }
 }
 
+fn thumbnail_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    if u64::from(width).saturating_mul(u64::from(height)) > MAX_DECODE_PIXELS {
+        return Err("The queued capture is too large to preview safely.".into());
+    }
+    let original = image::load_from_memory_with_format(bytes, ImageFormat::Png)
+        .map_err(|_| "The queued capture could not be decoded for its preview.".to_string())?;
+    // `DynamicImage::thumbnail` may upscale when both requested bounds exceed
+    // the source, so cap the requested edge at the original's longest side.
+    let edge = THUMB_EDGE.min(width.max(height));
+    let thumb = original.thumbnail(edge, edge);
+    let mut encoded = Cursor::new(Vec::new());
+    thumb
+        .write_to(&mut encoded, ImageFormat::Png)
+        .map_err(|_| "Capso could not encode the capture preview.".to_string())?;
+    let bytes = encoded.into_inner();
+    if bytes.is_empty() || bytes.len() > MAX_THUMB_BYTES {
+        return Err("The capture preview exceeded Capso's safety limit.".into());
+    }
+    Ok(bytes)
+}
+
 fn safe_message(response: &HttpResponse, fallback: &str) -> String {
     serde_json::from_slice::<NativeApiErrorEnvelope>(&response.body)
         .map(|error| error.message().to_string())
@@ -186,7 +210,8 @@ fn failure(response: &HttpResponse, fallback: &str) -> UploadResult {
     }
     let message = safe_message(response, fallback);
     match response.status {
-        401 | 403 | 413 | 507 => UploadResult::Held { message },
+        401 | 403 | 507 => UploadResult::Held { message },
+        413 => UploadResult::Terminal { message },
         408 | 425 | 429 | 500..=599 => UploadResult::Retryable { message },
         _ => UploadResult::Terminal { message },
     }
@@ -284,10 +309,16 @@ impl<C: HttpClient> UploadTransport for AuthenticatedUploadTransport<C> {
         };
         let (width, height) = decoder.dimensions();
         let storage_path = format!("originals/{}/{}.png", session.user_id, item.id);
+        let thumb_path = format!("thumbs/{}/{}.png", session.user_id, item.id);
+        let thumb = match thumbnail_png(&bytes, width, height) {
+            Ok(thumb) => thumb,
+            Err(message) => return UploadResult::Terminal { message },
+        };
         let hash = format!("sha256:{:x}", Sha256::digest(&bytes));
         let request = NativeIngestRequest {
             screenshot_id: item.id.clone(),
             storage_path: storage_path.clone(),
+            thumb_path: thumb_path.clone(),
             captured_at: match captured_at(item.created_at_ms) {
                 Ok(value) => value,
                 Err(message) => return UploadResult::Terminal { message },
@@ -325,9 +356,30 @@ impl<C: HttpClient> UploadTransport for AuthenticatedUploadTransport<C> {
             return failure(&storage, "Capso could not store the original capture");
         }
 
+        let thumbnail = match self.client.execute(HttpRequest {
+            method: "POST",
+            url: format!(
+                "{}/storage/v1/object/thumbs/{}/{}.png",
+                session.supabase_url, session.user_id, item.id
+            ),
+            headers: {
+                let mut headers = bearer_headers(session, "image/png");
+                headers.insert("x-upsert".into(), "false".into());
+                headers
+            },
+            body: thumb,
+        }) {
+            Ok(response) => response,
+            Err(message) => return UploadResult::Retryable { message },
+        };
+        if !(200..300).contains(&thumbnail.status) && !is_existing_storage_object(&thumbnail) {
+            return failure(&thumbnail, "Capso could not store the capture preview");
+        }
+
         let body = json!({
             "p_screenshot_id": request.screenshot_id,
             "p_storage_path": request.storage_path,
+            "p_thumb_path": request.thumb_path,
             "p_captured_at": request.captured_at,
             "p_source": request.source.as_str(),
             "p_content_hash": request.content_hash,
@@ -364,7 +416,8 @@ impl<C: HttpClient> UploadTransport for AuthenticatedUploadTransport<C> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthenticatedUploadTransport, HttpClient, HttpRequest, HttpResponse, UploadSession,
+        thumbnail_png, AuthenticatedUploadTransport, HttpClient, HttpRequest, HttpResponse,
+        UploadSession,
     };
     use crate::{
         auth::{AuthSession, SupabaseAuthConfig},
@@ -479,6 +532,7 @@ mod tests {
     fn exact_png_is_stored_then_atomically_registered_for_background_processing() {
         let client = RecordingClient::with_responses(vec![
             response(200, "{}"),
+            response(200, "{}"),
             response(
                 200,
                 &format!(
@@ -498,7 +552,7 @@ mod tests {
         );
 
         let requests = transport.client().requests.lock().expect("request lock");
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 3);
         assert_eq!(requests[0].method, "POST");
         assert_eq!(
             requests[0].url,
@@ -513,14 +567,26 @@ mod tests {
         );
         assert_eq!(
             requests[1].url,
+            format!(
+                "https://capso-test.supabase.co/storage/v1/object/thumbs/{USER_ID}/{CAPTURE_ID}.png"
+            )
+        );
+        let thumb = image::load_from_memory(&requests[1].body).expect("valid thumbnail png");
+        assert_eq!((thumb.width(), thumb.height()), (2, 3));
+        assert_eq!(
+            requests[2].url,
             "https://capso-test.supabase.co/rest/v1/rpc/ingest_native_capture"
         );
         let metadata: serde_json::Value =
-            serde_json::from_slice(&requests[1].body).expect("metadata json");
+            serde_json::from_slice(&requests[2].body).expect("metadata json");
         assert_eq!(metadata["p_screenshot_id"], CAPTURE_ID);
         assert_eq!(
             metadata["p_storage_path"],
             format!("originals/{USER_ID}/{CAPTURE_ID}.png")
+        );
+        assert_eq!(
+            metadata["p_thumb_path"],
+            format!("thumbs/{USER_ID}/{CAPTURE_ID}.png")
         );
         assert_eq!(metadata["p_width"], 2);
         assert_eq!(metadata["p_height"], 3);
@@ -534,6 +600,7 @@ mod tests {
     #[test]
     fn an_existing_exact_object_continues_to_the_idempotent_registration_call() {
         let client = RecordingClient::with_responses(vec![
+            response(409, r#"{"message":"The resource already exists"}"#),
             response(409, r#"{"message":"The resource already exists"}"#),
             response(
                 200,
@@ -556,7 +623,7 @@ mod tests {
                 .lock()
                 .expect("request lock")
                 .len(),
-            2
+            3
         );
     }
 
@@ -568,6 +635,7 @@ mod tests {
                     400,
                     r#"{"statusCode":"400","error":"Duplicate","message":"The resource already exists"}"#,
                 ),
+                response(409, r#"{"message":"The resource already exists"}"#),
                 response(
                     200,
                     &format!(
@@ -594,6 +662,18 @@ mod tests {
     }
 
     #[test]
+    fn generated_native_thumbnail_is_a_bounded_aspect_preserving_png() {
+        let original = image::DynamicImage::new_rgba8(800, 400);
+        let mut source = std::io::Cursor::new(Vec::new());
+        original
+            .write_to(&mut source, image::ImageFormat::Png)
+            .expect("encode source png");
+        let thumb = thumbnail_png(&source.into_inner(), 800, 400).expect("thumbnail");
+        let decoded = image::load_from_memory(&thumb).expect("decode thumbnail");
+        assert_eq!((decoded.width(), decoded.height()), (640, 320));
+    }
+
+    #[test]
     fn expired_credentials_hold_but_transient_failures_retry() {
         let (_root, item) = capture_item();
         let unauthorized = AuthenticatedUploadTransport::new(
@@ -613,5 +693,24 @@ mod tests {
             transient.upload(&item),
             UploadResult::Retryable { .. }
         ));
+    }
+
+    #[test]
+    fn oversized_server_rejection_is_terminal_but_quota_exhaustion_remains_held() {
+        let (_root, item) = capture_item();
+        let oversized = AuthenticatedUploadTransport::new(
+            RecordingClient::with_responses(vec![response(413, r#"{"message":"too large"}"#)]),
+            Some(session()),
+        );
+        assert!(matches!(
+            oversized.upload(&item),
+            UploadResult::Terminal { .. }
+        ));
+
+        let quota = AuthenticatedUploadTransport::new(
+            RecordingClient::with_responses(vec![response(507, r#"{"message":"quota full"}"#)]),
+            Some(session()),
+        );
+        assert!(matches!(quota.upload(&item), UploadResult::Held { .. }));
     }
 }

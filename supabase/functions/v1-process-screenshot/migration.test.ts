@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 
 const migration = await Deno.readTextFile(
   new URL(
-    "../../migrations/20260808032950_background_processing_jobs.sql",
+    "../../migrations/20260810154432_background_processing_jobs.sql",
+    import.meta.url,
+  ),
+);
+
+const claimFixMigration = await Deno.readTextFile(
+  new URL(
+    "../../migrations/20260810155303_fix_claim_job_ambiguity.sql",
     import.meta.url,
   ),
 );
@@ -40,6 +47,26 @@ Deno.test("claim contract is one-job, skip-locked, serial per owner, and restart
   assert.match(migration, /s\.storage_path is not null/i);
 });
 
+Deno.test("hosted claim RPC qualifies return-column names", () => {
+  assert.match(
+    claimFixMigration,
+    /j\.attempts >= j\.max_attempts[\s\S]+j\.attempts < j\.max_attempts/i,
+  );
+  assert.doesNotMatch(
+    claimFixMigration,
+    /\band attempts (?:>=|<) max_attempts\b/i,
+  );
+});
+
+Deno.test("an upload-pending row cannot block later eligible work for its owner", () => {
+  const head = migration.match(
+    /j\.id\s*=\s*\(\s*select min\(head\.id\)[\s\S]*?\n\s*\)/i,
+  )?.[0] ?? "";
+  assert.match(head, /join public\.screenshots as head_s/i);
+  assert.match(head, /head_s\.storage_path is not null/i);
+  assert.match(head, /head_s\.processing_status <> 'processed'/i);
+});
+
 Deno.test("settlement owns the exact lease and uses bounded persisted retry codes", () => {
   assert.match(migration, /j\.locked_by = p_worker_id/i);
   assert.match(migration, /processing_status = 'processed'/i);
@@ -48,4 +75,9 @@ Deno.test("settlement owns the exact lease and uses bounded persisted retry code
   assert.match(migration, /when 2 then interval '30 seconds'/i);
   assert.match(migration, /else interval '2 minutes'/i);
   assert.match(migration, /p_error_code !~ '\^\[a-z_\]\{1,64\}\$'/i);
+  assert.match(
+    migration,
+    /select j\.attempts, j\.max_attempts, s\.id\s+into v_attempts, v_max_attempts, v_screenshot_id/i,
+  );
+  assert.doesNotMatch(migration, /select j, s\.id\s+into v_job/i);
 });

@@ -7,6 +7,7 @@
   "ingest_request": {
     "screenshot_id": "018f22c4-cada-7c6b-9d5b-fc35f7f92270",
     "storage_path": "originals/018f22c4-cada-7c6b-9d5b-fc35f7f92279/018f22c4-cada-7c6b-9d5b-fc35f7f92270.png",
+    "thumb_path": "thumbs/018f22c4-cada-7c6b-9d5b-fc35f7f92279/018f22c4-cada-7c6b-9d5b-fc35f7f92270.png",
     "captured_at": "2026-08-08T06:48:00+08:00",
     "source": "hotkey_fullscreen",
     "content_hash": "sha256:8c1e000000000000000000000000000000000000000000000000000000000000",

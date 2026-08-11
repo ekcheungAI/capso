@@ -71,6 +71,21 @@ test("authenticated ingest never accepts caller-supplied ownership", () => {
   );
 });
 
+test("native ingest requires the exact owner-scoped thumbnail beside the original", () => {
+  const withThumb = {
+    ...fixture.ingest_request,
+    thumb_path: fixture.ingest_request.storage_path.replace("originals/", "thumbs/"),
+  };
+  assert.equal(nativeIngestRequest.safeParse(withThumb).success, true);
+  const { thumb_path: _thumbPath, ...withoutThumb } = fixture.ingest_request;
+  assert.equal(nativeIngestRequest.safeParse(withoutThumb).success, false);
+  assert.equal(
+    nativeIngestRequest.safeParse({ ...withThumb, thumb_path: withThumb.thumb_path.replace("thumbs/", "originals/") })
+      .success,
+    false,
+  );
+});
+
 test("tokens are absent from the callback exchange and response acknowledgement is exact", () => {
   assert.equal(
     nativeAuthExchange.safeParse({

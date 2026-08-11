@@ -4,6 +4,6 @@
   },
   "tasks": {
     "check": "deno check index.ts worker.ts repository.ts minimax.ts",
-    "test": "deno test --no-lock --allow-env --allow-read worker.test.ts repository.test.ts minimax.test.ts migration.test.ts native_ingest_migration.test.ts index.test.ts"
+    "test": "deno test --allow-env --allow-read worker.test.ts repository.test.ts minimax.test.ts migration.test.ts native_ingest_migration.test.ts hardening_migration.test.ts schedule_migration.test.ts index.test.ts"
   }
 }

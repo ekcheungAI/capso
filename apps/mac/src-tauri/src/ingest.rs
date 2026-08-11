@@ -35,6 +35,7 @@ impl NativeIngestSource {
 pub(crate) struct NativeIngestRequest {
     pub(crate) screenshot_id: String,
     pub(crate) storage_path: String,
+    pub(crate) thumb_path: String,
     pub(crate) captured_at: String,
     pub(crate) source: NativeIngestSource,
     pub(crate) content_hash: String,
@@ -53,6 +54,7 @@ impl NativeIngestRequest {
             ));
         }
         let parts = self.storage_path.split('/').collect::<Vec<_>>();
+        let thumb_parts = self.thumb_path.split('/').collect::<Vec<_>>();
         if parts.len() != 3
             || parts[0] != "originals"
             || !canonical_uuid(parts[1])
@@ -61,6 +63,16 @@ impl NativeIngestRequest {
             return Err(IngestContractError::new(
                 "ingest_path_mismatch",
                 "The private Storage path does not name the exact queued capture.",
+            ));
+        }
+        if thumb_parts.len() != 3
+            || thumb_parts[0] != "thumbs"
+            || !canonical_uuid(thumb_parts[1])
+            || thumb_parts[2] != format!("{}.png", self.screenshot_id)
+        {
+            return Err(IngestContractError::new(
+                "ingest_thumb_path_mismatch",
+                "The private thumbnail path does not name the exact queued capture.",
             ));
         }
         if !valid_sha256(&self.content_hash) {

@@ -16,7 +16,9 @@ Deno.test("native ingest RPC derives ownership, is idempotent, and enqueues proc
   assertMatch(sql, /set search_path\s*=\s*''/i);
   assertMatch(sql, /v_user_id\s*:=\s*\(select auth\.uid\(\)\)/i);
   assertMatch(sql, /originals\/.*v_user_id.*p_screenshot_id/is);
+  assertMatch(sql, /thumbs\/.*v_user_id.*p_screenshot_id/is);
   assertMatch(sql, /insert into public\.screenshots/i);
+  assertMatch(sql, /thumb_path/i);
   assertMatch(sql, /on conflict\s*\(id\)\s*do nothing/i);
   assertMatch(sql, /get diagnostics v_inserted\s*=\s*row_count/i);
   assertMatch(sql, /v_deduped\s*:=\s*v_inserted\s*=\s*0/i);
