@@ -104,6 +104,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
     return {
       ...s,
+      // Derived, never stored alongside `stage`. They encode the same fact, and
+      // holding both in state meant they could disagree: `ingest` moved `stage`
+      // to "done" and left `needsSetup` true, so capturing during first run
+      // filed the capture and left the role picker on screen.
+      needsSetup: s.stage === "pick_role",
       inbox: s.screenshots.filter((x) => x.threadId === null && !x.archived),
       filed: s.screenshots.filter((x) => x.threadId !== null && !x.archived),
       byThread: (id) => s.screenshots.filter((x) => x.threadId === id && !x.archived),
