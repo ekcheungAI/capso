@@ -65,16 +65,28 @@ the lesson UI.
 
 Recorded so they are not rediscovered later as bugs:
 
-1. **`15_DESIGN_SYSTEM_AND_UX.md:79-84`** — *"NO visual mascot/character in MVP. Post-MVP
-   experiment only."* Also `:14` puts mascot design out of scope and `:71` bans illustrated
-   empty states. This exploration knowingly overrides the first at the owner's direction.
-   The low-dose rule keeps the override narrow, and `:100`'s ban on decorative sparkles on
-   every surface still holds in full. **That doc needs an edit before any of this ships.**
+1. **`15_DESIGN_SYSTEM_AND_UX.md` §"AI companion presence" and §"Empty states"** — the
+   mascot ban and the illustrated-empty-state ban. This exploration knowingly overrode the
+   first at the owner's direction, and the ban on decorative sparkles on every surface still
+   holds in full. ~~**That doc needs an edit before any of this ships.**~~
+
+   **Resolved 2026-08-12.** Doc 15 was edited and the two bans were separated rather than
+   lifted together. **Illustration: lifted** — see §"Generated art", direction "Decks and
+   Trays". **Character: reaffirmed** — this document's mascot proposal (§"Where the mascot
+   appears", direction **A**) was *not* adopted. Read the mascot sections below as history.
+   Line numbers were dropped from this entry because they had already drifted twice.
 2. **`15_DESIGN_SYSTEM_AND_UX.md:109-110`** already flags `#E8683A` as a *placeholder* —
    *"pick against real screenshots."* The palette check on the board tests it against three
    alternates. Terracotta holds up: it doubles as gel-cap and as crema.
 
 ## Colour
+
+> **Stale — corrected 2026-08-12.** Every value in this section was retired. There is no
+> accent colour: it equals the foreground, and links are underlined rather than coloured.
+> The ground is bone `#f4f0eb`, not `#fafaf8`. The canonical source is
+> `packages/shared/src/tokens.json`, and `globals.css` no longer declares colours at all —
+> it imports `tokens.generated.css`. The terracotta below failed AA twice over and was
+> retired, not tuned. Kept verbatim as a record of what was tried.
 
 Locked to the real tokens in `apps/web/app/globals.css:3-20`. No new colours introduced.
 

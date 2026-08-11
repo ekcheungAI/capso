@@ -97,15 +97,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (ready && needsSetup && pathname !== "/extension") {
-    return (
-      <div className="min-h-screen px-6">
-        <CapsoMarkDefs />
-        <div className="flex items-center gap-2 py-5"><CapsoMark size={28} fill="full" label="Capso" /><span className="text-sm font-semibold">Capso</span></div>
-        <FirstRun />
-      </div>
-    );
-  }
+  /**
+   * First run covers the route, inside the shell — it used to replace the shell
+   * entirely, returning early from here.
+   *
+   * That early return also skipped `CaptureLayer` (mounted at the bottom of this
+   * component), so drop, paste and the Capture dock were all dead on the one
+   * screen in the product that says "drop an image anywhere, paste from the
+   * clipboard, or press Capture". A user who followed those instructions during
+   * first run got nothing.
+   *
+   * Deliberately a cover and not an `aria-modal` dialog: a focus trap here would
+   * need `inert` on the rail, add axe surface, and break interaction principle 2
+   * ("nothing blocks capture") in spirit while fixing it in letter.
+   */
+  const showFirstRun = ready && needsSetup && pathname !== "/extension";
 
   const closePanels = () => {
     setProjectsOpen(false);
@@ -279,7 +285,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="min-w-0 pb-28 md:ml-[78px] md:pb-24">
-        {pathname !== "/" && pathname !== "/search" && (
+        {/* Search is suppressed during first run: doc 15 asks that nothing compete
+            with the starter-kit screen. The rail and the capture layer stay — one
+            is navigation the user can ignore, the other is the thing the screen is
+            asking them to do. */}
+        {pathname !== "/" && pathname !== "/search" && !showFirstRun && (
           <header className="sticky top-0 z-20 border-b border-line bg-background/95 px-5 backdrop-blur sm:px-8">
             <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center">
             <button type="button" onClick={() => setPalette(true)} className="flex h-11 w-full max-w-sm items-center rounded-full border border-line bg-surface px-3.5 text-xs text-muted transition hover:border-accent hover:text-foreground">
@@ -289,7 +299,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
         )}
-        <main className={pathname === "/" || pathname === "/search" ? "" : "mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10"}>{children}</main>
+        <main className={pathname === "/" || pathname === "/search" ? "" : "mx-auto w-full max-w-[1440px] px-5 py-6 sm:px-8 lg:px-10"}>
+          {showFirstRun ? <FirstRun /> : children}
+        </main>
       </div>
 
       <CaptureLayer />

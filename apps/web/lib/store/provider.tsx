@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as store from "./index";
+import { isOwnCapture, type Stage } from "@/lib/onboarding";
 import type { Correction, Message, Revisit, Screenshot, Thread } from "./types";
 
 type State = {
@@ -14,6 +15,12 @@ type State = {
   loadError: string | null;
   /** No library and no record of a first run — Shell shows the picker instead of the app. */
   needsSetup: boolean;
+  /**
+   * Where this person is in first run. `needsSetup` is the same question asked
+   * only about the picker; this one also distinguishes "set up but has never
+   * captured" from "done", which is the distinction `app/page.tsx` got wrong.
+   */
+  stage: Stage;
   threads: Thread[];
   screenshots: Screenshot[];
   corrections: Correction[];
@@ -31,6 +38,8 @@ type Api = State & {
   addThread: (name: string, description?: string) => Promise<Thread>;
   applyTemplate: (roleId: string) => Promise<void>;
   loadSamples: () => Promise<void>;
+  /** "Skip for now" from the picker — start blank without choosing a role. */
+  skipSetup: () => Promise<void>;
   saveWhySaved: (s: Screenshot, text: string) => Promise<void>;
   saveIntent: (s: Screenshot, intent: Screenshot["intent"]) => Promise<void>;
   addTag: (s: Screenshot, tag: string) => Promise<void>;
@@ -58,6 +67,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     ready: false,
     loadError: null,
     needsSetup: false,
+    stage: "done",
     threads: [],
     screenshots: [],
     corrections: [],
@@ -122,6 +132,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         const data = await store.loadSamples();
         setS({ ready: true, loadError: null, ...data });
       },
+      async skipSetup() {
+        const data = await store.skipSetup();
+        setS({ ready: true, loadError: null, ...data });
+      },
       async saveWhySaved(shot, text) {
         const { screenshot, correction } = await store.editWhySaved(shot, text);
         upsert(screenshot, correction);
@@ -153,6 +167,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       async ingest(shot) {
         await store.putScreenshot(shot);
         upsert(shot);
+
+        // Onboarding's self-destruct. Doc 15 bans checklists that outlive
+        // onboarding, so nothing here is dismissible: the welcome and the nudge
+        // disappear because the thing they were asking for has happened. A
+        // dismiss button would let a user turn off a prompt they never satisfied,
+        // and leave one they did satisfy on screen.
+        if (isOwnCapture(shot)) {
+          store.completeFirstCapture();
+          setS((p) => (p.stage === "done" ? p : { ...p, stage: "done" }));
+        }
       },
       async patch(id, fields) {
         const next = await store.patchScreenshot(id, fields);

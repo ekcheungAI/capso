@@ -56,7 +56,8 @@ if [[ $APPLY -eq 1 ]]; then
   echo "Done. Still to do by hand (see README.md):"
   echo "  - apps/extension/manifest.json  — icons 16/32/48 + action.default_icon"
   echo "  - apps/web/app/layout.tsx       — metadataBase, icons, openGraph"
-  echo "  - 15_DESIGN_SYSTEM_AND_UX.md:79 — amend the 'NO mascot in MVP' rule"
+  echo "  - (2026-08-12: the old 'amend the NO mascot rule' follow-up is done —"
+  echo "     see 15_DESIGN_SYSTEM_AND_UX.md 'Generated art'. Art shipped; character did not.)"
 else
   echo "Dry run. Re-run with --apply to copy."
 fi

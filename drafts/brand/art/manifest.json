@@ -1,0 +1,81 @@
+{
+  "$note": "Every generated asset that ships. build_art.py fails on any drift from this file. Raw candidates live in ../renders-art/ (gitignored); curated masters live in approved/ (committed); derivatives go to out/ (gitignored). Add a row only after the asset has passed its acceptance bar — see PROMPTS.md.",
+  "$registers": {
+    "brand": "Warm-neutral still life. Chroma-capped against tokens.illustration. Role cards, hero, OG plate.",
+    "content": "Fictional third-party screenshots. Asserted FAR from bone — a sample that looks like Capso is a bug."
+  },
+  "budget": {
+    "publicBytesCeiling": 1572864,
+    "$why": "apps/web/public held ~140 KB of images before this programme. 1.5 MB is the aggregate ceiling across every install target under it. The gitignore globs above this directory exist because 22 MB and then 128 MB of renders were committed by accident; this is the same guard expressed as an assertion rather than a rule nobody reads."
+  },
+  "assets": [
+    {
+      "id": "role-marketing",
+      "target": "role-card",
+      "register": "brand",
+      "master": "approved/cards/role-marketing.webp",
+      "sha256": "3ce700abfc1241d05e7a54295b6ab130bda0354d0114ced03362a23a668e4871",
+      "generator": {
+        "model": "nano_banana_pro",
+        "aspect_ratio": "3:2",
+        "resolution": "1k",
+        "prompt": "PROMPTS.md#cards-marketing",
+        "job_id": "e8b66e58-d24a-4899-bc05-8aa97b242415",
+        "credits": 2
+      },
+      "depicts": "Paper swatches fanned for comparison, one capsule lid resting on top. No product, real or fictional.",
+      "install": [{ "to": "apps/web/public/art/role-marketing.webp", "longEdge": 720, "quality": 78, "maxBytes": 40000 }]
+    },
+    {
+      "id": "role-product",
+      "target": "role-card",
+      "register": "brand",
+      "master": "approved/cards/role-product.webp",
+      "sha256": "51b1e44bd55fb311beac3e0ba88c80d10f372195dd307787452df707c2b8c2fb",
+      "generator": {
+        "model": "nano_banana_pro",
+        "aspect_ratio": "3:2",
+        "resolution": "1k",
+        "prompt": "PROMPTS.md#cards-product",
+        "job_id": "43ba1f55-0e05-4d35-8b57-0afa57317ba9",
+        "credits": 2
+      },
+      "depicts": "A tabbed stack of blank paper beside a capsule lid. The clearest notch in the set — this is the reference frame for the lid geometry.",
+      "install": [{ "to": "apps/web/public/art/role-product.webp", "longEdge": 720, "quality": 78, "maxBytes": 40000 }]
+    },
+    {
+      "id": "role-founder",
+      "target": "role-card",
+      "register": "brand",
+      "master": "approved/cards/role-founder.webp",
+      "sha256": "381c960c50df27297623c575264a30b72470b29f4db6b8106a5cd5f073f6295e",
+      "generator": {
+        "model": "nano_banana_pro",
+        "aspect_ratio": "3:2",
+        "resolution": "1k",
+        "prompt": "PROMPTS.md#cards-founder",
+        "job_id": "ca3ce3e5-15c0-4a6a-b8d2-941a825dd6a6",
+        "credits": 2
+      },
+      "depicts": "Two paper stacks meeting at an angle, one capsule lid bridging the gap.",
+      "install": [{ "to": "apps/web/public/art/role-founder.webp", "longEdge": 720, "quality": 78, "maxBytes": 40000 }]
+    },
+    {
+      "id": "role-empty",
+      "target": "role-card",
+      "register": "brand",
+      "master": "approved/cards/role-empty.webp",
+      "sha256": "0a1597f460bb49d0e58acf98285484a6c814d1851fef56db655d8258fc0475a8",
+      "generator": {
+        "model": "nano_banana_pro",
+        "aspect_ratio": "3:2",
+        "resolution": "1k",
+        "prompt": "PROMPTS.md#cards-empty",
+        "job_id": "e2a8431d-4473-4cf5-b416-8d40e51320e7",
+        "credits": 2
+      },
+      "depicts": "An empty paperboard rack with a shaft of window light through one slot. Reviewed specifically for readiness rather than sadness — the half of the old empty-state rule that survived D17.",
+      "install": [{ "to": "apps/web/public/art/role-empty.webp", "longEdge": 720, "quality": 78, "maxBytes": 40000 }]
+    }
+  ]
+}

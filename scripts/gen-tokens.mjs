@@ -33,9 +33,16 @@ const vars = (scheme) =>
 
 const extras = [
   ...Object.entries(t.intent).map(([k, v]) => `  --intent-${k.replace(/_/g, "-")}: ${v};`),
+  // Marketing surfaces need these as real CSS. They are not mode-dependent — clay
+  // and espresso are the same in dark mode, because a marketing surface is a
+  // printed thing, not a themed one. Emitted here rather than left to the page so
+  // that a landing hero cannot become the seventh place the palette is hand-copied,
+  // which is the exact failure this file was written to end.
+  ...Object.entries(t.marketing).map(([k, v]) => `  --marketing-${k}: ${v};`),
   ...Object.entries(t.motion).map(([k, v]) => `  --${k}: ${v};`),
   ...Object.entries(t.radius).map(([k, v]) => `  --radius-${k}: ${v};`),
   `  --font-ui: ${t.font.ui};`,
+  `  --font-display: ${t.font.display};`,
   `  --font-mono: ${t.font.mono};`,
 ].join("\n");
 
