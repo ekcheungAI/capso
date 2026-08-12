@@ -221,5 +221,5 @@ Known blockers:
 | P4 Project threads | 🟡 partial | web projects, routing and correction ledger work; native overlay exists but suggestion/thread actions remain |
 | P5 Chat retrieval | 🟡 partial | web chat/citations work over client-assembled retrieval; server tool path remains |
 | P6 Search | 🟡 partial | CJK-aware lexical retrieval works; vector/date hybrid gates remain |
-| P7 Polish + dogfood gate | 🟡 partial | web/native annotation and native menu/login/permission guidance exist; full onboarding, native QA, signed DMG and five-day dogfood remain |
+| P7 Polish + dogfood gate | 🟡 partial | web/native annotation and native menu/login/permission guidance exist; **web first run is now covered end to end** (stage machine, live capture during the picker, reachable illustrated welcome, self-destructing nudge, 8 e2e) and the D17 art programme has its pipeline plus role-card art; Mac first-run walkthrough, the three custom glyphs, sample screenshots, landing hero, native QA, signed DMG and five-day dogfood remain |
 | P8 Billing | 🅿 parked | build only when external users exist |

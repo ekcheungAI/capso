@@ -1441,3 +1441,153 @@ html[data-surface="timer"] #root {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* First run — apps/mac/src/FirstRun.tsx.
+   Token vars only: this file IS scanned by `pnpm brand:check`, which fails on any
+   hex literal in source. Note the scanner's regex is `#[0-9a-fA-F]{3,8}`, so CSS
+   *named* colours slip through it — that is how a fake dashboard in
+   AnnotationEditor.tsx carried `royalblue` and `tomato` unnoticed. Don't. */
+.first-run {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 2.5rem;
+  color: var(--foreground);
+}
+
+.first-run__title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.first-run__lead {
+  margin: 0.35rem 0 1.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.first-run__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.first-run__step {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+/* Only the current step is at full strength. One thing to do at a time — a
+   walkthrough where every row looks equally urgent is a checklist, not a guide. */
+.first-run__step[data-state="todo"] { opacity: 0.45; }
+.first-run__step[data-state="done"] { opacity: 0.7; }
+.first-run__step[data-state="current"] { border-color: var(--accent); }
+
+.first-run__bullet {
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+  margin-top: 0.1rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+}
+
+.first-run__step[data-state="done"] .first-run__bullet {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.first-run__body { min-width: 0; }
+
+.first-run__step-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.first-run__optional {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.first-run__detail {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.first-run__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.first-run__primary,
+.first-run__secondary,
+.first-run__skip {
+  min-height: 2.1rem;
+  padding: 0 0.85rem;
+  border-radius: var(--radius-input);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: opacity var(--dur-press) var(--ease-out-strong);
+}
+
+.first-run__primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+
+.first-run__secondary {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.first-run__primary:disabled,
+.first-run__secondary:disabled { opacity: 0.5; cursor: default; }
+
+.first-run__waiting {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.first-run__waiting svg { width: 1rem; height: 1rem; }
+
+.first-run__note {
+  margin: 1rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.first-run__skip {
+  margin-top: 1.4rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

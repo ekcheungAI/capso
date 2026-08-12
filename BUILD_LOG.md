@@ -944,3 +944,133 @@ Supabase migrations were renamed to CLI timestamp convention (four byte-identica
 Hosted reconciliation, verified 2026-08-11 via the Supabase management API against project `xbxedriuelwqjypdkvex`: all eleven renamed migrations are applied version-for-version in `supabase_migrations.schema_migrations`, and Edge function `v1-process-screenshot` v1 is ACTIVE. Combined with the hosted web deployment at capso-cyan.vercel.app, the AI-01 infrastructure gap has closed; the live same-account handoff and no-browser end-to-end proof remain unclaimed. Repository hygiene: `.gitignore` now covers `drafts/*preview*/`, `.playwright-cli/`, `qa/`, `output/`, `supabase/.temp/`, and `package-lock.json`; the stray npm lockfile was removed with owner approval.
 
 Verification on this exact tree: `pnpm verify` passes end to end (workspace Node suites, Edge worker Deno tests, and Rust **188/188**), and `pnpm --filter web build` produces a clean production build under the new `"type": "module"` setting. Physical Mac QA, the 20-capture latency run, the offline drill, signing/notarization, credential rotation, and the five-day dogfood remain open.
+
+---
+
+## Loop 52 — Generated visual language (D17) and the first-run defects it uncovered
+**Date:** 2026-08-12 · **Phase:** P7 Polish + dogfood gate · **Outcome:** partial (web done, Mac + remaining art open)
+
+```
+Objective: better homepage onboarding, with a generated theme/art programme via the Higgsfield MCP.
+Phase/tasks: P7 "Onboarding: ... first-capture nudge" (web half), plus D17 brand reversal.
+In-scope: lib/onboarding.ts, store/index.ts, store/provider.tsx, shell.tsx, first-run.tsx,
+  first-capture.tsx, art.tsx, app/page.tsx, seed.ts, tokens.json, gen-tokens.mjs,
+  drafts/brand/art/**, doc 15, MASTER_PLAN D17, design-qa.md
+Out of scope: Mac first-run, icon glyphs, sample screenshots, landing hero (all still open)
+Done-when: pnpm verify green; first-run e2e covers the three defects; art passes its own gates
+Verification: pnpm verify && pnpm --filter web test:e2e
+```
+
+**What the request turned out to be.** The ask was "better homepage onboarding". The screenshot showed
+a bare dashed box. Investigation found the box was not the problem — three defects were:
+
+1. **First run killed capture.** `shell.tsx` returned early for the picker and never mounted
+   `CaptureLayer`, so drop, paste and the Capture dock were all dead on the one screen that says
+   "drop an image anywhere, paste from the clipboard, or press Capture".
+2. **The welcome was unreachable.** `app/page.tsx` gated it on `screenshots.length === 0 &&
+   threads.length === 0`. A role template creates projects, so that went false immediately and
+   almost every new user landed on "Today's tray" with an empty tray and no welcome at all.
+3. **Its one action was a string.** `EmptyState`'s `action` prop was passed text, so the most
+   important moment in the product had nothing to press — the exact failure the prop's own doc
+   comment at `ui.tsx:491-499` was written to prevent.
+
+**Verification evidence**
+- `pnpm verify` — brand check passed, capture spec passed, lint clean, typecheck clean;
+  tests 124 web + 23 mac + 5 shared + 4 extension node, 188 rust. 0 failed.
+- `pnpm --filter web test:e2e` — 13 passed (8 new in `e2e/first-run.spec.ts`, 5 pre-existing).
+- `pnpm brand:art` — 4 assets validated, p99 chroma 4.2–5.0 against a ceiling of 12,
+  ground hue distance 1.1–1.2 against 6. Public art total 43,116 B of a 1,572,864 B ceiling.
+- Browser QA at 1280px light and dark: picker with art and a live capture dock; role pick lands on
+  the illustrated welcome with a working CTA; one capture flips to the tray and the latch survives
+  reload; samples path shows the one-line nudge.
+- Higgsfield spend: 12 generations, 24 credits of 2651.5 (8 role-card candidates + 4 re-rolls).
+  Preflight probes: 1k and 2k = 2 credits/image, 4k = 4.
+
+**Deviations from plan**
+1. **Two build_art.py gates were wrong and were corrected against real output — this is why the
+   mechanism landed before the art.** `groundDeltaE` used full OKLab distance, which includes
+   lightness, so seven of eight correct frames failed purely because the model exposes brighter or
+   dimmer frame to frame. Now measured in the chroma plane only. Separately `maxChroma: 22` would
+   have passed royalblue (18.8) and was cut to 12 — measured against sand 1.8, clay 2.7, espresso 4.1.
+2. **The sample-screenshot gate was inverted.** The plan asserted samples must sit ΔE ≥ 12 from bone.
+   A realistic light SaaS UI is ΔE 2.9 from bone, so that would have forced every sample dark or
+   heavily tinted. It now asserts a sample carries a brand colour of its OWN (Capso has none by
+   decision), which is the real distinction.
+3. **`--check` disagreed with the build.** It measured the master's bytes instead of the derived
+   output, so it false-failed masters that derive down fine. Both now encode to memory and measure that.
+4. **`needsSetup` and `stage` both encoded one fact** and were updated in different places, so
+   capturing during first run filed the capture and left the picker on screen. `needsSetup` is now
+   derived in the provider's memo and cannot disagree.
+5. **Seed fixtures were renamed off real trademarks first** — Linear/Stripe/Notion/Superhuman/
+   Raycast/Arc became Verrick/Brellow/Palewick/Corveth/Skaldi/Weftly, cleared by search. With an
+   abstract placeholder those titles were annotations; behind a photoreal generated image they would
+   be fabricated depictions of named competitors' UI, in a product selling trustworthiness.
+6. **First art prompt produced bottle caps.** "Crimped rim" was not enough. The fix came from the
+   mark's own source comment, which names the crimp as "what stops this reading as a plain disc, a
+   record or a pill" — re-prompted with all three concentric zones and the notch.
+7. **Character ban NOT reversed.** The owner reversed illustration; the mascot decision of 2026-08-01
+   stands, and doc 15's evidence ("objects in order and zero characters") became the art direction.
+
+**Two latent defects found and recorded, not fixed**
+- `apps/mac/src/AnnotationEditor.tsx:46-71` holds a second fake screenshot that escapes
+  `brand:check` only because it uses CSS *named* colours (`royalblue`, `tomato`), which the
+  scanner's `#[0-9a-fA-F]{3,8}` regex does not match. The scanner has that blind spot generally.
+- The Mac app runs an undocumented **third icon family** — six hand-drawn inline SVGs, no
+  `@phosphor-icons/react` in `apps/mac/package.json`. `design-qa.md`'s Loop-2 "one family" fix only
+  ever covered web.
+
+**Next loop**
+Mac first-run (`onboarding.ts`, `FirstRun.tsx`, two Tauri commands, `onboarding.json`); the three
+`capso-{rack,deck,seat}` glyphs plus absorbing Mac's six inline SVGs via a `glyphComponent()` target
+in `gen-tokens.mjs`; then the 13 sample screenshots (CJK OCR round-trip is a hard gate) and the
+landing hero/OG plate. ~34 generations, ~72 credits estimated.
+
+---
+
+## Loop 53 — Custom glyph family and Mac first run
+**Date:** 2026-08-12 · **Phase:** P7 Polish + dogfood gate · **Outcome:** done (physical Mac QA outstanding)
+
+```
+Objective: close the two items Loop 52 left open on the icon/onboarding side.
+In-scope: drafts/brand/art/glyphs/**, scripts/gen-tokens.mjs (glyphComponent),
+  apps/{web,mac}/**/glyphs.generated.tsx, apps/mac/src/{onboarding.ts,onboarding.check.ts,
+  FirstRun.tsx,App.tsx,App.css,AnnotationEditor.tsx}, 19_BUILD_SEQUENCE.md
+Out of scope: sample screenshots, landing hero/OG plate (still open)
+Done-when: pnpm verify green; glyphs legible at 16px; Mac first run sequences existing commands
+Verification: pnpm verify && pnpm --filter web test:e2e
+```
+
+**Verification evidence**
+- `pnpm verify` — **exit 0**. brand check passed, capture spec passed, lint clean, typecheck clean.
+  Node tests 124 web + **32 mac** (was 23; +9 onboarding checks) + 5 shared + 4 extension; 188 rust.
+- `pnpm --filter web test:e2e` — 13 passed.
+- Glyph QA sheet rendered at 16/18/20/24 plus a 3x blow-up on bone and reviewed by eye.
+
+**Deviations from plan**
+1. **Two glyphs failed their first draft and were redrawn after looking at them.** `rack` used
+   stroked circles for slots and closed into a black bar by 16px — a 1.75 stroke leaves no counter
+   inside a 4px circle — so the slots became filled dots, which have no counter to lose. `deck` used
+   three shallow arcs behind a lid; they merged into it and read as a lightbulb, so it is now one
+   lid with a single well-separated arc behind. Authoring glyphs without rendering them is guessing.
+2. **Eight glyphs, not three.** The plan called for `rack/deck/seat`. The other five are the Mac
+   annotation tools, absorbed from `AnnotationEditor.tsx`'s inline SVGs so the app stops carrying a
+   third icon family. Every generic UI verb still comes from Phosphor: family count 3 -> 2.
+3. **No new Tauri commands.** The plan called for `get_first_run_status` / `complete_first_run` plus
+   an `onboarding.json`. Neither was needed. `hasCaptured` is derived from
+   `get_diagnostics().latency_statistics`, which is `None` until a capture produces a timing sample
+   and whose samples survive restart (`latency.rs`, and the test
+   `latest_twenty_privacy_safe_samples_survive_restart`). Dismissal is a webview localStorage latch;
+   nothing on the Rust side reads it. This kept the change inside the surface that can be verified
+   from here, since the Rust paths cannot be exercised without a real Mac build.
+4. **The login-item step is optional and either answer settles it.** Treating `disabled` as
+   unfinished would leave a permanent unticked row for someone who deliberately said no — pinned by
+   a test, because it is the kind of thing a refactor quietly gets wrong.
+
+**Known gap — say this plainly**
+The Mac walkthrough has **not been run on a real Mac**. It typechecks, its logic is unit-tested, and
+it calls commands that already exist and are already used by Settings — but no Tauri path in it has
+been executed. `19_BUILD_SEQUENCE.md` P7 keeps the line unticked for that reason.
+
+**Next loop**
+13 sample screenshots (CJK OCR round-trip is a hard gate) and the landing hero + OG plate.
+~32 generations, ~68 credits. Then physical Mac QA per `29_PHYSICAL_QA_CHECKLIST.md`.

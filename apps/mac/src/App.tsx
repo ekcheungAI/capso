@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import "./App.css";
+import { FirstRun, firstRunDismissed } from "./FirstRun";
 import {
   cloudAccountPresentation,
   shortcutRecorderLabel,
@@ -167,6 +168,12 @@ function sameSettings(left: ShortcutSettings, right: ShortcutSettings) {
 }
 
 function App() {
+  // Read once, not polled: the walkthrough owns its own completion and calls
+  // onDone. Only the real app can run it, so the dev preview goes straight to
+  // Settings rather than showing a walkthrough whose invoke calls would all fail.
+  const [showFirstRun, setShowFirstRun] = useState(
+    () => isTauriRuntime() && !firstRunDismissed(),
+  );
   const [activeSection, setActiveSection] =
     useState<SettingsSection>("general");
   const screenRecordingButtonRef = useRef<HTMLButtonElement>(null);
@@ -605,6 +612,19 @@ function App() {
   function openSystemPermissions() {
     setActiveSection("general");
     requestAnimationFrame(() => screenRecordingButtonRef.current?.focus());
+  }
+
+  /**
+   * First run covers Settings until it is done or skipped. `12_MAC_APP_PLAN.md`
+   * specified this flow and it did not exist — a new user landed on a settings
+   * panel with four tabs and had to work out that Screen Recording was the thing
+   * standing between them and a screenshot. Deliberately a cover, not a modal:
+   * nothing may block capture (doc 15, interaction principle 2), and the hotkey
+   * keeps working throughout — which is the point, since taking a capture is the
+   * last step.
+   */
+  if (showFirstRun) {
+    return <FirstRun onDone={() => setShowFirstRun(false)} />;
   }
 
   return (

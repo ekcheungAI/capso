@@ -148,9 +148,121 @@ export function fillFor(count: number): Fill {
 }
 
 /** Files this script owns. Anything here is overwritten without asking. */
+/**
+ * The custom glyph family, as a React component — same trick as the mark, and
+ * here for the same reason: a hand-copied `<path d="...">` in a .tsx is the drift
+ * this script exists to prevent.
+ *
+ * Why there are only a few. `design-qa.md` logged "two competing icon families"
+ * as a P1 and fixed it, so every generic UI verb — house, tray, grid, magnifier,
+ * plus, x — stays Phosphor. Nobody ever loved a product for its custom magnifying
+ * glass. What Phosphor cannot express is Capso's own nouns (rack, deck, seat) and
+ * the annotation tools the Mac app had been drawing inline, which was an
+ * undocumented *third* family with no `@phosphor-icons/react` dependency at all.
+ * Emitting web and Mac from one source makes them provably identical, the way
+ * tokens.generated.css already does for colour — so this takes the count 3 -> 2.
+ *
+ * Raster was never an option: the rail renders at 18-20px monochrome, and
+ * drafts/brand/mark/README.md already records what happens there — the crimp ring
+ * "antialiases into a grey smear" below 24px, which is why a separate hand-hinted
+ * 16px master exists.
+ */
+function glyphComponent(src) {
+  const dir = join(ROOT, "drafts/brand/art/glyphs");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".svg")).sort();
+  if (files.length === 0) throw new Error("art/glyphs: no glyphs found");
+
+  const symbols = files.map((file) => {
+    const svg = readFileSync(join(dir, file), "utf8");
+    const name = file.replace(/^capso-|\.svg$/g, "");
+
+    if (!/viewBox="0 0 24 24"/.test(svg)) {
+      throw new Error(`${file}: must be drawn on the 24-unit grid (viewBox="0 0 24 24")`);
+    }
+    // Same rule brand:check enforces on source, applied to the glyph sources so a
+    // literal colour can never reach a component through this door.
+    const literal = svg.match(/(?:fill|stroke)="(?!none|currentColor)([^"]+)"/);
+    if (literal) {
+      throw new Error(`${file}: declares a colour (${literal[1]}) — glyphs must be currentColor`);
+    }
+    const weight = svg.match(/stroke-width="([\d.]+)"/);
+    if (!weight) throw new Error(`${file}: no stroke-width`);
+    if (Number(weight[1]) < 1.5 || Number(weight[1]) > 2) {
+      throw new Error(`${file}: stroke-width ${weight[1]} is outside 1.5-2.0 — it will not sit with Phosphor`);
+    }
+
+    const body = svg
+      .slice(svg.indexOf(">", svg.indexOf("<svg")) + 1, svg.lastIndexOf("</svg>"))
+      .trim()
+      .replace(/\s*\n\s*/g, "\n          ")
+      .replace(/stroke-width=/g, "strokeWidth=")
+      .replace(/stroke-linecap=/g, "strokeLinecap=")
+      .replace(/stroke-linejoin=/g, "strokeLinejoin=")
+      .replace(/(<(?:path|circle|rect|line)\b[^>]*[^/])>/g, "$1 />");
+
+    return `      <symbol id="capso-glyph-${name}" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+          ${body}
+        </g>
+      </symbol>`;
+  });
+
+  const names = files.map((f) => `"${f.replace(/^capso-|\.svg$/g, "")}"`).join(" | ");
+
+  return `${BANNER(src)}
+export type GlyphName = ${names};
+
+/** Renders once, near the root. Every <CapsoGlyph> is a <use> of one of these. */
+export function CapsoGlyphDefs() {
+  return (
+    <svg width="0" height="0" aria-hidden="true" style={{ position: "absolute" }}>
+      <defs>
+${symbols.join("\n")}
+      </defs>
+    </svg>
+  );
+}
+
+/**
+ * Pass a \`label\` to make it announced; without one it is decorative and hidden
+ * from assistive tech — same contract as CapsoMark.
+ */
+export function CapsoGlyph({
+  name,
+  size = 20,
+  className = "",
+  label,
+}: {
+  name: GlyphName;
+  size?: number;
+  className?: string;
+  label?: string;
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      className={className}
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      style={{ display: "block", flex: "none" }}
+    >
+      <use href={\`#capso-glyph-\${name}\`} />
+    </svg>
+  );
+}
+`;
+}
+
 const TARGETS = [
   ["apps/web/components/mark.generated.tsx",
     () => markComponent("drafts/brand/mark/capso-lid.svg")],
+  ["apps/web/components/glyphs.generated.tsx",
+    () => glyphComponent("drafts/brand/art/glyphs/")],
+  ["apps/mac/src/glyphs.generated.tsx",
+    () => glyphComponent("drafts/brand/art/glyphs/")],
   ["apps/web/app/tokens.generated.css", (rel) => css(rel)],
   ["apps/extension/tokens.generated.css", (rel) => css(rel)],
   ["apps/mac/src/tokens.generated.css", (rel) => css(rel)],

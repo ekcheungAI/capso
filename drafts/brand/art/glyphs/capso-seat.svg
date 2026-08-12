@@ -1,0 +1,6 @@
+<!-- Seated: a lid dropped into its slot and stopped dead. The cradle is open at the
+     top because the motion the word describes is downward — see the seat/crimp animation. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3.75 8.25v4.5a5.5 5.5 0 0 0 5.5 5.5h5.5a5.5 5.5 0 0 0 5.5-5.5v-4.5"/>
+  <circle cx="12" cy="12" r="3.6"/>
+</svg>

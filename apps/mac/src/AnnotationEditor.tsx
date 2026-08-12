@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { CapsoGlyph, CapsoGlyphDefs } from "./glyphs.generated";
 import {
   DEFAULT_COLOR,
   hitTest,
@@ -74,21 +75,21 @@ function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * Was four inline `<svg viewBox="0 0 20 20">` literals, plus UndoIcon below, plus
+ * more in CaptureOverlay and PinCapture — an undocumented *third* icon family
+ * with no `@phosphor-icons/react` in apps/mac/package.json at all. design-qa.md's
+ * Loop-2 "one family" fix had only ever covered web. These now come from the same
+ * 24-grid sources the web app uses, compiled by gen-tokens.mjs, so the two
+ * surfaces are provably identical the way tokens.generated.css already makes the
+ * palette identical. Family count goes 3 -> 2, not 2 -> 3.
+ */
 function ToolIcon({ tool }: { tool: Tool }) {
-  if (tool === "arrow") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16 16 4m-6 0h6v6" /></svg>;
-  }
-  if (tool === "box") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="1.5" /></svg>;
-  }
-  if (tool === "text") {
-    return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M10 5v11M7 16h6" /></svg>;
-  }
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.5" y="3.5" width="5" height="5" rx="1" /><rect x="11.5" y="3.5" width="5" height="5" rx="1" /><rect x="3.5" y="11.5" width="5" height="5" rx="1" /><rect x="11.5" y="11.5" width="5" height="5" rx="1" /></svg>;
+  return <CapsoGlyph name={tool} />;
 }
 
 function UndoIcon() {
-  return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 6 3.5 9.5 7 13" /><path d="M4 9.5h7.5a4.5 4.5 0 0 1 0 9H10" /></svg>;
+  return <CapsoGlyph name="undo" />;
 }
 
 function Editor({
@@ -324,6 +325,8 @@ function Editor({
 
   return (
     <main className="annotation-shell">
+      {/* Once, near the root — every CapsoGlyph below is a <use> of these. */}
+      <CapsoGlyphDefs />
       <header className="annotation-toolbar">
         {/* titleBarStyle "Overlay" leaves no titlebar to grab. Only this
             non-interactive brand block drags, so the tool buttons keep working. */}

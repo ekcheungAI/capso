@@ -1,0 +1,11 @@
+<!-- A rack seen from above: the thing captures get seated into. Phosphor has no
+     word for this; Capso does (doc 15 lexicon: rack, slot, seat, pull, lid, crimp).
+     Slots are FILLED dots, not stroked circles. Stroked ones were tried first and
+     closed up into a black bar by 16px — a 1.75 stroke leaves no counter to spare
+     inside a 4px circle. A filled dot has no counter to lose. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.5" y="6.25" width="19" height="11.5" rx="2.75"/>
+  <circle cx="7.5" cy="12" r="1.55" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="12" r="1.55" fill="currentColor" stroke="none"/>
+  <circle cx="16.5" cy="12" r="1.55" fill="currentColor" stroke="none"/>
+</svg>

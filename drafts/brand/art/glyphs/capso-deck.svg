@@ -1,0 +1,8 @@
+<!-- A deck: one lid with another behind it, offset the way a dealt hand sits.
+     Two, not three. Three shallow arcs were tried and merged into the front lid
+     at 16px, reading as a lightbulb. One arc, well clear of the circle, is enough
+     to mean "more than one, stacked". -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="14" cy="14" r="5.75"/>
+  <path d="M4.25 10A5.75 5.75 0 0 1 10 4.25"/>
+</svg>

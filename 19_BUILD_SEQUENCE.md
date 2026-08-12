@@ -217,8 +217,8 @@ loop.
 
 **Tasks:**
 - [ ] Annotation editor on overlay/detail: arrow, box, text, blur; flattened annotated PNG uploaded as the stored version (AC-ANN-01) <!-- partial: `42fcfbf` adds the native four-tool editor and durable flatten path; `4651859` proves exact golden redaction pixels through local save/original protection, clipboard, queue restart recovery, and drain consumption. Physical all-tool QA and a downloaded production object comparison remain. -->
-- [ ] Onboarding: permission walkthrough, hotkey setup, first-capture nudge
-- [ ] Empty states: library, inbox, thread, search-no-results
+- [ ] Onboarding: permission walkthrough, hotkey setup, first-capture nudge <!-- partial 2026-08-12: WEB first-capture nudge done, plus three defects fixed that this line did not anticipate — first run killed the capture layer (Shell returned before mounting CaptureLayer), the welcome screen was unreachable for anyone who picked a role (`threads.length === 0` is false the moment a template creates projects), and its one action was an inert string. Stage machine in `lib/onboarding.ts`, 11 unit checks, 8 e2e in `e2e/first-run.spec.ts`. MAC permission walkthrough and hotkey setup landed in the same loop: `apps/mac/src/onboarding.ts` (pure, 9 checks), `FirstRun.tsx` covering Settings until done or skipped, sequencing the commands App.tsx already had. Remaining on this line: physical QA on a real Mac — none of the Tauri paths have been exercised outside typecheck. -->
+- [ ] Empty states: library, inbox, thread, search-no-results <!-- 2026-08-12: unchanged by the D17 art work. The home first-capture state was replaced by a dedicated component rather than an EmptyState variant, deliberately: `EmptyState` has nine call sites and eight mean "this list is currently empty". These four still need doing. -->
 - [ ] PostHog events per specs/event_schema.md; Sentry release tagging both apps
 - [ ] Dark mode pass; multi-display capture QA; manual UX checklist from `22_TEST_PLAN.md`
 - [ ] Signed + notarized dmg build (Developer ID — owner provides cert; STOP-rule item)
