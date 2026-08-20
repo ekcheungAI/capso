@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Capability for Capso's settings and local history windows",
+  "windows": ["main", "history"],
   "permissions": [
     "core:default",
     "opener:default"

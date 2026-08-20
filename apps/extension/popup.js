@@ -1,7 +1,28 @@
+import { deliveryStatusCopy } from "./popup-status.js";
+
 const go = document.getElementById("go");
 const last = document.getElementById("last");
 const dest = document.getElementById("dest");
 const tabEl = document.getElementById("tab");
+const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
+const project = document.getElementById("project");
+const projectNote = document.getElementById("projectNote");
+
+function selectedMode() {
+  const mode = modeInputs.find((input) => input.checked)?.value;
+  return ["visible", "element", "area", "full_page"].includes(mode) ? mode : "visible";
+}
+
+function updateCaptureLabel() {
+  const mode = selectedMode();
+  go.textContent = mode === "full_page"
+    ? "Capture full page"
+    : mode === "element"
+      ? "Select an element"
+    : mode === "area"
+      ? "Select an area"
+      : "Capture visible area";
+}
 
 /**
  * Report the last capture, the destination, the current tab, and how many
@@ -24,15 +45,10 @@ async function refresh() {
   dest.textContent = status.origin ?? "not set";
   dest.className = "";
 
-  if (status.pending > 0) {
-    last.textContent = `${status.pending} waiting to reach Capso${
-      status.lastResult && !status.lastResult.ok ? ` — ${status.lastResult.message}` : ""
-    }`;
-    last.className = "last";
-  } else if (status.lastResult) {
-    last.textContent = status.lastResult.message;
-    last.className = status.lastResult.ok ? "last" : "last err";
-  }
+  last.textContent = deliveryStatusCopy(status);
+  last.className = status.pending === 0 && status.lastResult && !status.lastResult.ok
+    ? "last err"
+    : "last";
 
   // A queue that is not moving is almost always a wrong address, and the fix
   // lives on a page most people do not know exists. Shown only when something
@@ -49,7 +65,59 @@ document.getElementById("openOptions").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
+document.getElementById("retry").addEventListener("click", async () => {
+  const retry = document.getElementById("retry");
+  retry.disabled = true;
+  retry.textContent = "Retrying…";
+  await chrome.runtime.sendMessage({ type: "drain" }).catch(() => null);
+  await refresh();
+  retry.disabled = false;
+  retry.textContent = "Retry now";
+});
+
 void refresh();
+
+void chrome.storage.local.get("captureMode").then(({ captureMode }) => {
+  const input = modeInputs.find((candidate) => candidate.value === captureMode);
+  if (input) input.checked = true;
+  updateCaptureLabel();
+});
+
+void Promise.all([
+  chrome.runtime.sendMessage({ type: "projects" }),
+  chrome.storage.local.get("captureProjectId"),
+]).then(([result, saved]) => {
+  for (const item of result?.projects ?? []) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    project.appendChild(option);
+  }
+  if ([...project.options].some((option) => option.value === saved.captureProjectId)) {
+    project.value = saved.captureProjectId;
+  } else if (saved.captureProjectId) {
+    void chrome.storage.local.remove("captureProjectId");
+  }
+  if (result?.error) {
+    projectNote.hidden = false;
+    projectNote.textContent = result.error;
+  }
+}).catch(() => {
+  projectNote.hidden = false;
+  projectNote.textContent = "Projects are unavailable; Capso will organise this capture.";
+});
+
+project.addEventListener("change", () => {
+  if (project.value) void chrome.storage.local.set({ captureProjectId: project.value });
+  else void chrome.storage.local.remove("captureProjectId");
+});
+
+for (const input of modeInputs) {
+  input.addEventListener("change", () => {
+    updateCaptureLabel();
+    void chrome.storage.local.set({ captureMode: selectedMode() });
+  });
+}
 
 // A capture may have been queued while the popup was closed; nudging the outbox
 // on open means the count shown is the count after a real delivery attempt.
@@ -68,16 +136,37 @@ void chrome.runtime.sendMessage({ type: "drain" }).then(refresh).catch(() => {})
 })();
 
 go.addEventListener("click", async () => {
+  const mode = selectedMode();
   go.disabled = true;
-  go.textContent = "Capturing…";
-  const res = await chrome.runtime.sendMessage({ type: "capture" });
-  if (res?.ok) {
-    go.textContent = res.pending > 0 ? "Saved — sending" : "Sent to Capso";
-    setTimeout(() => window.close(), 700);
-  } else {
+  go.textContent = mode === "full_page"
+    ? "Capturing full page…"
+    : mode === "element"
+      ? "Select an element on the page…"
+    : mode === "area"
+      ? "Select on the page…"
+      : "Capturing…";
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: "capture",
+      mode,
+      projectId: project.value || null,
+    });
+    if (res?.ok) {
+      go.textContent = res.pending > 0 ? "Saved — sending" : "Sent to Capso";
+      setTimeout(() => window.close(), 700);
+    } else if (res?.cancelled) {
+      go.disabled = false;
+      updateCaptureLabel();
+    } else {
+      go.disabled = false;
+      updateCaptureLabel();
+      last.textContent = res?.message ?? "Failed.";
+      last.className = "last err";
+    }
+  } catch {
     go.disabled = false;
-    go.textContent = "Capture tab";
-    last.textContent = res?.message ?? "Failed.";
+    updateCaptureLabel();
+    last.textContent = "Capso could not start this capture. Try again.";
     last.className = "last err";
   }
 });

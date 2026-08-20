@@ -1,8 +1,9 @@
 "use client";
 
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { LinkSimple, ShieldCheck, X } from "@phosphor-icons/react";
 import { useStore } from "@/lib/store/provider";
 import { getImage, type Intent } from "@/lib/store";
 import { imageFor, INTENT_LABEL, INTENTS, SkeletonGrid } from "@/components/ui";
@@ -10,6 +11,10 @@ import { useReclassify } from "@/lib/reclassify";
 import { AnnotateEditor } from "@/components/annotate";
 import { downscale } from "@/components/capture";
 import { useToast } from "@/components/toast";
+import { useAccount } from "@/components/account-gate";
+import { accountFetch } from "@/lib/supabase/client";
+import { SHARE_EXPIRIES, shareLinkState, type ShareLink } from "@/lib/share-link";
+import { captureDetailPresentation, imageFilePresentation } from "@/lib/capture-detail";
 
 async function copyImagePixels(source: string): Promise<void> {
   const image = new Image();
@@ -38,6 +43,8 @@ async function copyImagePixels(source: string): Promise<void> {
 export default function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const account = useAccount();
   const { ready, get, screenshots, threads, threadName, assign, saveWhySaved, saveIntent, addTag, dropTag, remove, visit, patch } =
     useStore();
   const { reread, busy } = useReclassify();
@@ -62,6 +69,8 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
   const [draft, setDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
+  const sharePreview = process.env.NODE_ENV !== "production" && searchParams.get("preview") === "share";
+  const [sharing, setSharing] = useState(sharePreview);
   const visited = useRef(false);
 
   /**
@@ -111,11 +120,14 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
     return (
       <div className="text-sm">
         <p>That capture is gone.</p>
-        <Link href="/library" className="mt-2 inline-block text-xs underline underline-offset-2">
+        <Link href="/library" className="mt-2 inline-flex min-h-11 items-center text-xs underline underline-offset-2 sm:min-h-0">
           Back to folders
         </Link>
       </div>
     );
+
+  const provenance = captureDetailPresentation(s, account.mode);
+  const file = imageFilePresentation(loaded ?? s.imageDataUrl ?? "", s.originalPath);
 
   const flash = (what: string) => {
     setCopied(what);
@@ -163,9 +175,16 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           }}
         />
       )}
+      {sharing && (
+        <ShareDialog
+          screenshotId={s?.id ?? id}
+          preview={sharePreview}
+          onClose={() => setSharing(false)}
+        />
+      )}
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex items-center gap-2 text-xs">
-          <Link href="/library" className="text-muted hover:text-accent">
+          <Link href="/library" className="inline-flex min-h-11 items-center text-muted hover:text-accent sm:min-h-0">
             ← Folders
           </Link>
           <span className="ml-auto text-muted">
@@ -174,7 +193,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           <button
             disabled={!prev}
             onClick={() => prev && router.push(`/s/${prev.id}`)}
-            className="rounded-md border border-line px-2 py-1 disabled:opacity-30"
+            className="min-h-11 min-w-11 rounded-md border border-line px-2 py-1 disabled:opacity-30 sm:min-h-0 sm:min-w-0"
             aria-label="Previous capture"
           >
             ←
@@ -182,7 +201,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           <button
             disabled={!next}
             onClick={() => next && router.push(`/s/${next.id}`)}
-            className="rounded-md border border-line px-2 py-1 disabled:opacity-30"
+            className="min-h-11 min-w-11 rounded-md border border-line px-2 py-1 disabled:opacity-30 sm:min-h-0 sm:min-w-0"
             aria-label="Next capture"
           >
             →
@@ -218,7 +237,9 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             <Link
               key={n.id}
               href={`/s/${n.id}`}
-              className={`w-14 shrink-0 overflow-hidden rounded-md border transition-[border-color,opacity] duration-[120ms] ${
+              aria-label={`Open ${n.title}${n.id === s.id ? ", current capture" : ""}`}
+              aria-current={n.id === s.id ? "page" : undefined}
+              className={`min-h-11 w-14 shrink-0 overflow-hidden rounded-md border transition-[border-color,opacity] duration-[120ms] sm:min-h-0 ${
                 n.id === s.id ? "border-accent" : "border-line opacity-60 hover:opacity-100"
               }`}
             >
@@ -228,7 +249,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                 alt=""
                 loading="lazy"
                 decoding="async"
-                className="h-10 w-full object-cover object-top"
+                className="h-11 w-full object-cover object-top sm:h-10"
               />
             </Link>
           ))}
@@ -245,14 +266,14 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                 toast("Could not copy image pixels. Download the PNG instead.");
               }
             }}
-            className="rounded-md border border-line px-3 py-1.5"
+            className="min-h-11 rounded-md border border-line px-3 py-1.5 sm:min-h-0"
           >
             Copy image
           </button>
           <a
             href={fullImage}
             download={`${s.title}.png`}
-            className="rounded-md border border-line px-3 py-1.5"
+            className="inline-flex min-h-11 items-center rounded-md border border-line px-3 py-1.5 sm:min-h-0"
           >
             Download
           </a>
@@ -261,11 +282,25 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           {fullImage && (
             <button
               onClick={() => setAnnotating(true)}
-              className="rounded-md border border-line px-3 py-1.5"
+              className="min-h-11 rounded-md border border-line px-3 py-1.5 sm:min-h-0"
             >
               Annotate
             </button>
           )}
+          <button
+            onClick={() => {
+              if (account.mode !== "signed_in" && !sharePreview) {
+                toast("Connect your Capso account before creating a private link.");
+                return;
+              }
+              if (!s.originalPath && !sharePreview) {
+                toast("This capture must finish syncing before it can be shared.");
+                return;
+              }
+              setSharing(true);
+            }}
+            className="min-h-11 rounded-md border border-line px-3 py-1.5 sm:min-h-0"
+          >Share</button>
           {/* Quiet here, prominent in the failure banner above. Re-reading a
               capture that read fine is still worth offering - the guess improves
               once there are more projects and more corrections to learn from. */}
@@ -273,7 +308,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             <button
               onClick={() => void reread(s)}
               disabled={busy === s.id}
-              className="rounded-md border border-line px-3 py-1.5 disabled:opacity-40"
+              className="min-h-11 rounded-md border border-line px-3 py-1.5 disabled:opacity-40 sm:min-h-0"
             >
               {busy === s.id ? "Reading…" : "Read again"}
             </button>
@@ -289,11 +324,11 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
               await remove(s);
               router.push("/");
             }}
-            className="rounded-md px-3 py-1.5 text-muted hover:text-accent"
+            className="min-h-11 rounded-md px-3 py-1.5 text-muted hover:text-accent sm:min-h-0"
           >
             Delete
           </button>
-          {copied && <span className="text-muted">Copied {copied}</span>}
+          {copied && <span role="status" aria-live="polite" className="text-muted">Copied {copied}</span>}
         </div>
       </div>
 
@@ -308,11 +343,56 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
               the real format instead of calling every capture "PNG", which was
               wrong for the whole import path since it encodes JPEG. */}
           <p className="mt-1 text-xs tracking-wide text-muted uppercase">
-            {formatOf(fullImage)} · {s.type.replace(/_/g, " ")}
-            {s.width && s.height ? ` · ${s.width}×${s.height}` : ""} ·{" "}
-            {Math.max(1, Math.round(fullImage.length / 1024))} KB
+            {file.format} · {s.type.replace(/_/g, " ")}
+            {s.width && s.height ? ` · ${s.width}×${s.height}` : ""}
+            {file.size ? ` · ${file.size}` : ""}
           </p>
         </div>
+
+        <dl
+          aria-label="Capture provenance and availability"
+          className="divide-y divide-line rounded-xl border border-line bg-surface px-3"
+        >
+          <div className="py-3">
+            <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">Captured with</dt>
+            <dd className="mt-1 text-xs">
+              <span className="block font-medium">{provenance.origin.label}</span>
+              <span className="mt-0.5 block leading-relaxed text-muted">{provenance.origin.detail}</span>
+              {provenance.sourceUrl && (
+                <a
+                  href={provenance.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-1 inline-flex min-h-11 items-center text-accent underline underline-offset-2 sm:min-h-0"
+                >
+                  Open source page ↗
+                </a>
+              )}
+            </dd>
+          </div>
+          <div className="py-3" data-state={provenance.availability.state}>
+            <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">Library copy</dt>
+            <dd className="mt-1 text-xs">
+              <span className="flex items-center gap-2 font-medium">
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    provenance.availability.state === "waiting" ? "bg-muted" : "bg-accent"
+                  }`}
+                />
+                {provenance.availability.label}
+              </span>
+              <span className="mt-0.5 block leading-relaxed text-muted">{provenance.availability.detail}</span>
+            </dd>
+          </div>
+          <div className="py-3">
+            <dt className="text-[11px] font-medium uppercase tracking-wide text-muted">Editing</dt>
+            <dd className="mt-1 text-xs">
+              <span className="block font-medium">{provenance.editing.label}</span>
+              <span className="mt-0.5 block leading-relaxed text-muted">{provenance.editing.detail}</span>
+            </dd>
+          </div>
+        </dl>
 
         {/* A failed classification used to be a dead end here: no title, no
             summary, no OCR text, and the only "Try again" in the product was in
@@ -327,7 +407,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             <button
               onClick={() => void reread(s)}
               disabled={busy === s.id}
-              className="mt-2 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+              className="mt-2 min-h-11 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40 sm:min-h-0"
             >
               {busy === s.id ? "Reading…" : "Try again"}
             </button>
@@ -343,7 +423,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
           {draft === null ? (
             <button
               onClick={() => setDraft(s.whySaved)}
-              className="w-full text-left text-xs leading-relaxed hover:underline"
+              className="min-h-11 w-full text-left text-xs leading-relaxed hover:underline sm:min-h-0"
             >
               {s.whySaved || <span className="text-muted">Add a reason…</span>}
             </button>
@@ -354,7 +434,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 rows={3}
-                className="w-full rounded-md border border-line bg-surface p-2 text-xs"
+                className="min-h-11 w-full rounded-md border border-line bg-surface p-2 text-xs"
               />
               <div className="flex gap-2">
                 <button
@@ -362,11 +442,11 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                     await saveWhySaved(s, draft.trim());
                     setDraft(null);
                   }}
-                  className="rounded-md bg-accent px-3 py-1 text-xs text-accent-ink"
+                  className="min-h-11 rounded-md bg-accent px-3 py-1 text-xs text-accent-ink sm:min-h-0"
                 >
                   Save
                 </button>
-                <button onClick={() => setDraft(null)} className="text-xs text-muted">
+                <button onClick={() => setDraft(null)} className="min-h-11 min-w-11 text-xs text-muted sm:min-h-0 sm:min-w-0">
                   Cancel
                 </button>
               </div>
@@ -401,7 +481,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
               setTagDraft("");
             }}
             placeholder="Add a tag…"
-            className="mt-2 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+            className="mt-2 min-h-11 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
           />
 
           {s.tags.length > 0 && (
@@ -419,7 +499,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             aria-label="Intent"
             value={s.intent}
             onChange={(e) => void saveIntent(s, e.target.value as Intent)}
-            className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+            className="min-h-11 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
           >
             {INTENTS.map((i) => (
               <option key={i} value={i}>
@@ -434,7 +514,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
             aria-label="Project"
             value={s.threadId ?? ""}
             onChange={(e) => void assign(s, e.target.value || null, "manual")}
-            className="w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+            className="min-h-11 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
           >
             <option value="">Inbox</option>
             {threads.map((t) => (
@@ -451,7 +531,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
         </Field>
 
         <Field label={`OCR text (${s.ocrText.length} chars)`}>
-          <button onClick={() => setOcrOpen((o) => !o)} className="text-xs underline underline-offset-2">
+          <button onClick={() => setOcrOpen((o) => !o)} className="min-h-11 min-w-11 text-xs underline underline-offset-2 sm:min-h-0 sm:min-w-0">
             {ocrOpen ? "Collapse" : "Expand"}
           </button>
           {ocrOpen && (
@@ -464,7 +544,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
                   void navigator.clipboard.writeText(s.ocrText);
                   flash("text");
                 }}
-                className="mt-1.5 text-xs underline underline-offset-2"
+                className="mt-1.5 min-h-11 min-w-11 text-xs underline underline-offset-2 sm:min-h-0 sm:min-w-0"
               >
                 Copy text
               </button>
@@ -484,7 +564,7 @@ export default function DetailPage({ params }: { params: Promise<{ id: string }>
 function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemove: () => void }) {
   return (
     <span
-      className={`group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+      className={`group inline-flex min-h-11 items-center gap-1 rounded-full py-0.5 pl-3 text-xs sm:min-h-0 ${
         mine ? "bg-accent/12 text-foreground" : "border border-line text-muted"
       }`}
     >
@@ -492,7 +572,7 @@ function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemov
       <button
         onClick={onRemove}
         aria-label={`Remove tag ${label}`}
-        className="opacity-0 transition-opacity duration-[120ms] group-hover:opacity-100 focus-visible:opacity-100 hover:text-accent"
+        className="min-h-11 min-w-11 opacity-0 transition-opacity duration-[120ms] group-hover:opacity-100 focus-visible:opacity-100 hover:text-accent sm:min-h-0 sm:min-w-0"
       >
         ×
       </button>
@@ -500,16 +580,333 @@ function Tag({ label, mine, onRemove }: { label: string; mine?: boolean; onRemov
   );
 }
 
-/** "data:image/webp;base64,…" → "WEBP". Falls back for the placeholder SVG. */
-function formatOf(dataUrl: string) {
-  return dataUrl.match(/^data:image\/([a-z+]+)/i)?.[1]?.toUpperCase() ?? "Unknown";
-}
-
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
       <p className="mb-1.5 text-xs uppercase tracking-wide text-muted">{label}</p>
       {children}
+    </div>
+  );
+}
+
+function ShareDialog({
+  screenshotId,
+  preview,
+  onClose,
+}: {
+  screenshotId: string;
+  preview: boolean;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [expiresInSeconds, setExpiresInSeconds] = useState(86_400);
+  const [passwordProtected, setPasswordProtected] = useState(false);
+  const [password, setPassword] = useState("");
+  const [oneTime, setOneTime] = useState(false);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [createdLinkId, setCreatedLinkId] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [busy, setBusy] = useState<"load" | "create" | string | null>("load");
+  const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const focusedRef = useRef(false);
+
+  const load = useCallback(async () => {
+    await Promise.resolve();
+    setBusy("load");
+    setError(null);
+    if (preview) {
+      setLinks([{
+        id: "33333333-3333-4333-8333-333333333333",
+        createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+        hasPassword: true,
+        oneTime: false,
+        consumedAt: null,
+        revokedAt: null,
+        viewCount: 2,
+      }]);
+      setBusy(null);
+      return;
+    }
+    try {
+      const response = await accountFetch("/api/share-links", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "list", screenshotId }),
+      });
+      const result = await response.json() as { links?: ShareLink[]; error?: string };
+      if (!response.ok || !result.links) throw new Error(result.error ?? "Private links could not be loaded.");
+      setLinks(result.links);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Private links could not be loaded.");
+    } finally {
+      setBusy(null);
+    }
+  }, [preview, screenshotId]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timeout);
+  }, [load]);
+  useEffect(() => {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => openerRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (busy === null && !focusedRef.current) {
+      focusedRef.current = true;
+      closeRef.current?.focus();
+    }
+  }, [busy]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && busy === null) onClose();
+      if (event.key === "Tab" && dialogRef.current) {
+        const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )].filter((element) => element.getClientRects().length > 0);
+        if (!focusable.length) return;
+        const first = focusable[0]!;
+        const last = focusable.at(-1)!;
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, onClose]);
+
+  async function createLink() {
+    setBusy("create");
+    setError(null);
+    try {
+      if (passwordProtected && (password.length < 6 || new TextEncoder().encode(password).length > 128)) {
+        throw new Error("Use a password between 6 and 128 bytes.");
+      }
+      if (preview) {
+        const token = `sh_${"A".repeat(43)}`;
+        const linkId = "44444444-4444-4444-8444-444444444444";
+        setCreatedToken(token);
+        setCreatedLinkId(linkId);
+        setLinkCopied(false);
+        setLinks((current) => [{
+          id: linkId,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + expiresInSeconds * 1_000).toISOString(),
+          hasPassword: passwordProtected,
+          oneTime,
+          consumedAt: null,
+          revokedAt: null,
+          viewCount: 0,
+        }, ...current]);
+        setPassword("");
+        return;
+      }
+      const response = await accountFetch("/api/share-links", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          screenshotId,
+          expiresInSeconds,
+          password: passwordProtected ? password : null,
+          oneTime,
+        }),
+      });
+      const result = await response.json() as { token?: string; link?: ShareLink; error?: string };
+      if (!response.ok || !result.token || !result.link) throw new Error(result.error ?? "Private link could not be created.");
+      setCreatedToken(result.token);
+      setCreatedLinkId(result.link.id);
+      setLinkCopied(false);
+      setLinks((current) => [result.link!, ...current]);
+      setPassword("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Private link could not be created.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function revoke(linkId: string) {
+    setBusy(linkId);
+    setError(null);
+    try {
+      if (!preview) {
+        const response = await accountFetch("/api/share-links", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "revoke", screenshotId, linkId }),
+        });
+        if (!response.ok) throw new Error("Private link could not be revoked.");
+      }
+      setLinks((current) => current.map((link) => link.id === linkId
+        ? { ...link, revokedAt: new Date().toISOString() }
+        : link));
+      if (createdLinkId === linkId) {
+        setCreatedToken(null);
+        setCreatedLinkId(null);
+        setLinkCopied(false);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Private link could not be revoked.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-foreground/35 p-3 backdrop-blur-sm" role="presentation">
+      <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="share-dialog-title"
+        className="grid max-h-[calc(100vh-1.5rem)] w-full max-w-2xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[24px] border border-line bg-surface shadow-2xl"
+      >
+        <header className="flex items-start gap-4 border-b border-line px-5 py-4 sm:px-6">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent">
+            <LinkSimple size={20} weight="bold" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">Private delivery</p>
+            <h2 id="share-dialog-title" className="mt-0.5 text-xl font-semibold tracking-tight">Share this capture</h2>
+            <p className="mt-1 text-xs leading-5 text-muted">Only the image is shared. Title, OCR, tags and projects stay private.</p>
+          </div>
+          <button
+            ref={closeRef}
+            type="button"
+            aria-label="Close sharing"
+            disabled={busy !== null}
+            onClick={onClose}
+            className="ml-auto grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line disabled:opacity-50"
+          ><X size={16} /></button>
+        </header>
+
+        <div className="overflow-y-auto px-5 py-5 sm:px-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-semibold">
+              Expires
+              <select
+                value={expiresInSeconds}
+                onChange={(event) => setExpiresInSeconds(Number(event.currentTarget.value))}
+                className="min-h-11 rounded-xl border border-line bg-background px-3 text-sm font-normal"
+              >
+                {SHARE_EXPIRIES.map((choice) => <option key={choice.seconds} value={choice.seconds}>{choice.label}</option>)}
+              </select>
+            </label>
+            <label className="flex min-h-11 items-center gap-3 rounded-xl border border-line bg-background px-3 text-sm">
+              <input type="checkbox" checked={oneTime} onChange={(event) => setOneTime(event.currentTarget.checked)} />
+              <span><strong className="block text-xs">One-time link</strong><small className="text-muted">Consumes after image delivery</small></span>
+            </label>
+          </div>
+
+          <label className="mt-4 flex min-h-11 items-center gap-3 rounded-xl border border-line bg-background px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={passwordProtected}
+              onChange={(event) => {
+                setPasswordProtected(event.currentTarget.checked);
+                if (!event.currentTarget.checked) setPassword("");
+              }}
+            />
+            <span><strong className="block text-xs">Password protection</strong><small className="text-muted">Send the password separately</small></span>
+          </label>
+          {passwordProtected && (
+            <label className="mt-3 grid gap-1.5 text-xs font-semibold">
+              Password
+              <input
+                type="password"
+                autoComplete="new-password"
+                minLength={6}
+                maxLength={128}
+                value={password}
+                onChange={(event) => setPassword(event.currentTarget.value)}
+                placeholder="At least 6 characters"
+                className="min-h-11 rounded-xl border border-line bg-background px-3 text-sm font-normal"
+              />
+            </label>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-background p-3">
+            <span className="flex items-center gap-2 text-xs text-muted"><ShieldCheck size={17} className="text-accent" /> 256-bit link · token never stored</span>
+            <button
+              type="button"
+              disabled={busy !== null || (passwordProtected && password.length < 6)}
+              onClick={() => void createLink()}
+              className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-ink disabled:opacity-50"
+            >{busy === "create" ? "Creating…" : "Create private link"}</button>
+          </div>
+
+          {createdToken && (
+            <div className="mt-4 rounded-2xl border border-accent/40 bg-accent/8 p-4" aria-live="polite">
+              <p className="text-sm font-semibold">Link ready</p>
+              <p className="mt-1 text-xs leading-5 text-muted">Copy it now. Capso stores only its hash, so this exact URL cannot be shown again.</p>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`${window.location.origin}/share#${createdToken}`);
+                    setLinkCopied(true);
+                  } catch {
+                    setError("The private link could not be copied. Check browser clipboard permission and try again.");
+                  }
+                }}
+                className="mt-3 min-h-11 rounded-xl border border-accent/35 bg-surface px-4 text-sm font-semibold text-accent"
+              >{linkCopied ? "Copied" : "Copy private link"}</button>
+            </div>
+          )}
+
+          {error && <p role="alert" className="mt-4 rounded-xl bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>}
+
+          <div className="mt-6 border-t border-line pt-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold">Existing links</h3>
+              <span className="text-xs text-muted">{links.length} of 20</span>
+            </div>
+            {busy === "load" ? (
+              <p className="mt-3 text-xs text-muted">Loading private links…</p>
+            ) : links.length === 0 ? (
+              <p className="mt-3 text-xs leading-5 text-muted">No links yet. Nothing is public until you create one.</p>
+            ) : (
+              <ul className="mt-3 grid gap-2">
+                {links.map((link) => {
+                  const state = shareLinkState(link);
+                  return (
+                    <li key={link.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line px-3 py-3 text-xs">
+                      <span className={`h-2 w-2 rounded-full ${state === "active" ? "bg-accent" : "bg-muted"}`} aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <strong className="block text-foreground">{state === "active" ? "Active" : state.replace("_", " ")}</strong>
+                        <small className="text-muted">
+                          Expires {new Date(link.expiresAt).toLocaleString("en-GB")} · {link.viewCount} {link.viewCount === 1 ? "view" : "views"}
+                          {link.hasPassword ? " · password" : ""}{link.oneTime ? " · one-time" : ""}
+                        </small>
+                      </span>
+                      {state === "active" && (
+                        <button
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() => void revoke(link.id)}
+                          aria-label={`Revoke link expiring ${new Date(link.expiresAt).toLocaleString("en-GB")}`}
+                          className="min-h-11 rounded-lg px-3 font-semibold text-danger disabled:opacity-50"
+                        >{busy === link.id ? "Revoking…" : "Revoke"}</button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

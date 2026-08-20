@@ -100,6 +100,26 @@ export function uuidFromSeed(name: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * Materialise a readable screenshot fixture at the storage boundary.
+ *
+ * Both project references must move with the screenshot id. Mapping only the
+ * confirmed `threadId` leaves pending sample suggestions pointing at names such
+ * as `"onboarding-teardown"` while every stored thread has a UUID. The UI then
+ * renders a convincing but false "Confirm - Inbox" action because it cannot
+ * resolve the suggested project.
+ */
+export function screenshotWithSeedUuids(screenshot: Screenshot): Screenshot {
+  return {
+    ...screenshot,
+    id: uuidFromSeed(screenshot.id),
+    threadId: screenshot.threadId ? uuidFromSeed(screenshot.threadId) : null,
+    suggestedThreadId: screenshot.suggestedThreadId
+      ? uuidFromSeed(screenshot.suggestedThreadId)
+      : null,
+  };
+}
+
 // ---------------------------------------------------------- search text ----
 
 /**

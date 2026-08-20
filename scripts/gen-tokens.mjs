@@ -53,6 +53,12 @@ const css = (from) =>
   vars("dark").replace(/^ {2}/gm, "    ") +
   `\n  }\n}\n`;
 
+const extensionPixels = (from) =>
+  BANNER(from) +
+  `export const capturePixel = Object.freeze({\n` +
+  `  jpegBackground: ${JSON.stringify(t.capture.jpegBackground)},\n` +
+  `});\n`;
+
 /**
  * The mark, as a React component.
  *
@@ -265,6 +271,7 @@ const TARGETS = [
     () => glyphComponent("drafts/brand/art/glyphs/")],
   ["apps/web/app/tokens.generated.css", (rel) => css(rel)],
   ["apps/extension/tokens.generated.css", (rel) => css(rel)],
+  ["apps/extension/tokens.generated.js", (rel) => extensionPixels(rel)],
   ["apps/mac/src/tokens.generated.css", (rel) => css(rel)],
   [
     "drafts/brand/tokens.generated.json",
@@ -287,6 +294,7 @@ const HEX_ALLOWED = new Set([
   "packages/shared/src/tokens.json", // the source itself
   "apps/web/app/tokens.generated.css",
   "apps/extension/tokens.generated.css",
+  "apps/extension/tokens.generated.js",
   "apps/mac/src/tokens.generated.css",
   "drafts/brand/tokens.generated.json",
   "apps/web/components/mark.generated.tsx",

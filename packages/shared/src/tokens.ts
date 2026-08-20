@@ -35,7 +35,9 @@ export type Scheme = "light" | "dark";
  * `organise-surface` is the single stronger warm shelf in the app. It is
  * reserved for the active sorting stage, so the capsule metaphor gains depth
  * without introducing a decorative accent colour or weakening screenshot
- * ownership of the rest of the canvas.
+ * ownership of the rest of the canvas. `media-surface` is deliberately stable
+ * across schemes: letterboxed video needs one neutral black stage so the media,
+ * not the surrounding interface theme, defines its own frame.
  */
 export const color: Record<Scheme, Readonly<Record<string, string>>> = raw.color;
 

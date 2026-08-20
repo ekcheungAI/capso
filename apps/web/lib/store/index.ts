@@ -1,6 +1,6 @@
 import { backend, splitsOriginal } from "./backend";
 import { isOwnCapture, onboardingStage } from "@/lib/onboarding";
-import { uuidFromSeed } from "./map";
+import { screenshotWithSeedUuids, uuidFromSeed } from "./map";
 import { seedScreenshots, seedThreads } from "./seed";
 import { roleById } from "@/lib/templates";
 import { routeByConfidence } from "@capso/shared";
@@ -57,11 +57,7 @@ const seededThreads = (): Thread[] =>
   seedThreads.map((t) => ({ ...t, id: uuidFromSeed(t.id) }));
 
 const seededScreenshots = (): Screenshot[] =>
-  seedScreenshots.map((s) => ({
-    ...s,
-    id: uuidFromSeed(s.id),
-    threadId: s.threadId ? uuidFromSeed(s.threadId) : null,
-  }));
+  seedScreenshots.map(screenshotWithSeedUuids);
 
 export async function loadAll() {
   const b = await backend();
@@ -476,6 +472,15 @@ export async function setArchived(s: Screenshot, archived: boolean) {
 /** "Forget this" — removing a correction removes it from the few-shot window. */
 export async function forgetCorrection(id: string) {
   await (await backend()).del("corrections", id);
+}
+
+/** Restores one exact learning example only while its capture still exists. */
+export async function restoreCorrection(correction: Correction): Promise<boolean> {
+  const b = await backend();
+  const screenshot = await b.get<Screenshot>("screenshots", correction.screenshotId);
+  if (!screenshot) return false;
+  await b.put("corrections", correction);
+  return true;
 }
 
 export async function addMessage(m: Omit<Message, "id" | "createdAt">): Promise<Message> {

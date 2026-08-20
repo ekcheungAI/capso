@@ -18,6 +18,7 @@ import {
   serializeSearchFilters,
   type SearchFilters,
 } from "@/lib/search-filters";
+import { defaultSearchCandidates, searchOrderLabel } from "@/lib/search-presentation";
 
 const EXAMPLES = [
   "what are some good designs I have put together for mobile UI",
@@ -74,8 +75,7 @@ export default function SearchPage() {
     () => {
       const candidates = debouncedQ
         ? retrieve(debouncedQ, screenshots, threads, screenshots.length, revisits)
-        : screenshots
-            .filter((s) => !s.archived)
+        : defaultSearchCandidates(screenshots)
             .map((s) => ({ s, score: 0, why: "filters" }));
       return candidates.filter(({ s }) => matchesSearchFilters(s, filters)).slice(0, 12);
     },
@@ -148,11 +148,18 @@ export default function SearchPage() {
         </p>
         <h1 className="text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Ask your organised memory</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Describe what you remember. Capso searches the image, its context, and the way you organised it.
+          Describe what you remember. Capso searches titles, OCR text, your notes, tags, projects and recent activity.
         </p>
       </header>
 
       <div className="mt-8 space-y-6">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {busy
+          ? "Reading your captures."
+          : answer
+            ? `Answer ready. ${plural(answer.cited.length, "capture")} cited.`
+            : note ?? ""}
+      </p>
       <label htmlFor="memory-search" className="sr-only">Search query</label>
       <div className="flex items-center gap-2 rounded-[22px] border border-line bg-surface p-2 shadow-sm transition focus-within:border-muted focus-within:ring-2 focus-within:ring-line">
         <MagnifyingGlass size={20} className="ml-3 shrink-0 text-muted" />
@@ -245,7 +252,7 @@ export default function SearchPage() {
         <section aria-labelledby="search-starts-heading">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 id="search-starts-heading" className="text-sm font-semibold">Good places to start</h2>
-            <span className="hidden text-xs text-muted sm:inline">Searches words, images, projects and history</span>
+            <span className="hidden text-xs text-muted sm:inline">Searches saved text, organisation and activity</span>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
           {EXAMPLES.map((e, index) => (
@@ -290,10 +297,10 @@ export default function SearchPage() {
       )}
 
       {(q || hasFilters) && (
-        <p className="text-xs text-muted">
-          {shown.length} match{shown.length === 1 ? "" : "es"}
-          {shown.length > 0 && " · sorted by relevance"}
-        </p>
+          <p className="text-xs text-muted">
+            {shown.length} match{shown.length === 1 ? "" : "es"}
+          {shown.length > 0 && ` · ${searchOrderLabel(Boolean((asked && answer) || debouncedQ))}`}
+          </p>
       )}
 
       {(q || hasFilters) && shown.length === 0 && !busy && (
@@ -335,7 +342,8 @@ function Cited({ text, lookup }: { text: string; lookup: (id: string) => Screens
           <Link
             key={i}
             href={`/s/${shot.id}`}
-            className="mx-1 inline-flex items-center gap-1 rounded border border-line px-1 py-0.5 align-middle text-xs text-muted transition-colors duration-[120ms] hover:border-accent hover:text-foreground"
+            aria-label={`Open source ${shot.title}`}
+            className="mx-1 inline-flex min-h-11 items-center gap-1 rounded border border-line px-2 align-middle text-xs text-muted transition-colors duration-[120ms] hover:border-accent hover:text-foreground"
           >
             <span className="inline-block h-3.5 w-3.5 overflow-hidden rounded-[2px]">
               <Thumb s={shot} className="h-3.5 w-3.5 rounded-none border-0 object-cover" />

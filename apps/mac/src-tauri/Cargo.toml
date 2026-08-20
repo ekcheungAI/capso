@@ -38,7 +38,10 @@ url = "2.5.8"
 time = { version = "0.3.54", features = ["parsing"] }
 # Tauri already brings `image` with PNG support; the direct declaration lets
 # native drag-out create a bounded preview without adding another codec stack.
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+# GIF export is encoded in-process from bounded Apple AVFoundation frames. It
+# does not require or shell out to a separately installed ffmpeg binary.
+gif = "0.14.2"
 # Already present transitively through Tauri; declared directly so capture ids
 # are real UUIDs at the filesystem and ingest boundary.
 uuid = { version = "1", features = ["v4"] }
@@ -51,10 +54,20 @@ reqwest = { version = "0.13.4", features = ["blocking"], default-features = true
 # These bindings expose Apple's own Screen Recording preflight and Login Items
 # APIs. They are already in the native Tauri dependency family and do not run
 # install scripts or background helpers.
-objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGEventSource", "CGEventTypes", "CGWindow"] }
+objc2 = "0.6.4"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFNumber", "CFPreferences", "CFPropertyList", "CFString"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGEventSource", "CGEventTypes", "CGImage", "CGWindow"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMTime"] }
+# AVAssetImageGenerator decodes local H.264 through Apple's on-device media
+# stack and applies the source track transform before each bounded GIF frame.
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetImageGenerator", "AVCaptureDevice", "AVMediaFormat", "block2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+block2 = "0.6.2"
 objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "objc2", "objc2-foundation", "SMAppService"] }
+# Apple Vision performs accurate multilingual OCR entirely on the device. Only
+# the request, handler and observation surfaces needed for PNG history are linked.
+objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNObservation", "VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNTypes"] }
 # Small native drag-session adapter maintained by the Tauri ecosystem. Its
 # macOS dependency family is already present through Tauri/objc2.
 drag = "2.1.1"

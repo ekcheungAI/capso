@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "capture-timer",
-  "description": "Scoped event access for Capso's visible area capture timer",
+  "description": "Scoped event access for Capso's visible capture timer",
   "windows": ["capture-timer"],
   "permissions": ["core:event:default"]
 }

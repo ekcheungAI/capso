@@ -100,14 +100,22 @@ pub(crate) fn prepare_drag_artifact(
     filename: &str,
 ) -> Result<PreparedDragArtifact, String> {
     validate_capture_source(capture_directory, source)?;
-    let filename = safe_drag_filename(filename)?;
     let original = fs::read(source)
         .map_err(|error| format!("Could not read the capture for dragging: {error}"))?;
+    prepare_drag_bytes(export_root, &original, filename)
+}
+
+pub(crate) fn prepare_drag_bytes(
+    export_root: &Path,
+    original: &[u8],
+    filename: &str,
+) -> Result<PreparedDragArtifact, String> {
+    let filename = safe_drag_filename(filename)?;
     if !original.starts_with(PNG_SIGNATURE) {
-        return Err("The active capture is no longer a valid PNG.".into());
+        return Err("The dragged image is not a valid PNG.".into());
     }
     let decoded = image::load_from_memory_with_format(&original, ImageFormat::Png)
-        .map_err(|error| format!("Could not decode the capture for dragging: {error}"))?;
+        .map_err(|error| format!("Could not decode the image for dragging: {error}"))?;
     let preview_png = bounded_preview(decoded)?;
 
     fs::create_dir_all(export_root)
@@ -122,7 +130,7 @@ pub(crate) fn prepare_drag_artifact(
             .write(true)
             .create_new(true)
             .open(&export_path)?;
-        output.write_all(&original)?;
+        output.write_all(original)?;
         output.sync_all()
     })();
     if let Err(error) = write_result {
@@ -195,10 +203,10 @@ pub(crate) fn cleanup_drag_exports(export_root: &Path) -> io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cleanup_drag_artifact, cleanup_drag_exports, prepare_drag_artifact,
+        cleanup_drag_artifact, cleanup_drag_exports, prepare_drag_artifact, prepare_drag_bytes,
         DRAG_PREVIEW_MAX_HEIGHT, DRAG_PREVIEW_MAX_WIDTH, PNG_SIGNATURE,
     };
-    use image::{DynamicImage, ImageFormat};
+    use image::{DynamicImage, GenericImageView, ImageFormat};
     use std::{fs, io::Cursor, path::Path};
 
     const CAPTURE_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f9227a";
@@ -273,6 +281,41 @@ mod tests {
             fs::read(&source).expect("cleanup preserves source"),
             original
         );
+    }
+
+    #[test]
+    fn flattened_annotation_drag_is_an_isolated_exact_png() {
+        let root = tempfile::tempdir().expect("temporary app directory");
+        let exports = root.path().join("drag-exports");
+        let flattened = png(320, 180);
+
+        let artifact = prepare_drag_bytes(&exports, &flattened, "Capso Annotation 2026-08-13.png")
+            .expect("prepare flattened drag artifact");
+
+        assert_eq!(
+            fs::read(&artifact.export_path).expect("read flattened drag copy"),
+            flattened
+        );
+        assert_eq!(artifact.bytes, flattened.len() as u64);
+        assert_eq!(
+            image::load_from_memory_with_format(&artifact.preview_png, ImageFormat::Png)
+                .expect("decode flattened drag preview")
+                .dimensions(),
+            (DRAG_PREVIEW_MAX_WIDTH, 101)
+        );
+        let export_path = artifact.export_path.clone();
+        cleanup_drag_artifact(&artifact);
+        assert!(!export_path.exists());
+    }
+
+    #[test]
+    fn flattened_annotation_drag_rejects_invalid_or_unsafe_pixels_before_export() {
+        let root = tempfile::tempdir().expect("temporary app directory");
+        let exports = root.path().join("drag-exports");
+
+        assert!(prepare_drag_bytes(&exports, b"not a png", "Capso Annotation.png").is_err());
+        assert!(prepare_drag_bytes(&exports, &png(8, 8), "../outside.png").is_err());
+        assert!(!exports.exists());
     }
 
     #[test]

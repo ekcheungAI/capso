@@ -23,6 +23,7 @@ import { ShortcutSheet } from "@/components/shortcuts";
 import { FirstRun } from "@/components/first-run";
 import { DropZone, useDragCount } from "@/components/ui";
 import { ImportLocal } from "@/components/import-local";
+import { DevicesAndSync } from "@/components/devices-sync";
 import { useAccount } from "@/components/account-gate";
 import { useToast } from "@/components/toast";
 import { useMoveCaptures } from "@/lib/move";
@@ -215,6 +216,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
             >
               <Plus size={18} /> Add screenshots
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProjectsOpen(false);
+                setSettingsOpen(true);
+              }}
+              className="flex min-h-11 items-center gap-2 rounded-xl px-3 text-left text-xs font-medium hover:bg-background"
+            >
+              <GearSix size={18} /> Settings
+            </button>
           </nav>
           <div className="grid gap-1">
             {threads.filter((thread) => !thread.archived).map((thread) => (
@@ -258,8 +269,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <p className="font-semibold text-foreground">{account.mode === "signed_in" ? account.email : "Local-only library"}</p>
               <p className="mt-0.5 text-xs leading-5">{account.mode === "signed_in" ? "Synced Capso account" : "Captures stay in this browser until you connect an account"}</p>
             </div>
+            {account.mode === "signed_in" && <DevicesAndSync email={account.email} onNavigate={() => setSettingsOpen(false)} />}
             <button type="button" onClick={() => setKeys(true)} className="flex min-h-11 items-center rounded-xl px-3 text-left hover:bg-background hover:text-foreground">Keyboard shortcuts</button>
-            <Link href="/extension" onClick={() => setSettingsOpen(false)} className="flex min-h-11 items-center rounded-xl px-3 hover:bg-background hover:text-foreground">Get the browser extension</Link>
+            {account.mode === "local" && <Link href="/extension" onClick={() => setSettingsOpen(false)} className="flex min-h-11 items-center rounded-xl px-3 hover:bg-background hover:text-foreground">Get the browser extension</Link>}
             {account.mode === "signed_in" && <ImportLocal />}
             {account.mode === "local" && account.openAccount && (
               <button type="button" onClick={account.openAccount} className="flex min-h-11 items-center rounded-xl px-3 text-left font-semibold text-accent hover:bg-background">

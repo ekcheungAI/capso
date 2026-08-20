@@ -7,6 +7,7 @@ import { ConfidenceBar, EmptyState, IntentChip, SkeletonGrid, Thumb } from "@/co
 import { useToast } from "@/components/toast";
 import { useReclassify } from "@/lib/reclassify";
 import { verb } from "@/lib/plural";
+import { inboxReviewPresentation } from "@/lib/inbox-review";
 
 /**
  * Inbox triage — keyboard-first per 07: j/k navigate, ⏎ accepts the suggestion,
@@ -80,14 +81,21 @@ export default function InboxPage() {
       <div>
         <h1 className="text-3xl font-semibold tracking-[-0.04em]">Today’s tray</h1>
         <p className="mt-1 text-xs text-muted">
-          {inbox.length} {verb(inbox.length, "needs", "need")} a decision. Anything above 80% confidence was filed automatically.{" "}
-          <span className="text-xs">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
+          {inbox.length} {verb(inbox.length, "needs", "need")} a decision. A matched project at 80% confidence or higher was filed automatically.{" "}
+          <span className="hidden text-xs sm:inline">j/k move · ⏎ accept · 1–{threads.length} pick project</span>
         </p>
       </div>
 
       <ul className="space-y-3">
-        {inbox.map((s, i) => (
-          <li
+        {inbox.map((s, i) => {
+          const review = inboxReviewPresentation(
+            s.status,
+            s.simulated,
+            s.suggestedThreadId,
+            s.confidence,
+          );
+          return (
+            <li
             key={s.id}
             className={`flex gap-4 rounded-xl bg-surface p-3 ring-1 ${
               i === cursor ? "ring-2 ring-accent" : "ring-line"
@@ -106,21 +114,21 @@ export default function InboxPage() {
                 <IntentChip intent={s.intent} />
                 {/* A confidence bar over a classification that never happened
                     reads as a model judgement. It is not one. */}
-                {s.status === "unprocessed" ? (
+                {review.statusLabel ? (
                   <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
-                    Couldn’t be read. Try again
+                    {review.statusLabel}
                   </span>
-                ) : s.simulated ? (
-                  <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
-                    Sample data
-                  </span>
-                ) : (
+                ) : review.showConfidence ? (
                   <ConfidenceBar value={s.confidence} />
-                )}
+                ) : null}
               </div>
 
               <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{s.summary}</p>
               <p className="mt-1 text-xs text-muted italic">{s.whySaved}</p>
+              <p className="mt-2 text-xs text-muted">
+                <span className="font-medium text-foreground">Why it needs you: </span>
+                {review.reason}
+              </p>
 
               {s.suggestedThreadId && (
                 <p className="mt-2 text-xs">
@@ -158,17 +166,18 @@ export default function InboxPage() {
                 </select>
 
                 <button
-                  disabled={busy === s.id}
+                  disabled={busy === s.id || s.status === "processing"}
                   onClick={() => void reread(s)}
                   className="min-h-11 rounded-md border border-line px-3 text-xs disabled:opacity-40"
                 >
-                  {busy === s.id ? "Reading…" : "Try again"}
+                  {s.status === "processing" ? "Still reading…" : busy === s.id ? "Reading…" : "Try again"}
                 </button>
                 <span className="text-xs text-muted">Ignoring leaves it here</span>
               </div>
             </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

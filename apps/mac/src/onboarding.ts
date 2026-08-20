@@ -14,7 +14,7 @@
  * the only thing in this app that can hold one.
  */
 
-export type StepId = "permission" | "hotkey" | "login" | "capture";
+export type StepId = "permission" | "hotkey" | "login" | "library" | "capture";
 
 export type StepState = "done" | "current" | "todo" | "skipped";
 
@@ -34,6 +34,10 @@ export type FirstRunInput = {
   launchAtLogin: "enabled" | "disabled" | string;
   /** A hotkey always has a default, so this is "has the user seen it", not "is it set". */
   hotkeyConfirmed: boolean;
+  /** A configured build may connect; an unconfigured build must say why it cannot. */
+  cloudConfigured: boolean;
+  /** Both answers are valid, but silence is not an answer. */
+  libraryChoice: "connected" | "local_only" | "undecided";
   hasCaptured: boolean;
 };
 
@@ -57,6 +61,12 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
     optional: true,
   },
   {
+    id: "library",
+    title: "Connect your Capso library",
+    detail: "Use one private library across this Mac, the web, and your Chrome extension.",
+    optional: false,
+  },
+  {
     id: "capture",
     title: "Take your first capture",
     detail: "Press the shortcut. The capture appears and files itself.",
@@ -74,9 +84,25 @@ function isSatisfied(id: StepId, input: FirstRunInput): boolean {
       // Either answer settles it. Treating `disabled` as unfinished would leave a
       // permanent unticked row for a user who deliberately said no.
       return input.launchAtLogin === "enabled" || input.launchAtLogin === "disabled";
+    case "library":
+      return input.libraryChoice !== "undecided";
     case "capture":
       return input.hasCaptured;
   }
+}
+
+function detailFor(step: (typeof ORDER)[number], input: FirstRunInput) {
+  if (step.id !== "library") return step.detail;
+  if (input.libraryChoice === "connected") {
+    return "Connected. New captures can sync to your private Capso library.";
+  }
+  if (input.libraryChoice === "local_only") {
+    return "Local only. You can connect later in Account Settings without moving your originals.";
+  }
+  if (!input.cloudConfigured) {
+    return "Cloud sync is unavailable in this build. Captures still stay private on this Mac.";
+  }
+  return step.detail;
 }
 
 /**
@@ -96,7 +122,7 @@ export function firstRunSteps(input: FirstRunInput): Step[] {
     } else {
       state = "todo";
     }
-    return { ...step, state };
+    return { ...step, detail: detailFor(step, input), state };
   });
 }
 

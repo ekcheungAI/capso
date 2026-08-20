@@ -1,7 +1,7 @@
 /**
  * Capso capture path for browser tabs.
  *
- * Captures the visible tab, compresses it here, and hands it to the outbox,
+ * Captures a visible viewport or scrollable page, compresses it here, and hands it to the outbox,
  * which owns delivery. Browser tabs only — native app windows (Figma desktop,
  * Xcode, Cursor) still need the Mac app. See D11.
  *
@@ -11,14 +11,28 @@
  */
 
 import { origin } from "./config.js";
-import { captureVisibleTab } from "./capture.js";
-import { ALARM, count, drain, enqueue } from "./outbox.js";
+import { CaptureCoordinator } from "./capture-coordinator.js";
+import { captureArea, captureElement, captureFullPage, captureVisibleTab } from "./capture.js";
+import { ALARM, all, count, drain, enqueue } from "./outbox.js";
+import { fetchProjects, PROJECT_ID } from "./projects.js";
 
-async function capture() {
-  const shot = await captureVisibleTab();
+const captureCoordinator = new CaptureCoordinator();
+
+async function captureOnce(mode, projectId) {
+  const shot = mode === "full_page"
+    ? await captureFullPage()
+    : mode === "element"
+      ? await captureElement()
+    : mode === "area"
+      ? await captureArea()
+      : await captureVisibleTab();
+  if (shot.cancelled) return shot;
   if (!shot.ok) return fail(shot.message);
 
-  await enqueue(shot.capture);
+  await enqueue({
+    ...shot.capture,
+    projectId: typeof projectId === "string" && PROJECT_ID.test(projectId) ? projectId : null,
+  });
   // Report on the capture, not on the delivery. The image is safe either way,
   // and blocking the report on a network round-trip is what made a working
   // capture and a failed one look identical.
@@ -32,6 +46,15 @@ async function capture() {
     await record(true, `Saved. ${pending} waiting to reach Capso — ${result.lastError ?? "retrying"}`);
   }
   return { ok: true, pending };
+}
+
+async function capture(mode = "visible", requestedProjectId) {
+  return captureCoordinator.run(async () => {
+    const projectId = requestedProjectId === undefined
+      ? (await chrome.storage.local.get("captureProjectId")).captureProjectId
+      : requestedProjectId;
+    return captureOnce(mode, projectId);
+  });
 }
 
 function fail(message) {
@@ -135,21 +158,43 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.commands.onCommand.addListener((command) => {
   if (command === "capture-tab") void capture();
+  if (command === "capture-element") void capture("element");
+  if (command === "capture-area") void capture("area");
+  if (command === "capture-full-page") void capture("full_page");
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (msg?.type === "capture") {
-    capture().then(respond);
+    const mode = ["visible", "element", "area", "full_page"].includes(msg.mode) ? msg.mode : "visible";
+    capture(mode, msg.projectId).then(respond);
     return true; // async response
   }
   if (msg?.type === "getOrigin") {
     origin().then((base) => respond({ origin: base }));
     return true;
   }
+  if (msg?.type === "projects") {
+    fetchProjects().then(respond);
+    return true;
+  }
   if (msg?.type === "status") {
     (async () => {
       const { lastResult } = await chrome.storage.local.get("lastResult");
-      respond({ origin: await origin(), pending: await count(), lastResult: lastResult ?? null });
+      const pendingItems = await all();
+      const oldestAt = pendingItems
+        .map((item) => item.at)
+        .filter(Boolean)
+        .sort()[0] ?? null;
+      const lastError = [...pendingItems]
+        .sort((left, right) => String(right.at).localeCompare(String(left.at)))
+        .find((item) => item.lastError)?.lastError ?? null;
+      respond({
+        origin: await origin(),
+        pending: pendingItems.length,
+        oldestAt,
+        lastError,
+        lastResult: lastResult ?? null,
+      });
     })();
     return true;
   }

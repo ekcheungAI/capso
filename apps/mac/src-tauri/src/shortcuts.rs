@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, path::Path};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum CaptureAction {
     Region,
@@ -20,7 +20,7 @@ impl CaptureAction {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Region => "Region",
             Self::Window => "Window",

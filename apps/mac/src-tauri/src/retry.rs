@@ -10,6 +10,7 @@ use std::{
 
 pub(crate) const CONNECTIVITY_POLL_INTERVAL_MS: u64 = 5_000;
 pub(crate) const RETRY_WAKE_REARM_MS: u64 = 30_000;
+pub(crate) const REMOTE_DISCOVERY_INTERVAL_MS: u64 = 60_000;
 
 const CONNECTIVITY_UNKNOWN: u8 = 0;
 const CONNECTIVITY_OFFLINE: u8 = 1;
@@ -66,6 +67,48 @@ impl ConnectivityState {
 pub(crate) struct RetryDeadlinePlanner {
     fired_deadline_ms: Option<u64>,
     fired_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RemoteDiscoveryPlanner {
+    next_poll_at_ms: Option<u64>,
+}
+
+impl RemoteDiscoveryPlanner {
+    pub(crate) fn observe(
+        &mut self,
+        now_ms: u64,
+        signed_in: bool,
+        connectivity_available: bool,
+    ) -> Option<DrainWake> {
+        if !signed_in {
+            self.next_poll_at_ms = None;
+            return None;
+        }
+        let deadline = *self
+            .next_poll_at_ms
+            .get_or_insert_with(|| now_ms.saturating_add(REMOTE_DISCOVERY_INTERVAL_MS));
+        if connectivity_available && deadline <= now_ms {
+            self.next_poll_at_ms = Some(now_ms.saturating_add(REMOTE_DISCOVERY_INTERVAL_MS));
+            Some(DrainWake::RemotePoll)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn wait_ms(&self, now_ms: u64, signed_in: bool) -> Option<u64> {
+        if !signed_in {
+            return None;
+        }
+        self.next_poll_at_ms.map(|deadline| {
+            let remaining = deadline.saturating_sub(now_ms);
+            if remaining == 0 {
+                CONNECTIVITY_POLL_INTERVAL_MS
+            } else {
+                remaining
+            }
+        })
+    }
 }
 
 impl RetryDeadlinePlanner {
@@ -195,8 +238,8 @@ impl SystemConnectivityProbe {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectivityState, ConnectivityTransition, RetryDeadlinePlanner,
-        CONNECTIVITY_POLL_INTERVAL_MS, RETRY_WAKE_REARM_MS,
+        ConnectivityState, ConnectivityTransition, RemoteDiscoveryPlanner, RetryDeadlinePlanner,
+        CONNECTIVITY_POLL_INTERVAL_MS, REMOTE_DISCOVERY_INTERVAL_MS, RETRY_WAKE_REARM_MS,
     };
     use crate::drain::DrainWake;
 
@@ -309,6 +352,46 @@ mod tests {
         assert_eq!(
             RetryDeadlinePlanner::wait_ms(1_000, None, true, &state),
             Some(CONNECTIVITY_POLL_INTERVAL_MS)
+        );
+    }
+
+    #[test]
+    fn remote_discovery_polls_only_while_signed_in_and_never_busy_loops_offline() {
+        let mut planner = RemoteDiscoveryPlanner::default();
+        assert_eq!(planner.observe(1_000, false, true), None);
+        assert_eq!(planner.wait_ms(1_000, false), None);
+
+        assert_eq!(planner.observe(1_000, true, true), None);
+        assert_eq!(
+            planner.wait_ms(1_000, true),
+            Some(REMOTE_DISCOVERY_INTERVAL_MS)
+        );
+        assert_eq!(
+            planner.observe(1_000 + REMOTE_DISCOVERY_INTERVAL_MS, true, true),
+            Some(DrainWake::RemotePoll)
+        );
+        assert_eq!(
+            planner.wait_ms(1_000 + REMOTE_DISCOVERY_INTERVAL_MS, true),
+            Some(REMOTE_DISCOVERY_INTERVAL_MS)
+        );
+
+        let due = 1_000 + REMOTE_DISCOVERY_INTERVAL_MS * 2;
+        assert_eq!(planner.observe(due, true, false), None);
+        assert_eq!(
+            planner.wait_ms(due, true),
+            Some(CONNECTIVITY_POLL_INTERVAL_MS)
+        );
+        assert_eq!(
+            planner.observe(due + CONNECTIVITY_POLL_INTERVAL_MS, true, true),
+            Some(DrainWake::RemotePoll)
+        );
+        assert_eq!(
+            planner.observe(due + CONNECTIVITY_POLL_INTERVAL_MS, false, true),
+            None
+        );
+        assert_eq!(
+            planner.wait_ms(due + CONNECTIVITY_POLL_INTERVAL_MS, false),
+            None
         );
     }
 }

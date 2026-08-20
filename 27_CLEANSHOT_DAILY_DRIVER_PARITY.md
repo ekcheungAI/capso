@@ -1,5 +1,7 @@
 # 27 — CleanShot Daily-Driver Parity
 
+> **Scope note (2026-08-12):** This document is the M0 narrow screenshot-dogfood gate, not the full CleanShot replacement contract. Full-product status, including the capabilities intentionally excluded below, is tracked in `drafts/2026-08-12_capso-full-product-design-review.md`. Capso must not be called a complete CleanShot replacement until every category in that contract is verified.
+
 > Owner-approved working contract, 2026-08-08. This supplements `04_MVP_SCOPE.md`,
 > `05_FEATURE_SPEC_CAPTURE.md`, `12_MAC_APP_PLAN.md`, and `21_ACCEPTANCE_CRITERIA.md`.
 > It defines the narrower claim “Elvin can stop using CleanShot X for daily screenshots,”
@@ -41,7 +43,7 @@ continuously observe, sample, record, or ingest the screen.
 | OVL-01 | Overlay appears on the capture display, stays above windows, never steals focus, supports Copy, Save, Annotate, drag-out, and Close, and can be restored from recent history. | Focus/multi-display/manual QA |
 | ANN-01 | Arrow, box, text, and irreversible blur work; saved/copied/uploaded pixels are the flattened result. | Pixel test + manual QA |
 | DUR-01 | Original pixels are persisted locally before any network or AI call. Offline captures survive restart, retry idempotently, and are deleted locally only after confirmed remote persistence. | Automated queue test + offline drill |
-| HIS-01 | Every successful capture is recoverable from Capso history/library with timestamp and original pixels; the menu exposes the eight most recent local records instantly. | Integration + manual QA |
+| HIS-01 | Every successful capture is recoverable from Capso history/library with timestamp and original pixels; the menu exposes the eight most recent local records instantly, while the native History window exposes the newest 500 with month filters and exact Quick Access restore. | Integration + manual QA |
 | AI-01 | Upload, OCR, summary, intent, tags, and project routing complete in the background while all Capso browser tabs are closed. | End-to-end native test |
 | LRN-01 | Three equivalent project corrections cause the fourth similar capture to use the corrected destination, matching AC-COR-01. | Scripted evaluation |
 | RET-01 | OCR exact-text and vague-memory queries retrieve the expected capture under the existing search gates. | Golden query evaluation |

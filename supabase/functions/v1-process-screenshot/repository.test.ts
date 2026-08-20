@@ -13,7 +13,7 @@ import type { ClaimedJob, ProcessCompletion } from "./worker.ts";
 const USER = "018f22c4-cada-7c6b-9d5b-fc35f7f92279";
 const SHOT = "018f22c4-cada-7c6b-9d5b-fc35f7f92270";
 
-Deno.test("storage reads accept only the claimed owner and exact PNG identity", () => {
+Deno.test("storage reads accept only the claimed owner and an exact supported raster identity", () => {
   assert.equal(
     canonicalOriginalPath(USER, SHOT, `${USER}/${SHOT}.png`),
     `${USER}/${SHOT}.png`,
@@ -22,12 +22,19 @@ Deno.test("storage reads accept only the claimed owner and exact PNG identity", 
     canonicalOriginalPath(USER, SHOT, `originals/${USER}/${SHOT}.png`),
     `${USER}/${SHOT}.png`,
   );
+  for (const extension of ["jpg", "jpeg", "webp"]) {
+    assert.equal(
+      canonicalOriginalPath(USER, SHOT, `${USER}/${SHOT}.${extension}`),
+      `${USER}/${SHOT}.${extension}`,
+    );
+  }
 
   for (
     const path of [
       `other/${SHOT}.png`,
       `${USER}/other.png`,
-      `${USER}/${SHOT}.jpg`,
+      `${USER}/${SHOT}.gif`,
+      `${USER}/${SHOT}.png.exe`,
       `${USER}/nested/${SHOT}.png`,
       `originals//${USER}/${SHOT}.png`,
       `originals/${USER}/../${SHOT}.png`,
@@ -38,6 +45,36 @@ Deno.test("storage reads accept only the claimed owner and exact PNG identity", 
       /storage path/i,
     );
   }
+});
+
+Deno.test("repository accepts JPEG bytes when the claimed storage path is JPEG", async () => {
+  const fetcher: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/storage/v1/object/authenticated/originals/")) {
+      return new Response(new Uint8Array([255, 216, 255, 224]));
+    }
+    if (url.includes("/project_threads?") || url.includes("/user_corrections?")) {
+      return Response.json([]);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const repository = new SupabaseWorkerRepository({
+    url: "https://project.supabase.co",
+    serviceRoleKey: "service-test",
+    fetcher,
+  });
+  const context = await repository.loadContext({
+    id: 8,
+    userId: USER,
+    screenshotId: SHOT,
+    storagePath: `${USER}/${SHOT}.jpg`,
+    attempt: 1,
+    maxAttempts: 3,
+    workerId: "worker-test",
+    pageUrl: null,
+    pageTitle: null,
+  });
+  assert.equal(context.image.mediaType, "image/jpeg");
 });
 
 Deno.test("repository claims through service-role RPC and loads no more than 20 recent project corrections", async () => {

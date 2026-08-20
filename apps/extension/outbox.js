@@ -1,4 +1,6 @@
 import { deviceToken, newId, origin } from "./config.js";
+import { thumbnail } from "./capture.js";
+import { directDeliveryOutcome } from "./delivery.js";
 
 /**
  * The durable half of the capture path.
@@ -62,11 +64,9 @@ export async function enqueue(capture) {
 }
 
 /**
- * Push everything pending, then retire whatever the web app has confirmed.
- *
- * Order matters: confirmation is checked *after* sending, so a capture that was
- * delivered and stored during this same drain is retired in one pass rather than
- * waiting for the next alarm.
+ * Push everything pending. A direct account delivery retires only after the
+ * server echoes the exact screenshot id. Deployments without that endpoint use
+ * the older open-tab relay until they are upgraded.
  */
 export async function drain() {
   const items = await all();
@@ -80,13 +80,47 @@ export async function drain() {
 
   let sent = 0;
   let lastError = null;
+  let usedLegacy = false;
 
   for (const item of items) {
     try {
+      const upgradedCapture = item.capture.thumbDataUrl
+        ? item.capture
+        : { ...item.capture, thumbDataUrl: await thumbnail(item.capture.imageDataUrl) };
+      const direct = await fetch(`${base}/api/extension/ingest`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          deviceToken: device,
+          capturedAt: item.at,
+          ...upgradedCapture,
+        }),
+      });
+      const directBody = await direct.json().catch(() => null);
+      const outcome = directDeliveryOutcome(direct.status, directBody, item.id);
+
+      if (outcome.kind === "delivered") {
+        await drop(item.id);
+        sent++;
+        continue;
+      }
+      if (outcome.kind === "unpaired") {
+        lastError = "This device code is not paired — open Capso → Get extension, then save it again.";
+        await put({ ...item, capture: upgradedCapture, attempts: item.attempts + 1, lastError });
+        continue;
+      }
+      if (outcome.kind === "retry") {
+        lastError = outcome.message;
+        await put({ ...item, capture: upgradedCapture, attempts: item.attempts + 1, lastError });
+        continue;
+      }
+
+      usedLegacy = true;
       const res = await fetch(`${base}/api/ingest`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: item.id, deviceToken: device, ...item.capture }),
+        body: JSON.stringify({ id: item.id, deviceToken: device, ...upgradedCapture }),
       });
 
       if (res.status === 507) {
@@ -111,14 +145,14 @@ export async function drain() {
       }
 
       sent++;
-      await put({ ...item, attempts: item.attempts + 1, lastError: null });
+      await put({ ...item, capture: upgradedCapture, attempts: item.attempts + 1, lastError: null });
     } catch {
       lastError = `Capso isn't reachable at ${base}.`;
       await put({ ...item, attempts: item.attempts + 1, lastError });
     }
   }
 
-  await retireConfirmed(base);
+  if (usedLegacy) await retireConfirmed(base);
   return { sent, pending: await count(), lastError };
 }
 

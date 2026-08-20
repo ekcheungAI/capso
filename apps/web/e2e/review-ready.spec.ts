@@ -130,6 +130,17 @@ test("mobile More sheet owns focus, closes with Escape, and keeps 44px controls"
   ).toEqual([]);
   await expectNoSeriousViolations(page, '[role="dialog"]');
 
+  await dialog.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("dialog", { name: "Capso settings" })).toBeVisible();
+
+  // Close Settings so the focus-return assertion still verifies the original
+  // More trigger rather than a synthetic second journey.
+  await page.getByRole("button", { name: "Close panel" }).click();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await expect(page.getByRole("dialog", { name: "More" })).toBeVisible();
+
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
@@ -179,4 +190,34 @@ test("delete confirmation distinguishes cloud deletion from retained Mac origina
   });
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(dialogMessage).resolves.toMatch(/cloud copy.*Mac original.*stays local/i);
+});
+
+test("mobile capture detail keeps every visible control touch-sized", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto("/library");
+  await page.getByRole("button", { name: /Explore with sample captures/ }).click();
+  await page.locator('a[href^="/s/"]').first().click();
+
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  const undersized = await page.locator("main").evaluate((main) =>
+    [...main.querySelectorAll<HTMLElement>("a, button, input, select, textarea")]
+      .filter((element) => {
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          box.width > 0 &&
+          box.height > 0 &&
+          (box.width < 44 || box.height < 44)
+        );
+      })
+      .map((element) => ({
+        label: element.getAttribute("aria-label") || element.textContent?.trim() || element.tagName,
+        width: Math.round(element.getBoundingClientRect().width),
+        height: Math.round(element.getBoundingClientRect().height),
+      })),
+  );
+
+  expect(undersized).toEqual([]);
 });

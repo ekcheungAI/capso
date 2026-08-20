@@ -21,6 +21,7 @@
       label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
       input {
         width: 100%;
+        min-height: 44px;
         box-sizing: border-box;
         padding: 8px 10px;
         border: 1px solid var(--line);
@@ -32,6 +33,7 @@
       input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
       button {
+        min-height: 44px;
         padding: 8px 14px;
         border: 0;
         border-radius: var(--radius-input);
@@ -45,6 +47,7 @@
       button:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
       .note { font-size: 12px; color: var(--muted); min-height: 1.4em; }
       .ok { color: var(--accent); }
+      .error { color: var(--danger); }
       hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
       .hint { font-size: 12px; color: var(--muted); }
       code {
@@ -55,18 +58,20 @@
   </head>
   <body>
     <h1>Capso</h1>
-    <p class="sub">Where this extension sends captures.</p>
+    <p class="sub">Pair this browser with your private Capso library.</p>
 
-    <label for="origin">Capso address</label>
-    <input id="origin" type="url" placeholder="http://localhost:3000" spellcheck="false" />
+    <form id="settings">
+      <label for="origin">Capso address</label>
+      <input id="origin" type="url" placeholder="http://localhost:3000" spellcheck="false" />
 
-    <label for="device" style="margin-top: 16px">Device code</label>
-    <input id="device" type="text" placeholder="from Capso → Get extension" spellcheck="false" />
+      <label for="device" style="margin-top: 16px">Device code</label>
+      <input id="device" type="text" placeholder="from Capso → Get extension" spellcheck="false" />
 
-    <div class="row">
-      <button id="save" type="button">Save</button>
-      <span class="note" id="note"></span>
-    </div>
+      <div class="row">
+        <button id="save" type="submit">Save</button>
+        <span class="note" id="note" role="status" aria-live="polite"></span>
+      </div>
+    </form>
 
     <hr />
     <p class="hint">
@@ -74,15 +79,14 @@
       Capso address.
     </p>
     <p class="hint">
-      The device code pairs this extension with one browser. Copy it from the
-      <strong>Get extension</strong> page inside Capso. Without it, a capture could be
-      collected by any other browser you have Capso open in — with it, captures only ever
-      reach this one.
+      The device code pairs this extension with the account open on Capso&apos;s
+      <strong>Get extension</strong> page. Capso stores only a one-way fingerprint of the
+      code, and switching accounts produces a different one.
     </p>
     <p class="hint">
       Captures are stored inside this extension the moment you take them and are re-sent
-      until Capso confirms it has them, so closing the app, going offline or restarting the
-      browser cannot lose one.
+      until your account confirms the exact capture ID. With a hosted account, delivery no
+      longer needs a Capso tab to stay open.
     </p>
 
     <script src="options.js"></script>

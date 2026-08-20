@@ -6,3 +6,19 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/v1-process-screenshot/deno.json"
 entrypoint = "./functions/v1-process-screenshot/index.ts"
+
+[functions.v1-extension-ingest]
+enabled = true
+# A paired device code is the credential. The function hashes it before lookup;
+# raw device codes are never persisted or logged.
+verify_jwt = false
+import_map = "./functions/v1-extension-ingest/deno.json"
+entrypoint = "./functions/v1-extension-ingest/index.ts"
+
+[functions.v1-share-screenshot]
+enabled = true
+# Public share tokens are verified inside the function after hashing. Owner
+# actions independently verify a permanent Supabase user JWT before service-role access.
+verify_jwt = false
+import_map = "./functions/v1-share-screenshot/deno.json"
+entrypoint = "./functions/v1-share-screenshot/index.ts"

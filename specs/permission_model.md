@@ -106,16 +106,34 @@ Clients render images via `createSignedUrl` with **60s expiry** (detail view) / 
 
 Review cadence: re-audit this file when adding any new capture kind, provider, or the first non-owner user.
 
+## Mac capture-time project filing (added 2026-08-12)
+
+Quick Access loads at most 50 non-archived project IDs/names through the Mac's existing authenticated Supabase session. The REST request is explicitly filtered by `auth.uid()` and RLS remains authoritative; access and refresh tokens never enter the webview, URL, capture payload or durable queue. Selecting a destination writes only the canonical project UUID into the exact still-pending capture entry while Quick Access owns its pre-upload reservation. Stale presentations, restored history captures, released reservations and active uploads cannot change it.
+
+The native ingest RPC derives the capture owner from the verified JWT, revalidates that the selected project is active for that owner, and stores manual provenance. Background AI may still record its suggestion, but cannot replace a manual, Inbox or corrected destination. A stolen project UUID alone grants no read or write authority.
+
+## Mac same-account reconnect (added 2026-08-12)
+
+An expired refresh session is surfaced as an account action, not as a generic queue failure. Captures and their originals remain in the durable local queue. Reconnect reads the verified email from the existing Keychain session, retains that session until a fresh PKCE callback succeeds, and only accepts a callback whose Supabase user ID matches the saved user ID. A different account cannot take ownership of the queue through reconnect; deliberate account switching still requires the separate sign-out path.
+
+The Settings timestamp is also receipt-derived: `Last synced` records the durable transition into `uploaded` only after the server acknowledges the exact capture ID. Starting a retry, opening Settings or merely reaching the network does not advance it.
+
+The Mac installation secret is separate from the Supabase session and stored under a separate Keychain service. The database stores only a SHA-256 fingerprint plus owner-readable device metadata. Native ingest requires a matching authenticated owner, device ID, raw secret fingerprint and non-revoked row on every registration; revocation therefore works independently of the lifetime of an already-issued account JWT. The secret is redacted from Rust `Debug`, errors and product telemetry. It appears only transiently in the encrypted RPC request body and must not be enabled in gateway body logging.
+
 ## Chrome extension (added 2026-08-01)
 
 This document had no extension threat model, despite the extension shipping in loop 10.
 
 **What it can reach.** `activeTab` only — granted per user gesture (toolbar click or ⌘⇧U), never ambient. It has no `tabs` permission, so it cannot enumerate or read tabs the user has not explicitly captured. `host_permissions` is the localhost default plus whatever single origin the user saves in options, requested through `optional_host_permissions` at save time rather than shipped as a wildcard.
 
-**What it captures.** The visible viewport of the active tab, plus that tab's URL and title. Chrome refuses `chrome:`, `edge:`, `about:`, `devtools:` and `view-source:` by policy, and the extension checks those before asking.
+**What it captures.** The user chooses the visible viewport, a selected rectangle or a full scrollable page, plus that tab's URL and title. Area/full-page modes add the `scripting` permission but keep host access temporary through `activeTab`; access arrives only after the toolbar or shortcut gesture. Area mode uses an isolated Shadow DOM selector, removes it before the retina screenshot and treats Escape as a silent cancellation. Full-page mode measures/scrolls the main frame, hides already-captured fixed/sticky overlays, and restores the page in `finally`. Chrome refuses `chrome:`, `edge:`, `about:`, `devtools:` and `view-source:` in Capso's policy boundary, and the extension checks those before asking.
 
-**Where it goes.** To the configured Capso origin only. The ingest endpoint accepts cross-origin requests exclusively from `chrome-extension://` origins, and only `POST`. The drain (`GET`) is same-origin, so only a Capso tab can read queued captures — until 2026-08-01 it carried `access-control-allow-origin: *`, meaning any site the user visited could read the full contents of screenshots taken from their private tabs, or inject forged ones.
+**Where it goes.** To the configured Capso origin only. Direct ingest accepts cross-origin requests exclusively from `chrome-extension://` origins and only `POST`, bounds the full JSON body, verifies JPEG/WebP signatures and resolves the owner from a registered device fingerprint. The migration-only relay drain remains same-origin, so only a Capso tab can read legacy queued captures — until 2026-08-01 it carried `access-control-allow-origin: *`, meaning any site the user visited could read private screenshots or inject forged ones.
 
-**Redaction gap, stated plainly.** §Blur-before-upload is the only pre-cloud redaction control in this model, and the extension has no annotation surface — so a browser capture reaches the classifier unredacted. A capture containing a secret cannot be blurred before it leaves the machine. Until region capture and annotation exist in the extension, the mitigation is behavioural: use the Mac app for anything sensitive.
+**Redaction gap, stated plainly.** Area mode can minimise what is collected, but the extension still has no annotation surface — so the chosen pixels reach the classifier unredacted. A secret inside the selected area cannot be blurred before it leaves the machine. Until secure annotation exists in the extension, use the Mac app for anything sensitive.
 
-**No identity yet.** The extension holds no credential. Attribution to a user is unsolved and blocks direct-to-Supabase writes; see `api_contracts.md` §Chrome extension.
+**Full-page bounds.** Chrome limits `captureVisibleTab` to two calls per second. Capso spaces tiles at 600 ms, draws them directly into a bounded canvas, caps one page at 30 tiles / 1600×12000 output pixels / 2.25 MiB encoded JPEG, and fails explicitly above those limits. This avoids unbounded memory and request bodies; it does not yet prove every virtualised or infinitely scrolling site.
+
+**Scoped device identity.** The extension holds one high-entropy, account-scoped bearer code in `chrome.storage.local`. The signed-in web page registers only its SHA-256 hash; raw codes never enter Postgres. The Edge Function uses its service-role key to resolve one active `extension_devices` row, and the RPC independently derives the capture owner from that row. A different account produces a different code, revocation is row-level, object keys are owner-prefixed, retries never overwrite existing pixels before the RPC proves identity, and only an exact screenshot-ID receipt lets the extension delete its local copy. Anyone who steals the raw code can deliver captures to that account until it is revoked, so it must be scrubbed from logs, analytics, error bodies and support screenshots.
+
+The same code may read at most 50 active project names/descriptions for capture-time filing. It stays in `x-capso-device`, never a URL/query string. The Edge Function derives the owner from the active device row, filters projects by that owner and non-archived state, and the ingest RPC revalidates the selected UUID against the same owner before assigning it. AI processing can record a suggestion but cannot overwrite an explicit manual destination.

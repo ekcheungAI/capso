@@ -58,6 +58,13 @@ export async function requireSession(): Promise<string> {
  */
 export async function accountFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   if (!isConfigured()) return fetch(input, init);
+  if (
+    process.env.NODE_ENV !== "production" &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("preview") === "devices"
+  ) {
+    return fetch(input, init);
+  }
 
   const { data, error } = await supabase().auth.getSession();
   const account = permanentAccountFromSession(data.session);

@@ -5,6 +5,11 @@ import CaptureOverlay from "./CaptureOverlay";
 import AnnotationEditor from "./AnnotationEditor";
 import PinCapture from "./PinCapture";
 import CaptureTimer from "./CaptureTimer";
+import HistoryView from "./HistoryView";
+import CaptureHud from "./CaptureHud";
+import FreezeScreen from "./FreezeScreen";
+import AreaSelector from "./AreaSelector";
+import RecordingStudio from "./RecordingStudio";
 import { color, type Scheme } from "@capso/shared/tokens";
 
 const parameters = new URLSearchParams(window.location.search);
@@ -29,8 +34,18 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <AnnotationEditor />
     ) : surface === "pin" ? (
       <PinCapture />
+    ) : surface === "recording" ? (
+      <RecordingStudio />
     ) : surface === "timer" ? (
       <CaptureTimer />
+    ) : surface === "capture-hud" ? (
+      <CaptureHud />
+    ) : surface === "freeze" ? (
+      <FreezeScreen />
+    ) : surface === "area-selector" ? (
+      <AreaSelector />
+    ) : surface === "history" ? (
+      <HistoryView />
     ) : (
       <App />
     )}

@@ -6,6 +6,7 @@
   --background: #f4f0eb;
   --surface: #faf8f4;
   --organise-surface: #ebe3d5;
+  --media-surface: #111111;
   --foreground: #1f1f1e;
   --muted: #6f6a62;
   --line: rgb(31 31 30 / 0.10);
@@ -41,6 +42,7 @@
     --background: #141412;
     --surface: #1c1c19;
     --organise-surface: #27241f;
+    --media-surface: #111111;
     --foreground: #ededea;
     --muted: #9a9890;
     --line: rgb(237 237 234 / 0.12);

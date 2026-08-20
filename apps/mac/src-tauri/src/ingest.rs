@@ -43,6 +43,8 @@ pub(crate) struct NativeIngestRequest {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) bytes: u64,
+    #[serde(default)]
+    pub(crate) project_id: Option<String>,
 }
 
 impl NativeIngestRequest {
@@ -51,6 +53,16 @@ impl NativeIngestRequest {
             return Err(IngestContractError::new(
                 "ingest_id_invalid",
                 "The native capture identifier is not a canonical UUID.",
+            ));
+        }
+        if self
+            .project_id
+            .as_deref()
+            .is_some_and(|project_id| !canonical_uuid(project_id))
+        {
+            return Err(IngestContractError::new(
+                "ingest_project_invalid",
+                "The native capture project identifier is not a canonical UUID.",
             ));
         }
         let parts = self.storage_path.split('/').collect::<Vec<_>>();
@@ -426,6 +438,16 @@ mod tests {
         assert_eq!(
             bad_hash.validate().expect_err("bad hash").code(),
             "ingest_hash_invalid"
+        );
+
+        let mut bad_project = contract.ingest_request.clone();
+        bad_project.project_id = Some("not-a-project".into());
+        assert_eq!(
+            bad_project
+                .validate()
+                .expect_err("bad project identifier")
+                .code(),
+            "ingest_project_invalid"
         );
 
         let mut bad_timestamp = contract.ingest_request.clone();

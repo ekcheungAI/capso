@@ -26,12 +26,28 @@ const ROLE_ART: Record<string, ArtName> = {
 export function FirstRun() {
   const { applyTemplate, loadSamples, skipSetup } = useStore();
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const pick = async (id: string) => {
+  const finishSetup = async (id: string, setup: () => Promise<void>) => {
     if (busy) return;
     setBusy(id);
-    await applyTemplate(id);
+    setError(null);
+    try {
+      await setup();
+
+      // The picker is taller than the page it reveals. Choosing an action near
+      // the bottom used to preserve that old scroll offset, so `/library` opened
+      // halfway through its masonry with the title, status and filters above the
+      // viewport. A new information architecture must always start at its top.
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch {
+      setError("Couldn’t finish setup. Try that choice again.");
+    } finally {
+      setBusy(null);
+    }
   };
+
+  const pick = (id: string) => finishSetup(id, () => applyTemplate(id));
 
   return (
     <div className="mx-auto max-w-3xl py-10">
@@ -39,6 +55,8 @@ export function FirstRun() {
       <p className="mt-1.5 text-xs text-muted">
         This sets up your projects so captures have somewhere to land. Rename or delete any of them later.
       </p>
+      {busy && <p className="sr-only" role="status" aria-live="polite">Setting up your library.</p>}
+      {error && <p role="alert" className="mt-3 text-xs text-danger">{error}</p>}
 
       <div className="mt-7 grid gap-3 sm:grid-cols-2">
         {ROLES.map((role) => (
@@ -57,6 +75,7 @@ export function FirstRun() {
               <Art
                 name={ROLE_ART[role.id]}
                 sizes="(min-width: 640px) 380px, 100vw"
+                priority={role.id === "marketing"}
                 className="aspect-[2/1] w-full object-cover"
               />
             )}
@@ -91,8 +110,7 @@ export function FirstRun() {
         <button
           disabled={busy !== null}
           onClick={() => {
-            setBusy("samples");
-            void loadSamples();
+            void finishSetup("samples", loadSamples);
           }}
           className="min-h-11 text-accent underline underline-offset-2 disabled:opacity-50"
         >
@@ -106,8 +124,7 @@ export function FirstRun() {
         <button
           disabled={busy !== null}
           onClick={() => {
-            setBusy("skip");
-            void skipSetup();
+            void finishSetup("skip", skipSetup);
           }}
           className="min-h-11 text-accent underline underline-offset-2 disabled:opacity-50"
         >

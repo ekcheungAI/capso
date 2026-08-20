@@ -288,14 +288,18 @@ export default function LibraryPage() {
           </button>
         )}
 
-        <span className="ml-auto text-xs text-muted">
+        <span className="ml-auto text-xs text-muted" role="status" aria-live="polite" aria-atomic="true">
           {results.length}
           {filtering ? ` of ${filed.length}` : ""} {verb(results.length, "capture", "captures")}
         </span>
       </div>
 
       {selected.size > 0 && (
-        <div className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs">
+        <div
+          className="sticky top-16 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-xs"
+          role="group"
+          aria-label={`Move ${selected.size} selected captures`}
+        >
           <span>{selected.size} selected</span>
           <span className="text-muted">move to</span>
           {threads.map((t) => (
@@ -452,7 +456,7 @@ function Shelf({
     <DropZone armed={armed} onDropIds={onDropIds} lift={false} className="-mx-2 px-2 py-2">
       <div className="mb-3 flex flex-wrap items-baseline gap-2">
         <h2 className="text-base font-semibold tracking-tight">
-          <Link href={`/threads/${thread.id}`} className="hover:underline">
+          <Link href={`/threads/${thread.id}`} className="inline-flex min-h-11 items-center hover:underline">
             {thread.name}
           </Link>
         </h2>

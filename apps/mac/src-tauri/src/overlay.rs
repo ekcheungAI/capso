@@ -1,22 +1,364 @@
 use crate::{capture::CaptureMode, clipboard::ClipboardStatus};
+use image::{codecs::jpeg::JpegEncoder, ImageReader, Limits};
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGEventType, CGMouseButton};
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use std::sync::{mpsc, Arc};
 use std::{
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::Instant,
 };
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, State, WebviewWindow,
+};
 
 pub(crate) const OVERLAY_LABEL: &str = "capture-overlay";
-pub(crate) const OVERLAY_WIDTH_LOGICAL: f64 = 252.0;
+pub(crate) const SHOW_HIDDEN_OVERLAY_MENU_ID: &str = "show-hidden-overlay";
+pub(crate) const OVERLAY_WIDTH_LOGICAL: f64 = 304.0;
 pub(crate) const OVERLAY_HEIGHT_LOGICAL: f64 = 194.0;
 const OVERLAY_MARGIN_LOGICAL: f64 = 20.0;
+const OVERLAY_SETTINGS_VERSION: u8 = 1;
+const MAX_OVERLAY_DISPLAY_PROFILES: usize = 16;
+const MAX_OVERLAY_SETTINGS_BYTES: u64 = 64 * 1024;
+const OVERLAY_SETTINGS_FILE: &str = "overlay-settings.json";
+const MAX_SAVE_AS_EDGE: u32 = 32_768;
+const MAX_SAVE_AS_PIXELS: u64 = 100_000_000;
+const MAX_SAVE_AS_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
+const JPEG_SAVE_AS_QUALITY: u8 = 92;
+const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const JPEG_SIGNATURE: &[u8; 3] = b"\xff\xd8\xff";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlayPlacement {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlaySize {
+    Compact,
+    Regular,
+    Large,
+}
+
+impl OverlaySize {
+    fn logical_dimensions(self) -> (f64, f64) {
+        match self {
+            Self::Compact => (OVERLAY_WIDTH_LOGICAL, OVERLAY_HEIGHT_LOGICAL),
+            Self::Regular => (384.0, 244.0),
+            Self::Large => (464.0, 294.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlayAutoDismiss {
+    EightSeconds,
+    FifteenSeconds,
+    Never,
+}
+
+impl OverlayAutoDismiss {
+    fn milliseconds(self) -> Option<u64> {
+        match self {
+            Self::EightSeconds => Some(8_000),
+            Self::FifteenSeconds => Some(15_000),
+            Self::Never => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct OverlayQuickActions {
+    pub(crate) pin: bool,
+    pub(crate) annotate: bool,
+    pub(crate) copy: bool,
+    pub(crate) save: bool,
+}
+
+impl Default for OverlayQuickActions {
+    fn default() -> Self {
+        Self {
+            pin: true,
+            annotate: true,
+            copy: true,
+            save: true,
+        }
+    }
+}
+
+impl OverlayQuickActions {
+    fn any(self) -> bool {
+        self.pin || self.annotate || self.copy || self.save
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct OverlayPreferences {
+    pub(crate) placement: OverlayPlacement,
+    pub(crate) size: OverlaySize,
+    pub(crate) auto_dismiss: OverlayAutoDismiss,
+    #[serde(default)]
+    pub(crate) quick_actions: OverlayQuickActions,
+}
+
+impl Default for OverlayPreferences {
+    fn default() -> Self {
+        Self {
+            placement: OverlayPlacement::BottomRight,
+            size: OverlaySize::Compact,
+            auto_dismiss: OverlayAutoDismiss::EightSeconds,
+            quick_actions: OverlayQuickActions::default(),
+        }
+    }
+}
+
+impl OverlayPreferences {
+    fn physical_dimensions(self, display: DisplayGeometry) -> (u32, u32) {
+        let (width, height) = self.size.logical_dimensions();
+        let scale_factor = if display.scale_factor.is_finite() && display.scale_factor > 0.0 {
+            display.scale_factor
+        } else {
+            1.0
+        };
+        let desired_width = width * scale_factor;
+        let desired_height = height * scale_factor;
+        let margin = (OVERLAY_MARGIN_LOGICAL * scale_factor)
+            .round()
+            .clamp(0.0, f64::from(u32::MAX / 2)) as u32;
+        let available_width = display
+            .work_area
+            .width
+            .saturating_sub(
+                margin
+                    .saturating_mul(2)
+                    .min(display.work_area.width.saturating_sub(1)),
+            )
+            .max(1);
+        let available_height = display
+            .work_area
+            .height
+            .saturating_sub(
+                margin
+                    .saturating_mul(2)
+                    .min(display.work_area.height.saturating_sub(1)),
+            )
+            .max(1);
+        let fit = (f64::from(available_width) / desired_width)
+            .min(f64::from(available_height) / desired_height)
+            .min(1.0);
+        (
+            (desired_width * fit)
+                .round()
+                .clamp(1.0, f64::from(available_width)) as u32,
+            (desired_height * fit)
+                .round()
+                .clamp(1.0, f64::from(available_height)) as u32,
+        )
+    }
+
+    fn position(self, display: DisplayGeometry) -> (i32, i32) {
+        let (width, height) = self.physical_dimensions(display);
+        let scale_factor = if display.scale_factor.is_finite() && display.scale_factor > 0.0 {
+            display.scale_factor
+        } else {
+            1.0
+        };
+        let desired_margin = (OVERLAY_MARGIN_LOGICAL * scale_factor).round() as i64;
+        let margin_x =
+            desired_margin.min(i64::from(display.work_area.width.saturating_sub(width)) / 2);
+        let margin_y =
+            desired_margin.min(i64::from(display.work_area.height.saturating_sub(height)) / 2);
+        let left = i64::from(display.work_area.x) + margin_x;
+        let top = i64::from(display.work_area.y) + margin_y;
+        let right = i64::from(display.work_area.x) + i64::from(display.work_area.width)
+            - i64::from(width)
+            - margin_x;
+        let bottom = i64::from(display.work_area.y) + i64::from(display.work_area.height)
+            - i64::from(height)
+            - margin_y;
+        let (x, y) = match self.placement {
+            OverlayPlacement::TopLeft => (left, top),
+            OverlayPlacement::TopRight => (right, top),
+            OverlayPlacement::BottomLeft => (left, bottom),
+            OverlayPlacement::BottomRight => (right, bottom),
+        };
+        (
+            x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+            y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct OverlaySaveAsPreferences {
+    pub(crate) format: CaptureExportFormat,
+    pub(crate) filename_template: String,
+}
+
+impl Default for OverlaySaveAsPreferences {
+    fn default() -> Self {
+        Self {
+            format: CaptureExportFormat::Png,
+            filename_template: "Capso {date} at {time}".into(),
+        }
+    }
+}
+
+fn validate_save_as_preferences(preferences: &OverlaySaveAsPreferences) -> Result<(), String> {
+    let template = preferences.filename_template.trim();
+    if template.is_empty()
+        || template.len() > 96
+        || template.starts_with('.')
+        || template
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | ':'))
+    {
+        return Err(
+            "Save As names must be 1–96 safe characters and cannot start with a dot.".into(),
+        );
+    }
+    let remainder = template.replace("{date}", "").replace("{time}", "");
+    if remainder.contains('{') || remainder.contains('}') {
+        return Err("Save As names support only the {date} and {time} tokens.".into());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoredOverlaySettings {
+    pub(crate) version: u8,
+    #[serde(default)]
+    pub(crate) save_as: OverlaySaveAsPreferences,
+    #[serde(default)]
+    pub(crate) profiles: BTreeMap<String, OverlayPreferences>,
+}
+
+impl Default for StoredOverlaySettings {
+    fn default() -> Self {
+        Self {
+            version: OVERLAY_SETTINGS_VERSION,
+            save_as: OverlaySaveAsPreferences::default(),
+            profiles: BTreeMap::new(),
+        }
+    }
+}
+
+fn settings_for_display(stored: &StoredOverlaySettings, display_id: &str) -> OverlayPreferences {
+    stored.profiles.get(display_id).copied().unwrap_or_default()
+}
+
+fn update_stored_preferences(
+    stored: &mut StoredOverlaySettings,
+    display_id: &str,
+    preferences: OverlayPreferences,
+) -> Result<(), String> {
+    if display_id.is_empty() || display_id.len() > 256 || display_id.chars().any(char::is_control) {
+        return Err("The Quick Access display identifier is invalid.".into());
+    }
+    if !stored.profiles.contains_key(display_id)
+        && stored.profiles.len() >= MAX_OVERLAY_DISPLAY_PROFILES
+    {
+        return Err("Quick Access settings already contain too many display profiles.".into());
+    }
+    if !preferences.quick_actions.any() {
+        return Err("Keep at least one Quick Access action visible.".into());
+    }
+    stored.profiles.insert(display_id.into(), preferences);
+    Ok(())
+}
+
+fn load_stored_overlay_settings(path: &Path) -> Result<StoredOverlaySettings, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(StoredOverlaySettings::default())
+        }
+        Err(error) => return Err(format!("Could not inspect Quick Access settings: {error}")),
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_OVERLAY_SETTINGS_BYTES {
+        return Err("Quick Access settings are not a safe bounded file.".into());
+    }
+    let bytes =
+        fs::read(path).map_err(|error| format!("Could not read Quick Access settings: {error}"))?;
+    let stored: StoredOverlaySettings = serde_json::from_slice(&bytes).map_err(|_| {
+        "Quick Access settings are damaged. The existing file was preserved.".to_string()
+    })?;
+    validate_stored_overlay_settings(&stored)?;
+    Ok(stored)
+}
+
+pub(crate) fn validate_stored_overlay_settings(
+    stored: &StoredOverlaySettings,
+) -> Result<(), String> {
+    if stored.version != OVERLAY_SETTINGS_VERSION
+        || stored.profiles.len() > MAX_OVERLAY_DISPLAY_PROFILES
+    {
+        return Err("Quick Access settings use an unsupported format.".into());
+    }
+    validate_save_as_preferences(&stored.save_as)?;
+    for (id, preferences) in &stored.profiles {
+        if id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
+            return Err("Quick Access settings contain an invalid display profile.".into());
+        }
+        if !preferences.quick_actions.any() {
+            return Err("Quick Access settings must keep at least one action visible.".into());
+        }
+    }
+    Ok(())
+}
+
+fn save_stored_overlay_settings(path: &Path, stored: &StoredOverlaySettings) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Could not locate the Quick Access settings folder.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create the Quick Access settings folder: {error}"))?;
+    let bytes = serde_json::to_vec(stored)
+        .map_err(|error| format!("Could not encode Quick Access settings: {error}"))?;
+    if bytes.len() as u64 > MAX_OVERLAY_SETTINGS_BYTES {
+        return Err("Quick Access settings exceed the safe file limit.".into());
+    }
+    let temporary = parent.join(format!(".overlay-settings-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                format!("Could not create temporary Quick Access settings: {error}")
+            })?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("Could not write Quick Access settings: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("Could not sync Quick Access settings: {error}"))?;
+        drop(file);
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("Could not activate Quick Access settings: {error}"))?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("Could not sync the Quick Access settings folder: {error}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ScreenPoint {
@@ -37,6 +379,32 @@ struct DisplayGeometry {
     bounds: ScreenRect,
     work_area: ScreenRect,
     scale_factor: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DisplayTarget {
+    id: String,
+    name: String,
+    geometry: DisplayGeometry,
+    is_primary: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlayDisplaySettings {
+    id: String,
+    name: String,
+    is_primary: bool,
+    preferences: OverlayPreferences,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlaySettingsSnapshot {
+    displays: Vec<OverlayDisplaySettings>,
+    selected_display_id: String,
+    save_as: OverlaySaveAsPreferences,
+    storage_warning: Option<String>,
 }
 
 impl From<&tauri::Monitor> for DisplayGeometry {
@@ -62,6 +430,169 @@ impl From<&tauri::Monitor> for DisplayGeometry {
     }
 }
 
+fn safe_display_name(name: Option<&str>, index: usize) -> String {
+    let cleaned = name
+        .unwrap_or("")
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(80)
+        .collect::<String>();
+    if cleaned.trim().is_empty() {
+        format!("Display {}", index + 1)
+    } else {
+        cleaned
+    }
+}
+
+fn display_profile_base_id(name: &str, geometry: DisplayGeometry) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        name,
+        geometry.bounds.width,
+        geometry.bounds.height,
+        (geometry.scale_factor * 1_000.0).round() as u32,
+    )
+}
+
+fn display_profile_ids(displays: &[(String, DisplayGeometry)]) -> Vec<String> {
+    let mut counts = BTreeMap::new();
+    for (name, geometry) in displays {
+        *counts
+            .entry(display_profile_base_id(name, *geometry))
+            .or_insert(0_usize) += 1;
+    }
+    displays
+        .iter()
+        .map(|(name, geometry)| {
+            let base = display_profile_base_id(name, *geometry);
+            if counts.get(&base).copied().unwrap_or_default() > 1 {
+                format!("{}:at:{}:{}", base, geometry.bounds.x, geometry.bounds.y)
+            } else {
+                base
+            }
+        })
+        .collect()
+}
+
+fn available_display_targets(app: &AppHandle) -> Result<Vec<DisplayTarget>, String> {
+    let monitors = app
+        .available_monitors()
+        .map_err(|error| format!("Could not inspect the connected displays: {error}"))?;
+    let primary = app
+        .primary_monitor()
+        .map_err(|error| format!("Could not inspect the primary display: {error}"))?
+        .as_ref()
+        .map(DisplayGeometry::from);
+    let named_displays = monitors
+        .iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let geometry = DisplayGeometry::from(monitor);
+            let name = safe_display_name(monitor.name().map(String::as_str), index);
+            (name, geometry)
+        })
+        .collect::<Vec<_>>();
+    let ids = display_profile_ids(&named_displays);
+    Ok(named_displays
+        .into_iter()
+        .zip(ids)
+        .map(|((name, geometry), id)| DisplayTarget {
+            id,
+            name,
+            geometry,
+            is_primary: primary == Some(geometry),
+        })
+        .collect())
+}
+
+pub(crate) fn overlay_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(OVERLAY_SETTINGS_FILE))
+        .map_err(|error| format!("Could not locate Quick Access settings: {error}"))
+}
+
+pub(crate) fn stored_overlay_settings(app: &AppHandle) -> Result<StoredOverlaySettings, String> {
+    load_stored_overlay_settings(&overlay_settings_path(app)?)
+}
+
+fn selected_display_id(app: &AppHandle, displays: &[DisplayTarget]) -> Option<String> {
+    let cursor_display = app.cursor_position().ok().and_then(|cursor| {
+        displays.iter().find(|display| {
+            display_at_cursor(
+                &[display.geometry],
+                ScreenPoint {
+                    x: cursor.x,
+                    y: cursor.y,
+                },
+            )
+            .is_some()
+        })
+    });
+    cursor_display
+        .or_else(|| displays.iter().find(|display| display.is_primary))
+        .or_else(|| displays.first())
+        .map(|display| display.id.clone())
+}
+
+fn overlay_settings_snapshot(
+    app: &AppHandle,
+    selected_override: Option<&str>,
+) -> Result<OverlaySettingsSnapshot, String> {
+    let displays = available_display_targets(app)?;
+    let path = overlay_settings_path(app)?;
+    let (stored, storage_warning) = match load_stored_overlay_settings(&path) {
+        Ok(stored) => (stored, None),
+        Err(error) => (StoredOverlaySettings::default(), Some(error)),
+    };
+    let selected = selected_override
+        .and_then(|id| displays.iter().find(|display| display.id == id))
+        .map(|display| display.id.clone())
+        .or_else(|| selected_display_id(app, &displays))
+        .ok_or_else(|| "Could not find a display for Quick Access settings.".to_string())?;
+    Ok(OverlaySettingsSnapshot {
+        save_as: stored.save_as.clone(),
+        displays: displays
+            .into_iter()
+            .map(|display| OverlayDisplaySettings {
+                preferences: settings_for_display(&stored, &display.id),
+                id: display.id,
+                name: display.name,
+                is_primary: display.is_primary,
+            })
+            .collect(),
+        selected_display_id: selected,
+        storage_warning,
+    })
+}
+
+pub(crate) fn get_overlay_settings(app: &AppHandle) -> Result<OverlaySettingsSnapshot, String> {
+    overlay_settings_snapshot(app, None)
+}
+
+pub(crate) fn get_save_as_preferences(app: &AppHandle) -> Result<OverlaySaveAsPreferences, String> {
+    stored_overlay_settings(app).map(|stored| stored.save_as)
+}
+
+pub(crate) fn update_overlay_settings(
+    app: &AppHandle,
+    display_id: &str,
+    preferences: OverlayPreferences,
+    save_as: OverlaySaveAsPreferences,
+) -> Result<OverlaySettingsSnapshot, String> {
+    let displays = available_display_targets(app)?;
+    if !displays.iter().any(|display| display.id == display_id) {
+        return Err("That display is no longer connected.".into());
+    }
+    let path = overlay_settings_path(app)?;
+    let mut stored = load_stored_overlay_settings(&path)?;
+    validate_save_as_preferences(&save_as)?;
+    update_stored_preferences(&mut stored, display_id, preferences)?;
+    stored.save_as = save_as;
+    save_stored_overlay_settings(&path, &stored)?;
+    overlay_settings_snapshot(app, Some(display_id))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OverlayCapture {
@@ -69,6 +600,9 @@ pub(crate) struct OverlayCapture {
     presentation_id: u64,
     clipboard: ClipboardStatus,
     source: OverlaySource,
+    auto_dismiss_ms: Option<u64>,
+    quick_actions: OverlayQuickActions,
+    temporarily_hidden: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -85,6 +619,7 @@ pub(crate) struct OverlayRuntime {
     presentation_generation: u64,
     active_drag: Option<OverlayDragIdentity>,
     pending_latency: Option<PendingOverlayLatency>,
+    temporarily_hidden: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,12 +645,14 @@ impl OverlayRuntime {
         self.current = None;
         self.last_failure = None;
         self.pending_latency = None;
+        self.temporarily_hidden = false;
     }
 
     fn replace(&mut self, capture: OverlayCapture) {
         self.current = Some(capture);
         self.last_failure = None;
         self.pending_latency = None;
+        self.temporarily_hidden = false;
     }
 
     fn next_capture(
@@ -133,6 +670,9 @@ impl OverlayRuntime {
             presentation_id: self.presentation_generation,
             clipboard,
             source,
+            auto_dismiss_ms: OverlayAutoDismiss::EightSeconds.milliseconds(),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
         }
     }
 
@@ -166,6 +706,7 @@ impl OverlayRuntime {
 
         self.current = None;
         self.pending_latency = None;
+        self.temporarily_hidden = false;
         Some(self.record_failure(path, presentation_id, code, message))
     }
 
@@ -209,6 +750,7 @@ struct OverlayFailureRecord {
 trait OverlayWindowOps {
     fn hide_overlay(&self) -> Result<(), String>;
     fn show_overlay(&self) -> Result<(), String>;
+    fn size_overlay(&self, width: u32, height: u32) -> Result<(), String>;
     fn position_overlay(&self, x: i32, y: i32) -> Result<(), String>;
 }
 
@@ -221,6 +763,11 @@ impl OverlayWindowOps for WebviewWindow {
         self.show().map_err(|error| error.to_string())
     }
 
+    fn size_overlay(&self, width: u32, height: u32) -> Result<(), String> {
+        self.set_size(PhysicalSize::new(width, height))
+            .map_err(|error| error.to_string())
+    }
+
     fn position_overlay(&self, x: i32, y: i32) -> Result<(), String> {
         self.set_position(PhysicalPosition::new(x, y))
             .map_err(|error| error.to_string())
@@ -230,6 +777,7 @@ impl OverlayWindowOps for WebviewWindow {
 #[derive(Debug, PartialEq)]
 enum RevealTransition {
     Stale,
+    Hidden,
     Shown(Option<crate::latency::OverlayLatencySample>),
     Failed(OverlayFailureRecord),
 }
@@ -238,6 +786,20 @@ enum RevealTransition {
 enum DismissTransition {
     Stale,
     Dismissed,
+    Failed(OverlayFailureRecord),
+}
+
+#[derive(Debug, PartialEq)]
+enum TemporaryHideTransition {
+    Stale,
+    Hidden,
+    Failed(OverlayFailureRecord),
+}
+
+#[derive(Debug, PartialEq)]
+enum RestoreHiddenTransition {
+    NotHidden,
+    Restored(OverlayCapture),
     Failed(OverlayFailureRecord),
 }
 
@@ -253,6 +815,28 @@ pub(crate) enum DismissReason {
 pub(crate) struct OverlaySaveResult {
     destination: String,
     bytes: u64,
+    format: CaptureExportFormat,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaptureExportFormat {
+    Png,
+    Jpeg,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CaptureExport {
+    pub(crate) bytes: u64,
+    pub(crate) format: CaptureExportFormat,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlayFileInfo {
+    format: &'static str,
+    bytes: u64,
+    captured_at_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -284,6 +868,13 @@ struct OverlayDismissed<'a> {
     reason: DismissReason,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlayRestored<'a> {
+    path: &'a str,
+    presentation_id: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum OverlayStatus {
@@ -302,21 +893,9 @@ fn display_at_cursor(displays: &[DisplayGeometry], cursor: ScreenPoint) -> Optio
     })
 }
 
+#[cfg(test)]
 fn bottom_right_position(display: DisplayGeometry) -> (i32, i32) {
-    let overlay_width = (OVERLAY_WIDTH_LOGICAL * display.scale_factor).round() as i64;
-    let overlay_height = (OVERLAY_HEIGHT_LOGICAL * display.scale_factor).round() as i64;
-    let margin = (OVERLAY_MARGIN_LOGICAL * display.scale_factor).round() as i64;
-    let x = i64::from(display.work_area.x) + i64::from(display.work_area.width)
-        - overlay_width
-        - margin;
-    let y = i64::from(display.work_area.y) + i64::from(display.work_area.height)
-        - overlay_height
-        - margin;
-
-    (
-        x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-        y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-    )
+    OverlayPreferences::default().position(display)
 }
 
 fn overlay_failure(code: &'static str, message: impl Into<String>) -> OverlayStatus {
@@ -336,6 +915,8 @@ fn prepare_transition(
     window: &impl OverlayWindowOps,
     capture: OverlayCapture,
     latency_start: Option<crate::latency::OverlayLatencyStart>,
+    width: u32,
+    height: u32,
     x: i32,
     y: i32,
 ) -> Result<(), OverlayFailureRecord> {
@@ -352,6 +933,14 @@ fn prepare_transition(
             presentation_id,
             "overlay_hide_failed",
             format!("Could not reset the capture overlay: {error}"),
+        ));
+    }
+    if let Err(error) = window.size_overlay(width, height) {
+        return Err(runtime.record_failure(
+            &path,
+            presentation_id,
+            "overlay_size_failed",
+            format!("Could not size the capture overlay: {error}"),
         ));
     }
     if let Err(error) = window.position_overlay(x, y) {
@@ -390,9 +979,18 @@ fn reveal_transition_with_clock(
     if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return RevealTransition::Stale;
     }
+    if runtime.temporarily_hidden
+        || runtime
+            .current
+            .as_ref()
+            .is_some_and(|capture| capture.temporarily_hidden)
+    {
+        return RevealTransition::Hidden;
+    }
 
     match window.show_overlay() {
         Ok(()) => {
+            runtime.temporarily_hidden = false;
             let sample = runtime.pending_latency.take().and_then(|pending| {
                 (pending.presentation_id == presentation_id).then(|| pending.start.finish(now()))
             });
@@ -410,6 +1008,68 @@ fn reveal_transition_with_clock(
             let _ = window.hide_overlay();
             RevealTransition::Failed(failure)
         }
+    }
+}
+
+fn temporary_hide_transition(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+) -> TemporaryHideTransition {
+    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
+        return TemporaryHideTransition::Stale;
+    }
+    if runtime.temporarily_hidden {
+        return TemporaryHideTransition::Hidden;
+    }
+    match window.hide_overlay() {
+        Ok(()) => {
+            runtime.temporarily_hidden = true;
+            if let Some(capture) = runtime.current.as_mut() {
+                capture.temporarily_hidden = true;
+            }
+            TemporaryHideTransition::Hidden
+        }
+        Err(error) => TemporaryHideTransition::Failed(runtime.record_failure(
+            path,
+            presentation_id,
+            "overlay_temporary_hide_failed",
+            format!("Could not temporarily hide Quick Access: {error}"),
+        )),
+    }
+}
+
+fn restore_hidden_transition(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+) -> RestoreHiddenTransition {
+    if !runtime.temporarily_hidden {
+        return RestoreHiddenTransition::NotHidden;
+    }
+    let Some(capture) = runtime.current.clone() else {
+        runtime.temporarily_hidden = false;
+        return RestoreHiddenTransition::NotHidden;
+    };
+    match window.show_overlay() {
+        Ok(()) => {
+            runtime.temporarily_hidden = false;
+            if let Some(current) = runtime.current.as_mut() {
+                current.temporarily_hidden = false;
+            }
+            RestoreHiddenTransition::Restored(
+                runtime
+                    .current
+                    .clone()
+                    .expect("hidden capture remains current through native show"),
+            )
+        }
+        Err(error) => RestoreHiddenTransition::Failed(runtime.record_failure(
+            &capture.path,
+            capture.presentation_id,
+            "overlay_temporary_restore_failed",
+            format!("Could not restore Quick Access: {error}"),
+        )),
     }
 }
 
@@ -463,6 +1123,22 @@ fn current_capture_path(
         .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
         .map(|capture| PathBuf::from(&capture.path))
         .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())
+}
+
+fn current_capture_project_path(
+    runtime: &OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+) -> Result<PathBuf, String> {
+    let capture = runtime
+        .current
+        .as_ref()
+        .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
+        .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())?;
+    if capture.source != OverlaySource::Capture {
+        return Err("A restored history capture cannot change its project here.".into());
+    }
+    Ok(PathBuf::from(&capture.path))
 }
 
 pub(crate) fn current_capture_for_action(
@@ -598,7 +1274,167 @@ fn begin_drag_transition(
     runtime.begin_drag(path, presentation_id)
 }
 
-fn export_capture(source: &Path, destination: &Path) -> io::Result<u64> {
+fn invalid_export(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+fn capture_export_format(destination: &Path) -> io::Result<CaptureExportFormat> {
+    let extension = destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| invalid_export("Choose a PNG or JPEG filename."))?;
+    match extension.as_str() {
+        "png" => Ok(CaptureExportFormat::Png),
+        "jpg" | "jpeg" => Ok(CaptureExportFormat::Jpeg),
+        _ => Err(invalid_export("Capso Save As supports PNG, JPG, and JPEG.")),
+    }
+}
+
+fn validate_export_destination(destination: &Path) -> io::Result<()> {
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    if !fs::symlink_metadata(parent)?.file_type().is_dir() {
+        return Err(invalid_export(
+            "Choose a destination inside a direct local directory.",
+        ));
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if !metadata.file_type().is_file() => Err(invalid_export(
+            "The destination must be a direct regular file, not a link or directory.",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_export_paths(source: &Path, destination: &Path) -> io::Result<()> {
+    let source_metadata = fs::symlink_metadata(source)?;
+    if !source_metadata.file_type().is_file()
+        || source_metadata.len() == 0
+        || source_metadata.len() > MAX_SAVE_AS_SOURCE_BYTES
+    {
+        return Err(invalid_export(
+            "The durable capture is not a safe bounded regular file.",
+        ));
+    }
+    validate_export_destination(destination)
+}
+
+fn decode_bounded_png_reader(input: impl io::BufRead + Seek) -> io::Result<image::RgbaImage> {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_SAVE_AS_EDGE);
+    limits.max_image_height = Some(MAX_SAVE_AS_EDGE);
+    limits.max_alloc = Some(MAX_SAVE_AS_PIXELS.saturating_mul(4) + 64 * 1024 * 1024);
+    let mut reader = ImageReader::with_format(input, image::ImageFormat::Png);
+    reader.limits(limits);
+    let image = reader
+        .decode()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let (width, height) = (image.width(), image.height());
+    if width == 0
+        || height == 0
+        || width > MAX_SAVE_AS_EDGE
+        || height > MAX_SAVE_AS_EDGE
+        || u64::from(width).saturating_mul(u64::from(height)) > MAX_SAVE_AS_PIXELS
+    {
+        return Err(invalid_export(
+            "The durable capture exceeds Capso's safe image limits.",
+        ));
+    }
+    Ok(image.to_rgba8())
+}
+
+fn decode_bounded_capture_png(source: &Path) -> io::Result<image::RgbaImage> {
+    let file = File::open(source)?;
+    let mut signature = [0_u8; PNG_SIGNATURE.len()];
+    let mut input = BufReader::new(file);
+    input.read_exact(&mut signature)?;
+    if &signature != PNG_SIGNATURE {
+        return Err(invalid_export(
+            "The durable capture is not a real PNG image.",
+        ));
+    }
+    input.seek(SeekFrom::Start(0))?;
+    decode_bounded_png_reader(input)
+}
+
+fn write_jpeg_image(rgba: &image::RgbaImage, output: &mut File) -> io::Result<(u32, u32)> {
+    let dimensions = rgba.dimensions();
+    let mut rgb = image::RgbImage::new(dimensions.0, dimensions.1);
+    for (source_pixel, output_pixel) in rgba.pixels().zip(rgb.pixels_mut()) {
+        let alpha = u16::from(source_pixel[3]);
+        let inverse = 255_u16.saturating_sub(alpha);
+        for channel in 0..3 {
+            output_pixel[channel] =
+                ((u16::from(source_pixel[channel]) * alpha + 255_u16 * inverse + 127) / 255) as u8;
+        }
+    }
+    JpegEncoder::new_with_quality(output, JPEG_SAVE_AS_QUALITY)
+        .encode(
+            rgb.as_raw(),
+            dimensions.0,
+            dimensions.1,
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(dimensions)
+}
+
+fn write_jpeg_capture(source: &Path, output: &mut File) -> io::Result<(u32, u32)> {
+    let rgba = decode_bounded_capture_png(source)?;
+    write_jpeg_image(&rgba, output)
+}
+
+fn validate_exported_image(
+    temporary: &Path,
+    format: CaptureExportFormat,
+    expected_dimensions: Option<(u32, u32)>,
+) -> io::Result<u64> {
+    let metadata = fs::symlink_metadata(temporary)?;
+    if !metadata.file_type().is_file() || metadata.len() == 0 {
+        return Err(invalid_export("Capso did not produce a valid image file."));
+    }
+    let mut file = File::open(temporary)?;
+    let mut signature = [0_u8; PNG_SIGNATURE.len()];
+    let signature_length = match format {
+        CaptureExportFormat::Png => PNG_SIGNATURE.len(),
+        CaptureExportFormat::Jpeg => JPEG_SIGNATURE.len(),
+    };
+    file.read_exact(&mut signature[..signature_length])?;
+    let valid_signature = match format {
+        CaptureExportFormat::Png => &signature == PNG_SIGNATURE,
+        CaptureExportFormat::Jpeg => &signature[..signature_length] == JPEG_SIGNATURE,
+    };
+    if !valid_signature {
+        return Err(invalid_export(
+            "Capso produced an image with the wrong format.",
+        ));
+    }
+    if let Some(expected) = expected_dimensions {
+        let file = File::open(temporary)?;
+        let image_format = match format {
+            CaptureExportFormat::Png => image::ImageFormat::Png,
+            CaptureExportFormat::Jpeg => image::ImageFormat::Jpeg,
+        };
+        let dimensions = ImageReader::with_format(BufReader::new(file), image_format)
+            .into_dimensions()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if dimensions != expected {
+            return Err(invalid_export(
+                "The saved image dimensions do not match the durable capture.",
+            ));
+        }
+    }
+    Ok(metadata.len())
+}
+
+fn export_capture(source: &Path, destination: &Path) -> io::Result<CaptureExport> {
+    let format = capture_export_format(destination)?;
+    validate_export_paths(source, destination)?;
     let parent = destination
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -606,16 +1442,65 @@ fn export_capture(source: &Path, destination: &Path) -> io::Result<u64> {
     let temporary = parent.join(format!(".capso-export-{}.tmp", uuid::Uuid::new_v4()));
 
     let result = (|| {
-        let mut input = File::open(source)?;
         let mut output = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)?;
-        let bytes = io::copy(&mut input, &mut output)?;
+        let expected_dimensions = match format {
+            CaptureExportFormat::Png => {
+                let mut input = File::open(source)?;
+                io::copy(&mut input, &mut output)?;
+                None
+            }
+            CaptureExportFormat::Jpeg => Some(write_jpeg_capture(source, &mut output)?),
+        };
         output.sync_all()?;
         drop(output);
+        let bytes = validate_exported_image(&temporary, format, expected_dimensions)?;
         fs::rename(&temporary, destination)?;
-        Ok(bytes)
+        File::open(parent)?.sync_all()?;
+        Ok(CaptureExport { bytes, format })
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+pub(crate) fn export_png_bytes(png: &[u8], destination: &Path) -> io::Result<CaptureExport> {
+    if png.is_empty() || png.len() as u64 > MAX_SAVE_AS_SOURCE_BYTES {
+        return Err(invalid_export(
+            "The flattened annotation is not a safe bounded PNG image.",
+        ));
+    }
+    let format = capture_export_format(destination)?;
+    validate_export_destination(destination)?;
+    let rgba = decode_bounded_png_reader(Cursor::new(png))?;
+    let dimensions = rgba.dimensions();
+    let parent = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let temporary = parent.join(format!(".capso-export-{}.tmp", uuid::Uuid::new_v4()));
+
+    let result = (|| {
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        match format {
+            CaptureExportFormat::Png => output.write_all(png)?,
+            CaptureExportFormat::Jpeg => {
+                write_jpeg_image(&rgba, &mut output)?;
+            }
+        }
+        output.sync_all()?;
+        drop(output);
+        let bytes = validate_exported_image(&temporary, format, Some(dimensions))?;
+        fs::rename(&temporary, destination)?;
+        File::open(parent)?.sync_all()?;
+        Ok(CaptureExport { bytes, format })
     })();
 
     if result.is_err() {
@@ -642,16 +1527,12 @@ fn capture_display(
     }
 }
 
-fn target_display(app: &AppHandle, mode: CaptureMode) -> Result<DisplayGeometry, OverlayStatus> {
-    let monitors = app.available_monitors().map_err(|error| {
-        overlay_failure(
-            "overlay_displays_unavailable",
-            format!("Could not inspect the connected displays: {error}"),
-        )
-    })?;
-    let geometries = monitors
+fn target_display(app: &AppHandle, mode: CaptureMode) -> Result<DisplayTarget, OverlayStatus> {
+    let displays = available_display_targets(app)
+        .map_err(|error| overlay_failure("overlay_displays_unavailable", error))?;
+    let geometries = displays
         .iter()
-        .map(DisplayGeometry::from)
+        .map(|display| display.geometry)
         .collect::<Vec<_>>();
 
     let selected = app.cursor_position().ok().and_then(|cursor| {
@@ -664,19 +1545,26 @@ fn target_display(app: &AppHandle, mode: CaptureMode) -> Result<DisplayGeometry,
         )
     });
 
-    let primary = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .as_ref()
-        .map(DisplayGeometry::from);
+    let primary = displays
+        .iter()
+        .find(|display| display.is_primary)
+        .map(|display| display.geometry);
 
-    capture_display(mode, selected, primary)
+    let selected_geometry = capture_display(mode, selected, primary)
         .or_else(|| geometries.first().copied())
         .ok_or_else(|| {
             overlay_failure(
                 "overlay_display_missing",
                 "Could not find a display for the capture overlay.",
+            )
+        })?;
+    displays
+        .into_iter()
+        .find(|display| display.geometry == selected_geometry)
+        .ok_or_else(|| {
+            overlay_failure(
+                "overlay_display_missing",
+                "Could not resolve the target display for the capture overlay.",
             )
         })
 }
@@ -771,7 +1659,7 @@ pub(crate) fn prepare_history_overlay(app: &AppHandle, path: &Path) -> OverlaySt
 fn overlay_window_and_display(
     app: &AppHandle,
     mode: CaptureMode,
-) -> Result<(WebviewWindow, DisplayGeometry), OverlayStatus> {
+) -> Result<(WebviewWindow, DisplayTarget), OverlayStatus> {
     let window = app.get_webview_window(OVERLAY_LABEL).ok_or_else(|| {
         overlay_failure(
             "overlay_unavailable",
@@ -785,13 +1673,21 @@ fn overlay_window_and_display(
 fn prepare_overlay(
     app: &AppHandle,
     window: &WebviewWindow,
-    display: DisplayGeometry,
+    display: DisplayTarget,
     path: &Path,
     clipboard: &ClipboardStatus,
     source: OverlaySource,
     latency_start: Option<crate::latency::OverlayLatencyStart>,
 ) -> OverlayStatus {
-    let (x, y) = bottom_right_position(display);
+    let preferences = overlay_settings_path(app)
+        .and_then(|path| load_stored_overlay_settings(&path))
+        .map(|stored| settings_for_display(&stored, &display.id))
+        .unwrap_or_else(|error| {
+            eprintln!("Capso — Quick Access settings unavailable; using safe defaults: {error}");
+            OverlayPreferences::default()
+        });
+    let (width, height) = preferences.physical_dimensions(display.geometry);
+    let (x, y) = preferences.position(display.geometry);
     let state = app.state::<Mutex<OverlayRuntime>>();
     let mut runtime = match state.lock() {
         Ok(runtime) => runtime,
@@ -822,15 +1718,24 @@ fn prepare_overlay(
             "Quick Access is still protecting the capture open in Annotate.",
         );
     }
-    let payload = runtime.next_capture(
+    let mut payload = runtime.next_capture(
         path.to_string_lossy().into_owned(),
         clipboard.clone(),
         source,
     );
+    payload.auto_dismiss_ms = preferences.auto_dismiss.milliseconds();
+    payload.quick_actions = preferences.quick_actions;
 
-    if let Err(failure) =
-        prepare_transition(&mut runtime, window, payload.clone(), latency_start, x, y)
-    {
+    if let Err(failure) = prepare_transition(
+        &mut runtime,
+        window,
+        payload.clone(),
+        latency_start,
+        width,
+        height,
+        x,
+        y,
+    ) {
         drop(annotation_runtime);
         drop(runtime);
         finish_quick_access_publication(app, None);
@@ -896,6 +1801,178 @@ pub(crate) fn get_overlay_capture(
         .map_err(|_| "The capture overlay state is temporarily unavailable.".into())
 }
 
+pub(crate) fn has_temporarily_hidden_capture<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.state::<Mutex<OverlayRuntime>>()
+        .lock()
+        .map(|runtime| runtime.temporarily_hidden && runtime.current.is_some())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub(crate) fn overlay_hide_temporarily(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+) -> Result<bool, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let transition = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        temporary_hide_transition(&mut runtime, &window, &path, presentation_id)
+    };
+    match transition {
+        TemporaryHideTransition::Stale => Ok(false),
+        TemporaryHideTransition::Hidden => {
+            crate::refresh_tray_status(&app)?;
+            Ok(true)
+        }
+        TemporaryHideTransition::Failed(failure) => {
+            report_overlay_failure(&app, &failure);
+            Err(failure.message)
+        }
+    }
+}
+
+pub(crate) fn restore_temporarily_hidden_overlay(app: &AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let transition = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        restore_hidden_transition(&mut runtime, &window)
+    };
+    match transition {
+        RestoreHiddenTransition::NotHidden => Ok(false),
+        RestoreHiddenTransition::Restored(capture) => {
+            app.emit_to(
+                OVERLAY_LABEL,
+                "overlay-restored",
+                OverlayRestored {
+                    path: &capture.path,
+                    presentation_id: capture.presentation_id,
+                },
+            )
+            .map_err(|error| format!("Could not resume the Quick Access timer: {error}"))?;
+            crate::refresh_tray_status(app)?;
+            Ok(true)
+        }
+        RestoreHiddenTransition::Failed(failure) => {
+            report_overlay_failure(app, &failure);
+            Err(failure.message)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn get_overlay_sync_status(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+) -> Result<crate::queue::CaptureSyncStatus, String> {
+    let source = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        current_capture_path(&runtime, &path, presentation_id)?
+    };
+    crate::queue::capture_sync_status_for_app(&app, &source)
+}
+
+fn validated_current_local_capture(
+    app: &AppHandle,
+    runtime: &OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+) -> Result<crate::history::RecentCapture, String> {
+    let current = current_capture_path(runtime, path, presentation_id)?;
+    let id = current
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "The current capture does not have a valid local identity.".to_string())?;
+    let capture = crate::history::resolve_recent_capture_for_app(app, id)?;
+    if capture.path != current {
+        return Err("The current capture no longer matches Capso's local original.".into());
+    }
+    Ok(capture)
+}
+
+#[tauri::command]
+pub(crate) fn get_overlay_file_info(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+) -> Result<OverlayFileInfo, String> {
+    let capture = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        validated_current_local_capture(&app, &runtime, &path, presentation_id)?
+    };
+    Ok(OverlayFileInfo {
+        format: "PNG",
+        bytes: capture.bytes,
+        captured_at_ms: capture.captured_at_ms,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn reveal_overlay_capture(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+) -> Result<(), String> {
+    let capture = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        validated_current_local_capture(&app, &runtime, &path, presentation_id)?
+    };
+    tauri_plugin_opener::reveal_item_in_dir(&capture.path)
+        .map_err(|error| format!("Could not show the local original in Finder: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn open_overlay_capture(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+) -> Result<(), String> {
+    let capture = {
+        let runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        validated_current_local_capture(&app, &runtime, &path, presentation_id)?
+    };
+    tauri_plugin_opener::open_path(&capture.path, None::<&str>)
+        .map_err(|error| format!("Could not open the local original: {error}"))
+}
+
+#[tauri::command]
+pub(crate) fn assign_overlay_project(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    let capture = current_capture_project_path(&runtime, &path, presentation_id)?;
+    crate::queue::assign_project_for_app(&app, &capture, project_id.as_deref())
+}
+
 #[tauri::command]
 pub(crate) fn overlay_image_ready(
     app: AppHandle,
@@ -915,6 +1992,7 @@ pub(crate) fn overlay_image_ready(
 
     match transition {
         RevealTransition::Stale => Ok(false),
+        RevealTransition::Hidden => Ok(false),
         RevealTransition::Shown(sample) => {
             if let Some(sample) = sample {
                 if let Err(error) = crate::latency::record_for_app(&app, sample) {
@@ -1019,13 +2097,17 @@ pub(crate) async fn overlay_save_capture(
         return Err("Choose a different location for the saved copy.".into());
     }
 
-    let bytes =
+    let exported =
         tauri::async_runtime::spawn_blocking(move || export_capture(&source, &destination_path))
             .await
             .map_err(|error| format!("The capture export task stopped unexpectedly: {error}"))?
             .map_err(|error| format!("Could not save the capture copy: {error}"))?;
 
-    Ok(OverlaySaveResult { destination, bytes })
+    Ok(OverlaySaveResult {
+        destination,
+        bytes: exported.bytes,
+        format: exported.format,
+    })
 }
 
 fn drag_exports_directory(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1258,20 +2340,29 @@ pub(crate) fn overlay_dismiss(
 mod tests {
     use super::{
         annotation_refresh_payload, begin_drag_transition, bottom_right_position, capture_display,
-        capture_matches, current_capture_path, dismiss_transition, display_at_cursor,
-        export_capture, fail_transition, prepare_transition, reveal_transition,
-        reveal_transition_with_clock, DismissTransition, DisplayGeometry, DragGestureState,
-        OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayRuntime, OverlaySource,
-        OverlayWindowOps, RevealTransition, ScreenPoint, ScreenRect, OVERLAY_HEIGHT_LOGICAL,
-        OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        capture_matches, current_capture_path, current_capture_project_path, dismiss_transition,
+        display_at_cursor, display_profile_ids, export_capture, export_png_bytes, fail_transition,
+        load_stored_overlay_settings, prepare_transition, restore_hidden_transition,
+        reveal_transition, reveal_transition_with_clock, save_stored_overlay_settings,
+        settings_for_display, temporary_hide_transition, update_stored_preferences,
+        validate_save_as_preferences, CaptureExportFormat, DismissTransition, DisplayGeometry,
+        DragGestureState, OverlayAutoDismiss, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
+        OverlayPlacement, OverlayPreferences, OverlayQuickActions, OverlayRuntime,
+        OverlaySaveAsPreferences, OverlaySize, OverlaySource, OverlayWindowOps,
+        RestoreHiddenTransition, RevealTransition, ScreenPoint, ScreenRect, StoredOverlaySettings,
+        TemporaryHideTransition, OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
-    use std::cell::{Cell, RefCell};
+    use std::{
+        cell::{Cell, RefCell},
+        fs,
+    };
 
     #[derive(Default)]
     struct FakeWindow {
         visible: Cell<bool>,
+        size: Cell<(u32, u32)>,
         position: Cell<(i32, i32)>,
         fail_hide: Cell<bool>,
         fail_show: Cell<bool>,
@@ -1297,6 +2388,12 @@ mod tests {
             Ok(())
         }
 
+        fn size_overlay(&self, width: u32, height: u32) -> Result<(), String> {
+            self.transitions.borrow_mut().push("size");
+            self.size.set((width, height));
+            Ok(())
+        }
+
         fn position_overlay(&self, x: i32, y: i32) -> Result<(), String> {
             self.transitions.borrow_mut().push("position");
             self.position.set((x, y));
@@ -1314,6 +2411,9 @@ mod tests {
             presentation_id,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             source: OverlaySource::Capture,
+            auto_dismiss_ms: Some(8_000),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
         }
     }
 
@@ -1388,7 +2488,307 @@ mod tests {
             2.0,
         );
 
-        assert_eq!(bottom_right_position(external), (-544, 1310));
+        assert_eq!(bottom_right_position(external), (-648, 1310));
+    }
+
+    #[test]
+    fn overlay_preferences_keep_every_size_inside_each_scaled_work_area_corner() {
+        let external = display(
+            ScreenRect {
+                x: -2880,
+                y: 0,
+                width: 2880,
+                height: 1800,
+            },
+            ScreenRect {
+                x: -2880,
+                y: 48,
+                width: 2880,
+                height: 1690,
+            },
+            2.0,
+        );
+        let cases = [
+            (OverlayPlacement::TopLeft, OverlaySize::Compact, (-2840, 88)),
+            (OverlayPlacement::TopRight, OverlaySize::Regular, (-808, 88)),
+            (
+                OverlayPlacement::BottomLeft,
+                OverlaySize::Large,
+                (-2840, 1110),
+            ),
+            (
+                OverlayPlacement::BottomRight,
+                OverlaySize::Large,
+                (-968, 1110),
+            ),
+        ];
+        for (placement, size, expected) in cases {
+            let preferences = OverlayPreferences {
+                placement,
+                size,
+                auto_dismiss: OverlayAutoDismiss::Never,
+                quick_actions: OverlayQuickActions::default(),
+            };
+            assert_eq!(preferences.position(external), expected);
+        }
+    }
+
+    #[test]
+    fn oversized_overlay_scales_down_proportionally_inside_a_tiny_work_area() {
+        let tiny = display(
+            ScreenRect {
+                x: -500,
+                y: 20,
+                width: 500,
+                height: 300,
+            },
+            ScreenRect {
+                x: -500,
+                y: 44,
+                width: 500,
+                height: 276,
+            },
+            1.0,
+        );
+        let preferences = OverlayPreferences {
+            placement: OverlayPlacement::BottomRight,
+            size: OverlaySize::Large,
+            auto_dismiss: OverlayAutoDismiss::Never,
+            quick_actions: OverlayQuickActions::default(),
+        };
+
+        let (width, height) = preferences.physical_dimensions(tiny);
+        let (x, y) = preferences.position(tiny);
+        assert!(width <= tiny.work_area.width - 40);
+        assert!(height <= tiny.work_area.height - 40);
+        assert!(((f64::from(width) / f64::from(height)) - (464.0 / 294.0)).abs() < 0.01);
+        assert!(x >= tiny.work_area.x);
+        assert!(y >= tiny.work_area.y);
+        assert!(
+            i64::from(x) + i64::from(width)
+                <= i64::from(tiny.work_area.x) + i64::from(tiny.work_area.width)
+        );
+        assert!(
+            i64::from(y) + i64::from(height)
+                <= i64::from(tiny.work_area.y) + i64::from(tiny.work_area.height)
+        );
+    }
+
+    #[test]
+    fn overlay_settings_keep_distinct_display_profiles_and_ignore_unknown_displays() {
+        let mut stored = StoredOverlaySettings::default();
+        let studio = OverlayPreferences {
+            placement: OverlayPlacement::TopRight,
+            size: OverlaySize::Regular,
+            auto_dismiss: OverlayAutoDismiss::FifteenSeconds,
+            quick_actions: OverlayQuickActions::default(),
+        };
+        let laptop = OverlayPreferences {
+            placement: OverlayPlacement::BottomLeft,
+            size: OverlaySize::Large,
+            auto_dismiss: OverlayAutoDismiss::Never,
+            quick_actions: OverlayQuickActions::default(),
+        };
+        update_stored_preferences(&mut stored, "studio", studio).expect("store Studio profile");
+        update_stored_preferences(&mut stored, "laptop", laptop).expect("store laptop profile");
+        assert_eq!(settings_for_display(&stored, "studio"), studio);
+        assert_eq!(settings_for_display(&stored, "laptop"), laptop);
+        assert_eq!(
+            settings_for_display(&stored, "new-display"),
+            OverlayPreferences::default()
+        );
+        assert!(update_stored_preferences(&mut stored, "", studio).is_err());
+    }
+
+    #[test]
+    fn quick_actions_are_backward_compatible_and_cannot_all_be_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "capso-overlay-legacy-actions-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = root.join("overlay-settings.json");
+        fs::create_dir_all(&root).expect("create fixture folder");
+        fs::write(
+            &path,
+            br#"{"version":1,"profiles":{"studio":{"placement":"top_right","size":"regular","autoDismiss":"never"}}}"#,
+        )
+        .expect("write legacy preferences");
+        let legacy = load_stored_overlay_settings(&path).expect("legacy preferences remain valid");
+        assert_eq!(
+            settings_for_display(&legacy, "studio").quick_actions,
+            OverlayQuickActions::default()
+        );
+
+        let mut stored = StoredOverlaySettings::default();
+        let invalid = OverlayPreferences {
+            quick_actions: OverlayQuickActions {
+                pin: false,
+                annotate: false,
+                copy: false,
+                save: false,
+            },
+            ..OverlayPreferences::default()
+        };
+        assert!(update_stored_preferences(&mut stored, "studio", invalid).is_err());
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn save_as_preferences_accept_only_safe_bounded_filename_templates() {
+        let valid = OverlaySaveAsPreferences {
+            format: CaptureExportFormat::Jpeg,
+            filename_template: "Client review {date} — {time}".into(),
+        };
+        validate_save_as_preferences(&valid).expect("safe template");
+
+        for filename_template in [
+            "",
+            "../escape {date}",
+            "folder/name {time}",
+            "folder\\name {time}",
+            ".hidden {date}",
+            "Unknown {project}",
+        ] {
+            assert!(validate_save_as_preferences(&OverlaySaveAsPreferences {
+                format: CaptureExportFormat::Png,
+                filename_template: filename_template.into(),
+            })
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_overlay_settings_receive_portable_save_as_defaults() {
+        let legacy: StoredOverlaySettings =
+            serde_json::from_str(r#"{"version":1,"profiles":{}}"#).expect("legacy settings decode");
+
+        assert_eq!(legacy.save_as, OverlaySaveAsPreferences::default());
+        assert_eq!(legacy.save_as.format, CaptureExportFormat::Png);
+        assert_eq!(legacy.save_as.filename_template, "Capso {date} at {time}");
+    }
+
+    #[test]
+    fn temporary_hide_preserves_the_exact_capture_until_explicit_restore() {
+        let path = "/tmp/capso/current.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, path, 1),
+            TemporaryHideTransition::Hidden
+        );
+        assert!(!window.visible.get());
+        assert!(runtime.temporarily_hidden);
+        let hidden = runtime.current.as_ref().expect("capture remains current");
+        assert_eq!(hidden.path, path);
+        assert!(hidden.temporarily_hidden);
+        assert_eq!(
+            restore_hidden_transition(&mut runtime, &window),
+            RestoreHiddenTransition::Restored(capture(path))
+        );
+        assert!(window.visible.get());
+        assert!(!runtime.temporarily_hidden);
+        assert_eq!(runtime.current, Some(capture(path)));
+    }
+
+    #[test]
+    fn hidden_overlay_ignores_late_image_ready_until_explicit_restore() {
+        let path = "/tmp/capso/current.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, path, 1),
+            TemporaryHideTransition::Hidden
+        );
+
+        assert_eq!(
+            reveal_transition(&mut runtime, &window, path, 1),
+            RevealTransition::Hidden
+        );
+        assert!(!window.visible.get());
+        assert!(
+            runtime
+                .current
+                .as_ref()
+                .expect("capture remains current")
+                .temporarily_hidden
+        );
+    }
+
+    #[test]
+    fn display_profiles_survive_rearrangement_and_disambiguate_identical_monitors() {
+        let left = display(
+            ScreenRect {
+                x: -2880,
+                y: 0,
+                width: 2880,
+                height: 1800,
+            },
+            ScreenRect {
+                x: -2880,
+                y: 48,
+                width: 2880,
+                height: 1690,
+            },
+            2.0,
+        );
+        let right = display(
+            ScreenRect {
+                x: 3024,
+                y: 0,
+                width: 2880,
+                height: 1800,
+            },
+            ScreenRect {
+                x: 3024,
+                y: 48,
+                width: 2880,
+                height: 1690,
+            },
+            2.0,
+        );
+
+        assert_eq!(
+            display_profile_ids(&[("Studio Display".into(), left)]),
+            display_profile_ids(&[("Studio Display".into(), right)]),
+            "moving one display must not create a new preference profile",
+        );
+        let duplicate_ids = display_profile_ids(&[
+            ("Studio Display".into(), left),
+            ("Studio Display".into(), right),
+        ]);
+        assert_ne!(duplicate_ids[0], duplicate_ids[1]);
+    }
+
+    #[test]
+    fn overlay_settings_round_trip_atomically_and_corrupt_state_is_never_overwritten() {
+        let root =
+            std::env::temp_dir().join(format!("capso-overlay-settings-{}", uuid::Uuid::new_v4()));
+        let path = root.join("overlay-settings.json");
+        let mut stored =
+            load_stored_overlay_settings(&path).expect("missing settings use defaults");
+        update_stored_preferences(
+            &mut stored,
+            "studio",
+            OverlayPreferences {
+                placement: OverlayPlacement::TopLeft,
+                size: OverlaySize::Regular,
+                auto_dismiss: OverlayAutoDismiss::Never,
+                quick_actions: OverlayQuickActions::default(),
+            },
+        )
+        .expect("store profile");
+        save_stored_overlay_settings(&path, &stored).expect("save atomically");
+        assert_eq!(load_stored_overlay_settings(&path).expect("reload"), stored);
+
+        fs::write(&path, b"{not-json").expect("install corrupt fixture");
+        assert!(load_stored_overlay_settings(&path).is_err());
+        assert_eq!(fs::read(&path).expect("corrupt bytes remain"), b"{not-json");
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     #[test]
@@ -1445,12 +2845,48 @@ mod tests {
             presentation_id: 2,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             source: OverlaySource::Capture,
+            auto_dismiss_ms: Some(8_000),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
         };
 
         assert!(!capture_matches(Some(&current), "/tmp/capso/old.png", 2));
         assert!(capture_matches(Some(&current), "/tmp/capso/new.png", 2));
         assert!(!capture_matches(Some(&current), "/tmp/capso/new.png", 1));
         assert!(!capture_matches(None, "/tmp/capso/new.png", 2));
+    }
+
+    #[test]
+    fn project_filing_accepts_only_the_exact_fresh_capture_presentation() {
+        let capture = OverlayCapture {
+            path: "/tmp/capso/new.png".into(),
+            presentation_id: 2,
+            clipboard: ClipboardStatus::Copied { bytes: 42 },
+            source: OverlaySource::Capture,
+            auto_dismiss_ms: Some(8_000),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
+        };
+        let runtime = OverlayRuntime {
+            current: Some(capture),
+            ..OverlayRuntime::default()
+        };
+        assert_eq!(
+            current_capture_project_path(&runtime, "/tmp/capso/new.png", 2)
+                .expect("exact fresh capture"),
+            std::path::PathBuf::from("/tmp/capso/new.png")
+        );
+        assert!(current_capture_project_path(&runtime, "/tmp/capso/old.png", 2).is_err());
+        assert!(current_capture_project_path(&runtime, "/tmp/capso/new.png", 1).is_err());
+
+        let history = OverlayRuntime {
+            current: Some(OverlayCapture {
+                source: OverlaySource::History,
+                ..runtime.current.expect("capture")
+            }),
+            ..OverlayRuntime::default()
+        };
+        assert!(current_capture_project_path(&history, "/tmp/capso/new.png", 2).is_err());
     }
 
     #[test]
@@ -1487,6 +2923,8 @@ mod tests {
                 CaptureMode::Region,
                 started_at,
             )),
+            304,
+            194,
             120,
             240,
         )
@@ -1520,9 +2958,21 @@ mod tests {
             presentation_id: 1,
             clipboard: ClipboardStatus::Unchanged,
             source: OverlaySource::History,
+            auto_dismiss_ms: Some(8_000),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
         };
-        prepare_transition(&mut history_runtime, &window, history, None, 120, 240)
-            .expect("history prepares");
+        prepare_transition(
+            &mut history_runtime,
+            &window,
+            history,
+            None,
+            304,
+            194,
+            120,
+            240,
+        )
+        .expect("history prepares");
         assert_eq!(
             reveal_transition_with_clock(
                 &mut history_runtime,
@@ -1545,6 +2995,8 @@ mod tests {
                 CaptureMode::Window,
                 started_at,
             )),
+            304,
+            194,
             120,
             240,
         )
@@ -1756,6 +3208,9 @@ mod tests {
             presentation_id: 7,
             clipboard: ClipboardStatus::Unchanged,
             source: OverlaySource::History,
+            auto_dismiss_ms: Some(8_000),
+            quick_actions: OverlayQuickActions::default(),
+            temporarily_hidden: false,
         };
 
         assert_eq!(
@@ -1764,7 +3219,15 @@ mod tests {
                 "path": "/tmp/capso/history.png",
                 "presentationId": 7,
                 "clipboard": { "status": "unchanged" },
-                "source": "history"
+                "source": "history",
+                "autoDismissMs": 8000,
+                "quickActions": {
+                    "pin": true,
+                    "annotate": true,
+                    "copy": true,
+                    "save": true
+                },
+                "temporarilyHidden": false
             })
         );
     }
@@ -1818,8 +3281,17 @@ mod tests {
             reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Shown(None)
         );
-        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
-            .expect("new capture prepares");
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture(new_path),
+            None,
+            304,
+            194,
+            120,
+            240,
+        )
+        .expect("new capture prepares");
         assert!(!window.visible.get());
         assert_eq!(runtime.current, Some(capture(new_path)));
 
@@ -1828,13 +3300,23 @@ mod tests {
         let window = FakeWindow::default();
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(old_path));
-        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
-            .expect("new capture prepares");
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture(new_path),
+            None,
+            304,
+            194,
+            120,
+            240,
+        )
+        .expect("new capture prepares");
         assert_eq!(
             reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Stale
         );
         assert!(!window.visible.get());
+        assert_eq!(window.size.get(), (304, 194));
         assert_eq!(window.position.get(), (120, 240));
     }
 
@@ -1857,8 +3339,17 @@ mod tests {
             "old failed",
         )
         .is_some());
-        prepare_transition(&mut runtime, &window, capture(new_path), None, 120, 240)
-            .expect("new capture prepares");
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture(new_path),
+            None,
+            304,
+            194,
+            120,
+            240,
+        )
+        .expect("new capture prepares");
         assert_eq!(
             reveal_transition(&mut runtime, &window, new_path, 1),
             RevealTransition::Shown(None)
@@ -1901,6 +3392,8 @@ mod tests {
                 CaptureMode::Fullscreen,
                 std::time::Instant::now(),
             )),
+            304,
+            194,
             120,
             240,
         )
@@ -1919,7 +3412,7 @@ mod tests {
         assert!(!window.visible.get());
         assert_eq!(
             *window.transitions.borrow(),
-            vec!["hide", "position", "show", "hide"]
+            vec!["hide", "size", "position", "show", "hide"]
         );
     }
 
@@ -1995,7 +3488,9 @@ mod tests {
         std::fs::write(&source, pixels).expect("write source capture");
 
         assert_eq!(
-            export_capture(&source, &destination).expect("export succeeds"),
+            export_capture(&source, &destination)
+                .expect("export succeeds")
+                .bytes,
             pixels.len() as u64
         );
         assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
@@ -2014,18 +3509,88 @@ mod tests {
         std::fs::write(&source, pixels).expect("write source capture");
 
         assert_eq!(
-            export_capture(&source, &source).expect("same path remains safe"),
+            export_capture(&source, &source)
+                .expect("same path remains safe")
+                .bytes,
             pixels.len() as u64
         );
         assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
 
         std::fs::hard_link(&source, &alias).expect("create aliased destination");
         assert_eq!(
-            export_capture(&source, &alias).expect("hard-link alias remains safe"),
+            export_capture(&source, &alias)
+                .expect("hard-link alias remains safe")
+                .bytes,
             pixels.len() as u64
         );
         assert_eq!(std::fs::read(&source).expect("source remains"), pixels);
         assert_eq!(std::fs::read(&alias).expect("alias remains"), pixels);
+    }
+
+    #[test]
+    fn save_as_jpeg_flattens_alpha_on_white_at_exact_source_dimensions() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("source.png");
+        let destination = directory.path().join("Capso capture.jpg");
+        let mut pixels = image::RgbaImage::new(2, 1);
+        pixels.put_pixel(0, 0, image::Rgba([255, 0, 0, 128]));
+        pixels.put_pixel(1, 0, image::Rgba([0, 0, 255, 0]));
+        pixels.save(&source).expect("write source PNG");
+        let source_before = std::fs::read(&source).expect("source bytes");
+
+        let exported = export_capture(&source, &destination).expect("JPEG export succeeds");
+
+        assert_eq!(exported.format, CaptureExportFormat::Jpeg);
+        assert_eq!(image::image_dimensions(&destination).unwrap(), (2, 1));
+        assert_eq!(
+            &std::fs::read(&destination).unwrap()[..3],
+            &[0xff, 0xd8, 0xff]
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+    }
+
+    #[test]
+    fn save_as_rejects_unsupported_or_linked_destinations_before_mutating_source() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("source.png");
+        image::RgbaImage::new(2, 2)
+            .save(&source)
+            .expect("write source PNG");
+        let source_before = std::fs::read(&source).expect("source bytes");
+
+        assert!(export_capture(&source, &directory.path().join("capture.webp")).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                directory.path().join("missing-target.jpg"),
+                directory.path().join("linked.jpg"),
+            )
+            .expect("create destination symlink");
+            assert!(export_capture(&source, &directory.path().join("linked.jpg")).is_err());
+        }
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+    }
+
+    #[test]
+    fn annotation_export_bytes_share_the_exact_png_and_jpeg_contract() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let png_destination = directory.path().join("Annotated.png");
+        let jpeg_destination = directory.path().join("Annotated.jpg");
+        let mut pixels = image::RgbaImage::new(3, 2);
+        pixels.put_pixel(0, 0, image::Rgba([255, 0, 0, 128]));
+        let mut source = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut source, image::ImageFormat::Png)
+            .expect("encode flattened annotation");
+        let source = source.into_inner();
+
+        let png = export_png_bytes(&source, &png_destination).expect("PNG export");
+        let jpeg = export_png_bytes(&source, &jpeg_destination).expect("JPEG export");
+
+        assert_eq!(png.format, CaptureExportFormat::Png);
+        assert_eq!(std::fs::read(png_destination).unwrap(), source);
+        assert_eq!(jpeg.format, CaptureExportFormat::Jpeg);
+        assert_eq!(image::image_dimensions(jpeg_destination).unwrap(), (3, 2));
     }
 
     #[test]
@@ -2054,7 +3619,7 @@ mod tests {
         assert_eq!(config["app"]["security"]["assetProtocol"]["enable"], true);
         assert_eq!(
             config["app"]["security"]["assetProtocol"]["scope"],
-            serde_json::json!(["$APPDATA/captures/**"])
+            serde_json::json!(["$APPDATA/captures/**", "$APPDATA/freeze/**"])
         );
 
         let capability: serde_json::Value =

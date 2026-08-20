@@ -18,3 +18,11 @@ test("an explicit local-only choice wins even in a cloud-configured build", asyn
   selection.setBackendPreference!("auto");
   assert.equal(selection.backendPreference!(), "auto");
 });
+
+test("only the explicit local value can persist as a backend preference", async () => {
+  const selection = await import("./backend.ts");
+  assert.equal(selection.validBackendPreference?.("local"), "local");
+  assert.equal(selection.validBackendPreference?.("auto"), "auto");
+  assert.equal(selection.validBackendPreference?.("remote"), "auto");
+  assert.equal(selection.validBackendPreference?.(null), "auto");
+});

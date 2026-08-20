@@ -3,9 +3,19 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { accountDeviceToken } from "@/lib/device";
 import { useAccount } from "@/components/account-gate";
+import { accountFetch } from "@/lib/supabase/client";
 
 /** The origin never changes for the life of the page, so there is nothing to subscribe to. */
 const noSubscribe = () => () => {};
+
+async function pairExtensionDevice(deviceToken: string): Promise<boolean> {
+  const response = await accountFetch("/api/extension/pair", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceToken }),
+  });
+  return response.ok;
+}
 
 /**
  * Self-hosted extension download.
@@ -18,6 +28,9 @@ const noSubscribe = () => () => {};
 export default function ExtensionPage() {
   const [info, setInfo] = useState<{ version: string; builtAt: string } | null>(null);
   const [device, setDevice] = useState("");
+  const [pairing, setPairing] = useState<"local" | "registering" | "paired" | "error">("local");
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const account = useAccount();
   /**
    * The origin this page is served from — which is the one the extension has to
@@ -44,20 +57,39 @@ export default function ExtensionPage() {
 
   useEffect(() => {
     let active = true;
-    void accountDeviceToken(account.userId).then((token) => {
-      if (active) setDevice(token);
-    });
+    void accountDeviceToken(account.userId)
+      .then(async (token) => {
+        if (!active) return;
+        setDevice(token);
+        if (account.mode !== "signed_in") return;
+        setPairing("registering");
+        const paired = await pairExtensionDevice(token);
+        if (active) setPairing(paired ? "paired" : "error");
+      })
+      .catch(() => {
+        if (active && account.mode === "signed_in") setPairing("error");
+      });
     return () => {
       active = false;
     };
-  }, [account.userId]);
+  }, [account.mode, account.userId]);
+
+  const retryPairing = async () => {
+    if (!device || account.mode !== "signed_in" || pairing === "registering") return;
+    setPairing("registering");
+    try {
+      setPairing((await pairExtensionDevice(device)) ? "paired" : "error");
+    } catch {
+      setPairing("error");
+    }
+  };
 
   return (
     <div className="max-w-2xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Chrome extension</h1>
         <p className="mt-1 text-xs text-muted">
-          Captures the visible browser tab into Capso. Native app windows still need the Mac app.
+          Captures a browser view, selected area or full scrollable page into Capso. Native app windows still need the Mac app.
         </p>
       </div>
 
@@ -75,7 +107,7 @@ export default function ExtensionPage() {
         <a
           href="/capso-extension.zip"
           download
-          className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-accent-ink"
+          className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 text-xs font-medium text-accent-ink"
         >
           Download .zip
         </a>
@@ -102,9 +134,50 @@ export default function ExtensionPage() {
             you paste the new account&apos;s code, so they cannot fall into the wrong library.
           </p>
         )}
-        <code className="block rounded-lg border border-line bg-background px-3 py-2 font-mono text-xs break-all select-all">
-          {device || "…"}
-        </code>
+        <div className="flex items-stretch gap-2">
+          <code className="min-w-0 flex-1 rounded-lg border border-line bg-background px-3 py-2 font-mono text-xs break-all select-all">
+            {device || "…"}
+          </code>
+          <button
+            type="button"
+            disabled={!device}
+            onClick={async () => {
+              setCopyError(false);
+              try {
+                await navigator.clipboard.writeText(device);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1600);
+              } catch {
+                setCopied(false);
+                setCopyError(true);
+              }
+            }}
+            className="min-h-11 rounded-lg border border-line px-3 text-xs font-medium disabled:opacity-50"
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+        {copied && <span className="sr-only" role="status" aria-live="polite">Device code copied.</span>}
+        {copyError && <p role="alert" className="text-xs text-danger">Could not copy the device code. Select it manually instead.</p>}
+        {account.mode === "signed_in" && (
+          <p
+            role={pairing === "error" ? "alert" : "status"}
+            className={`text-xs ${pairing === "error" ? "text-danger" : "text-muted"}`}
+          >
+            {pairing === "paired" && "Ready for direct delivery — Capso does not need to stay open."}
+            {pairing === "registering" && "Securing this code to your account…"}
+            {pairing === "error" && "Could not secure this code yet. Retry before pairing the extension."}
+          </p>
+        )}
+        {account.mode === "signed_in" && pairing === "error" && (
+          <button
+            type="button"
+            onClick={() => void retryPairing()}
+            className="mt-2 min-h-11 rounded-lg border border-line px-3 text-xs font-semibold"
+          >
+            Retry secure pairing
+          </button>
+        )}
       </section>
 
       <section className="space-y-2">
@@ -136,12 +209,12 @@ export default function ExtensionPage() {
           <li>
             Set the shortcut at{" "}
             <code className="rounded bg-surface px-1">chrome://extensions/shortcuts</code> - default
-            is ⌘⇧U.
+            visible-area capture is ⌘⇧U; element, area and full-page capture can be assigned separately.
           </li>
           <li>
-            Leave Capso open in a tab when you can. Captures are held inside the extension until
-            this app confirms it has stored them, so nothing is lost if every Capso tab is
-            closed - they simply arrive the next time one is open.
+            Take a test capture, then close this tab. Hosted accounts deliver directly in the
+            background; the extension keeps any offline capture until Capso confirms its exact ID.
+            A local-only development build delivers the next time a Capso tab is open.
           </li>
         </ol>
       </section>

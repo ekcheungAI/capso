@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createOverlayAutoDismissTimer,
   PausableOverlayTimer,
   type OverlayTimerHandle,
   type OverlayTimerScheduler,
@@ -34,6 +35,29 @@ class FakeScheduler implements OverlayTimerScheduler {
     }
   }
 }
+
+test("Never creates no auto-dismiss timer while a timed preference keeps its exact duration", () => {
+  const scheduler = new FakeScheduler();
+  let dismissals = 0;
+
+  assert.equal(
+    createOverlayAutoDismissTimer(null, () => dismissals++, scheduler),
+    null,
+  );
+  assert.equal(scheduler.timers.size, 0);
+
+  const timer = createOverlayAutoDismissTimer(
+    15_000,
+    () => dismissals++,
+    scheduler,
+  );
+  assert.ok(timer);
+  timer.start();
+  scheduler.advance(14_999);
+  assert.equal(dismissals, 0);
+  scheduler.advance(1);
+  assert.equal(dismissals, 1);
+});
 
 test("hover pause preserves the exact remaining auto-dismiss duration", () => {
   const scheduler = new FakeScheduler();

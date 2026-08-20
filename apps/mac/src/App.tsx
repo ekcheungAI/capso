@@ -11,8 +11,15 @@ import {
 import "./App.css";
 import { FirstRun, firstRunDismissed } from "./FirstRun";
 import {
+  saveAsTemplateError,
+  suggestedCaptureFilename,
+  type OverlaySaveAsPreferences,
+} from "./overlay-drag";
+import {
   cloudAccountPresentation,
   shortcutRecorderLabel,
+  syncPresentation,
+  type SyncRuntimeStatus,
 } from "./setup";
 
 type ShortcutSettings = {
@@ -49,6 +56,37 @@ type SystemStatus = {
   launchAtLogin: LoginItemStatus;
 };
 
+type OverlayPlacement = "top_left" | "top_right" | "bottom_left" | "bottom_right";
+type OverlaySize = "compact" | "regular" | "large";
+type OverlayAutoDismiss = "eight_seconds" | "fifteen_seconds" | "never";
+type OverlayQuickActions = {
+  pin: boolean;
+  annotate: boolean;
+  copy: boolean;
+  save: boolean;
+};
+
+type OverlayPreferences = {
+  placement: OverlayPlacement;
+  size: OverlaySize;
+  autoDismiss: OverlayAutoDismiss;
+  quickActions: OverlayQuickActions;
+};
+
+type OverlayDisplaySettings = {
+  id: string;
+  name: string;
+  isPrimary: boolean;
+  preferences: OverlayPreferences;
+};
+
+type OverlaySettingsSnapshot = {
+  displays: OverlayDisplaySettings[];
+  selectedDisplayId: string;
+  saveAs: OverlaySaveAsPreferences;
+  storageWarning: string | null;
+};
+
 type AuthAccountStatus = {
   status: "signed_in" | "signed_out";
   userId: string | null;
@@ -61,6 +99,12 @@ type Diagnostics = {
   latency_statistics: string | null;
   queue_label: string | null;
   queue_retryable: number;
+  automation_status: AutomationFeedback | null;
+};
+
+type AutomationFeedback = {
+  message: string;
+  isError: boolean;
 };
 
 type AuthFailureEvent = { message: string };
@@ -70,6 +114,32 @@ type AuthUiSnapshot = {
   account: AuthAccountStatus;
   lastFailure: string | null;
 };
+
+type DeviceInfo = {
+  name: string;
+  platform: string;
+  appVersion: string;
+};
+
+type SettingsTransferAction = "export" | "import" | "reset";
+type AuthAction = "email" | "reconnect" | "sign_out";
+type SystemAction = "permission" | "login" | "login_settings";
+
+type SettingsExportResult = {
+  fileName: string;
+};
+
+type SettingsImportResult = {
+  sourceName: string;
+  shortcutStatus: ShortcutStatus;
+};
+
+const PREVIEW_MODE = new URLSearchParams(window.location.search).get("preview");
+const PREVIEW_CONNECTED =
+  !("__TAURI_INTERNALS__" in window) &&
+  ["connected", "reconnect", "device-revoked"].includes(PREVIEW_MODE ?? "");
+const PREVIEW_RECONNECT = PREVIEW_CONNECTED && PREVIEW_MODE === "reconnect";
+const PREVIEW_DEVICE_REVOKED = PREVIEW_CONNECTED && PREVIEW_MODE === "device-revoked";
 
 const DEFAULT_SHORTCUTS: ShortcutSettings = {
   region: "Control+Shift+C",
@@ -83,10 +153,80 @@ const PREVIEW_SYSTEM_STATUS: SystemStatus = {
   launchAtLogin: "disabled",
 };
 
+const DEFAULT_OVERLAY_PREFERENCES: OverlayPreferences = {
+  placement: "bottom_right",
+  size: "compact",
+  autoDismiss: "eight_seconds",
+  quickActions: { pin: true, annotate: true, copy: true, save: true },
+};
+
+const DEFAULT_SAVE_AS_PREFERENCES: OverlaySaveAsPreferences = {
+  format: "png",
+  filenameTemplate: "Capso {date} at {time}",
+};
+
+const PREVIEW_OVERLAY_SETTINGS: OverlaySettingsSnapshot = {
+  displays: [
+    {
+      id: "built-in-retina",
+      name: "Built-in Retina Display",
+      isPrimary: true,
+      preferences: DEFAULT_OVERLAY_PREFERENCES,
+    },
+    {
+      id: "studio-display",
+      name: "Studio Display",
+      isPrimary: false,
+      preferences: {
+        placement: "top_right",
+        size: "regular",
+        autoDismiss: "never",
+        quickActions: { pin: true, annotate: true, copy: false, save: true },
+      },
+    },
+  ],
+  selectedDisplayId: "built-in-retina",
+  saveAs: DEFAULT_SAVE_AS_PREFERENCES,
+  storageWarning: null,
+};
+
 const PREVIEW_AUTH_STATUS: AuthAccountStatus = {
-  status: "signed_out",
-  userId: null,
-  email: null,
+  status: PREVIEW_CONNECTED ? "signed_in" : "signed_out",
+  userId: PREVIEW_CONNECTED ? "018f22c4-cada-7c6b-9d5b-fc35f7f92279" : null,
+  email: PREVIEW_CONNECTED ? "elvin@example.com" : null,
+};
+
+const PREVIEW_SYNC_STATUS: SyncRuntimeStatus = {
+  summary: {
+    remotePending: 0,
+    pending: 0,
+    uploading: 0,
+    retrying: 0,
+    failed: 0,
+    uploaded: PREVIEW_CONNECTED ? 4 : 0,
+    total: PREVIEW_CONNECTED ? 4 : 0,
+  },
+  annotationSummary: {
+    pending: 0,
+    uploading: 0,
+    failed: 0,
+    conflicts: 0,
+    synced: PREVIEW_CONNECTED ? 2 : 0,
+    total: PREVIEW_CONNECTED ? 2 : 0,
+  },
+  warning: PREVIEW_RECONNECT
+    ? "The saved session expired."
+    : PREVIEW_DEVICE_REVOKED
+      ? "This Mac was disconnected from Capso. Reconnect the same account to resume sync."
+      : null,
+  lastSuccessAtMs: PREVIEW_CONNECTED ? Date.now() - 5 * 60_000 : null,
+  reconnectRequired: PREVIEW_RECONNECT || PREVIEW_DEVICE_REVOKED,
+};
+
+const PREVIEW_DEVICE_INFO: DeviceInfo = {
+  name: "This Mac",
+  platform: "macOS",
+  appVersion: "preview",
 };
 
 const SHORTCUT_FIELDS: Array<{
@@ -120,6 +260,15 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   "account",
   "advanced",
 ];
+
+const AUTOMATION_ROUTES = [
+  ["Capture Area", "capso://capture/area"],
+  ["Capture Window", "capso://capture/window"],
+  ["Capture Full screen", "capso://capture/fullscreen"],
+  ["Open History", "capso://open/history"],
+  ["Open Recording", "capso://open/recording"],
+  ["Open Settings", "capso://open/settings"],
+] as const;
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -188,6 +337,7 @@ function App() {
   );
   const [noticeIsError, setNoticeIsError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const shortcutSaveInFlight = useRef(false);
   const [needsRetry, setNeedsRetry] = useState(false);
   const [systemStatus, setSystemStatus] = useState(PREVIEW_SYSTEM_STATUS);
   const [systemNotice, setSystemNotice] = useState(() =>
@@ -198,9 +348,20 @@ function App() {
   const [systemNoticeIsError, setSystemNoticeIsError] = useState(
     () => !isTauriRuntime(),
   );
-  const [systemAction, setSystemAction] = useState<
-    "permission" | "login" | null
-  >(null);
+  const [systemAction, setSystemAction] = useState<SystemAction | null>(null);
+  const systemActionInFlight = useRef<SystemAction | null>(null);
+  const [overlaySettings, setOverlaySettings] = useState(PREVIEW_OVERLAY_SETTINGS);
+  const [overlayDisplayId, setOverlayDisplayId] = useState(PREVIEW_OVERLAY_SETTINGS.selectedDisplayId);
+  const [overlayDraft, setOverlayDraft] = useState(DEFAULT_OVERLAY_PREFERENCES);
+  const [saveAsDraft, setSaveAsDraft] = useState(DEFAULT_SAVE_AS_PREFERENCES);
+  const [overlaySaving, setOverlaySaving] = useState(false);
+  const overlaySaveInFlight = useRef(false);
+  const [overlayNotice, setOverlayNotice] = useState(() =>
+    isTauriRuntime()
+      ? "Loading Quick Access behavior…"
+      : "Preview mode - each display keeps its own Quick Access choices.",
+  );
+  const [overlayNoticeIsError, setOverlayNoticeIsError] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagnosticsNotice, setDiagnosticsNotice] = useState(() =>
     isTauriRuntime()
@@ -211,11 +372,10 @@ function App() {
     () => !isTauriRuntime(),
   );
   const [authStatus, setAuthStatus] = useState(PREVIEW_AUTH_STATUS);
-  const [authConfigured, setAuthConfigured] = useState(false);
+  const [authConfigured, setAuthConfigured] = useState(PREVIEW_CONNECTED);
   const [authEmail, setAuthEmail] = useState("");
-  const [authAction, setAuthAction] = useState<"email" | "sign_out" | null>(
-    null,
-  );
+  const [authAction, setAuthAction] = useState<AuthAction | null>(null);
+  const authActionInFlight = useRef<AuthAction | null>(null);
   const [authNotice, setAuthNotice] = useState(() =>
     isTauriRuntime()
       ? "Checking your Capso account…"
@@ -224,16 +384,82 @@ function App() {
   const [authNoticeIsError, setAuthNoticeIsError] = useState(
     () => !isTauriRuntime(),
   );
+  const [syncStatus, setSyncStatus] = useState(PREVIEW_SYNC_STATUS);
+  const [syncAction, setSyncAction] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState(PREVIEW_DEVICE_INFO);
+  const [libraryAction, setLibraryAction] = useState(false);
+  const [historyAction, setHistoryAction] = useState(false);
+  const [reconnectNotice, setReconnectNotice] = useState<string | null>(null);
+  const [settingsTransferAction, setSettingsTransferAction] =
+    useState<SettingsTransferAction | null>(null);
+  const settingsTransferInFlight = useRef<SettingsTransferAction | null>(null);
+  const [settingsTransferNotice, setSettingsTransferNotice] = useState(() =>
+    isTauriRuntime()
+      ? "Export a local backup or bring the same preferences to another Mac."
+      : "Preview mode - system file pickers activate in the installed app.",
+  );
+  const [settingsTransferNoticeIsError, setSettingsTransferNoticeIsError] =
+    useState(false);
   const nativeRuntime = useMemo(isTauriRuntime, []);
   const accountPresentation = useMemo(
     () => cloudAccountPresentation(authConfigured, authStatus.status),
     [authConfigured, authStatus.status],
+  );
+  const syncState = useMemo(
+    () => syncPresentation(authConfigured, authStatus.status, syncStatus),
+    [authConfigured, authStatus.status, syncStatus],
   );
   const isDirty = !sameSettings(settings, savedSettings);
   const screenRecordingGranted = systemStatus.screenRecording === "granted";
   const launchAtLoginEnabled =
     systemStatus.launchAtLogin === "enabled" ||
     systemStatus.launchAtLogin === "requiresApproval";
+  const overlaySavedPreferences = overlaySettings.displays.find(
+    (display) => display.id === overlayDisplayId,
+  )?.preferences ?? DEFAULT_OVERLAY_PREFERENCES;
+  const saveAsTemplateIssue = saveAsTemplateError(saveAsDraft.filenameTemplate);
+  const overlayDirty =
+    JSON.stringify(overlayDraft) !== JSON.stringify(overlaySavedPreferences) ||
+    JSON.stringify(saveAsDraft) !== JSON.stringify(overlaySettings.saveAs);
+
+  function beginSettingsTransfer(action: SettingsTransferAction) {
+    if (settingsTransferInFlight.current !== null) return false;
+    settingsTransferInFlight.current = action;
+    setSettingsTransferAction(action);
+    return true;
+  }
+
+  function endSettingsTransfer(action: SettingsTransferAction) {
+    if (settingsTransferInFlight.current !== action) return;
+    settingsTransferInFlight.current = null;
+    setSettingsTransferAction(null);
+  }
+
+  function beginAuthAction(action: AuthAction) {
+    if (authActionInFlight.current !== null) return false;
+    authActionInFlight.current = action;
+    setAuthAction(action);
+    return true;
+  }
+
+  function endAuthAction(action: AuthAction) {
+    if (authActionInFlight.current !== action) return;
+    authActionInFlight.current = null;
+    setAuthAction(null);
+  }
+
+  function beginSystemAction(action: SystemAction) {
+    if (systemActionInFlight.current !== null) return false;
+    systemActionInFlight.current = action;
+    setSystemAction(action);
+    return true;
+  }
+
+  function endSystemAction(action: SystemAction) {
+    if (systemActionInFlight.current !== action) return;
+    systemActionInFlight.current = null;
+    setSystemAction(null);
+  }
 
   async function refreshSystemStatus() {
     if (!nativeRuntime) return;
@@ -256,20 +482,277 @@ function App() {
     }
   }
 
+  function installOverlaySettings(snapshot: OverlaySettingsSnapshot) {
+    const selected = snapshot.displays.find(
+      (display) => display.id === snapshot.selectedDisplayId,
+    ) ?? snapshot.displays[0];
+    setOverlaySettings(snapshot);
+    if (selected) {
+      setOverlayDisplayId(selected.id);
+      setOverlayDraft(selected.preferences);
+    }
+    setSaveAsDraft(snapshot.saveAs);
+    setOverlayNotice(
+      snapshot.storageWarning
+        ?? "Saved separately for each connected display. New captures use these choices.",
+    );
+    setOverlayNoticeIsError(snapshot.storageWarning !== null);
+  }
+
+  function installTransferredShortcuts(status: ShortcutStatus) {
+    setSettings(status.settings);
+    setSavedSettings(status.settings);
+    setConflicts(status.conflicts);
+    setNotice(
+      status.conflicts.length > 0
+        ? "Imported, but some shortcuts are unavailable. Tray capture still works."
+        : "Imported shortcuts are active globally.",
+    );
+    setNoticeIsError(status.conflicts.length > 0);
+    setNeedsRetry(status.conflicts.length > 0);
+  }
+
+  async function refreshOverlayAfterSettingsTransfer() {
+    if (!nativeRuntime) return;
+    try {
+      installOverlaySettings(
+        await invoke<OverlaySettingsSnapshot>("get_overlay_settings"),
+      );
+    } catch (error) {
+      setOverlayNotice(`Settings changed, but Quick Access could not refresh: ${String(error)}`);
+      setOverlayNoticeIsError(true);
+    }
+  }
+
+  function installPreviewDefaults() {
+    const shortcutStatus: ShortcutStatus = {
+      settings: { ...DEFAULT_SHORTCUTS },
+      conflicts: [],
+      storageWarning: null,
+    };
+    installTransferredShortcuts(shortcutStatus);
+    const snapshot: OverlaySettingsSnapshot = {
+      ...PREVIEW_OVERLAY_SETTINGS,
+      displays: PREVIEW_OVERLAY_SETTINGS.displays.map((display) => ({
+        ...display,
+        preferences: {
+          ...DEFAULT_OVERLAY_PREFERENCES,
+          quickActions: { ...DEFAULT_OVERLAY_PREFERENCES.quickActions },
+        },
+      })),
+    };
+    installOverlaySettings(snapshot);
+  }
+
+  async function exportSettings() {
+    const action = "export";
+    if (isDirty || overlayDirty || !beginSettingsTransfer(action)) return;
+    setSettingsTransferNotice("Choosing where to save a local settings backup…");
+    setSettingsTransferNoticeIsError(false);
+    try {
+      if (!nativeRuntime) {
+        setSettingsTransferNotice(
+          "Preview only. The installed app exports Capso Settings.json through a system save dialog.",
+        );
+        return;
+      }
+      const result = await invoke<SettingsExportResult | null>(
+        "export_portable_settings",
+      );
+      setSettingsTransferNotice(
+        result === null
+          ? "Export cancelled. No file was changed."
+          : `Exported ${result.fileName}. Account and library data were excluded.`,
+      );
+    } catch (error) {
+      setSettingsTransferNotice(String(error));
+      setSettingsTransferNoticeIsError(true);
+    } finally {
+      endSettingsTransfer(action);
+    }
+  }
+
+  async function importSettings() {
+    const action = "import";
+    if (settingsTransferInFlight.current !== null) return;
+    if (
+      (isDirty || overlayDirty) &&
+      !window.confirm(
+        "Importing will discard unsaved shortcut and Quick Access changes. Continue?",
+      )
+    ) {
+      return;
+    }
+    if (!beginSettingsTransfer(action)) return;
+    setSettingsTransferNotice("Choosing a Capso settings JSON file…");
+    setSettingsTransferNoticeIsError(false);
+    try {
+      if (!nativeRuntime) {
+        installPreviewDefaults();
+        setSettingsTransferNotice(
+          "Preview imported safe sample defaults. The installed app validates the whole file before replacing anything.",
+        );
+        return;
+      }
+      const result = await invoke<SettingsImportResult | null>(
+        "import_portable_settings",
+      );
+      if (result === null) {
+        setSettingsTransferNotice("Import cancelled. Current settings were not changed.");
+        return;
+      }
+      installTransferredShortcuts(result.shortcutStatus);
+      await refreshOverlayAfterSettingsTransfer();
+      setSettingsTransferNotice(
+        `Imported ${result.sourceName}. Capture and Quick Access choices are active.`,
+      );
+    } catch (error) {
+      setSettingsTransferNotice(String(error));
+      setSettingsTransferNoticeIsError(true);
+    } finally {
+      endSettingsTransfer(action);
+    }
+  }
+
+  async function resetAllSettings() {
+    const action = "reset";
+    if (settingsTransferInFlight.current !== null) return;
+    if (
+      !window.confirm(
+        "Reset shortcuts, remembered capture choices, and Quick Access on every display to built-in defaults? Your account and captures stay untouched.",
+      )
+    ) {
+      return;
+    }
+    if (!beginSettingsTransfer(action)) return;
+    setSettingsTransferNotice("Restoring built-in settings…");
+    setSettingsTransferNoticeIsError(false);
+    try {
+      if (!nativeRuntime) {
+        installPreviewDefaults();
+        setSettingsTransferNotice(
+          "Preview reset complete. Account and library data stayed untouched.",
+        );
+        return;
+      }
+      const result = await invoke<SettingsImportResult>("reset_portable_settings");
+      installTransferredShortcuts(result.shortcutStatus);
+      await refreshOverlayAfterSettingsTransfer();
+      setSettingsTransferNotice(
+        "Built-in defaults restored. Account and library data stayed untouched.",
+      );
+    } catch (error) {
+      setSettingsTransferNotice(String(error));
+      setSettingsTransferNoticeIsError(true);
+    } finally {
+      endSettingsTransfer(action);
+    }
+  }
+
+  function chooseOverlayDisplay(displayId: string) {
+    if (overlayDirty) {
+      setOverlayNotice("Save or discard changes before switching displays.");
+      setOverlayNoticeIsError(false);
+      return;
+    }
+    const display = overlaySettings.displays.find((candidate) => candidate.id === displayId);
+    if (!display) return;
+    setOverlayDisplayId(display.id);
+    setOverlayDraft(display.preferences);
+    setOverlayNotice(`Editing Quick Access on ${display.name}.`);
+    setOverlayNoticeIsError(false);
+  }
+
+  async function saveOverlaySettings() {
+    if (!overlayDirty || overlaySaveInFlight.current) return;
+    if (saveAsTemplateIssue) {
+      setOverlayNotice(saveAsTemplateIssue);
+      setOverlayNoticeIsError(true);
+      return;
+    }
+    overlaySaveInFlight.current = true;
+    setOverlaySaving(true);
+    setOverlayNoticeIsError(false);
+    try {
+      if (nativeRuntime) {
+        const snapshot = await invoke<OverlaySettingsSnapshot>("update_overlay_settings", {
+          displayId: overlayDisplayId,
+          preferences: overlayDraft,
+          saveAs: saveAsDraft,
+        });
+        installOverlaySettings(snapshot);
+      } else {
+        setOverlaySettings((current) => ({
+          ...current,
+          saveAs: saveAsDraft,
+          displays: current.displays.map((display) => display.id === overlayDisplayId
+            ? { ...display, preferences: overlayDraft }
+            : display),
+        }));
+        setOverlayNotice("Preview saved for this display. The installed app stores it locally.");
+      }
+    } catch (error) {
+      setOverlayNotice(String(error));
+      setOverlayNoticeIsError(true);
+    } finally {
+      overlaySaveInFlight.current = false;
+      setOverlaySaving(false);
+    }
+  }
+
+  function restoreOverlayDefaults() {
+    setOverlayDraft(DEFAULT_OVERLAY_PREFERENCES);
+    setSaveAsDraft(DEFAULT_SAVE_AS_PREFERENCES);
+    setOverlayNotice("Default Quick Access and Save As choices are ready to save.");
+    setOverlayNoticeIsError(false);
+  }
+
+  function setOverlayQuickAction(
+    action: keyof OverlayQuickActions,
+    enabled: boolean,
+  ) {
+    const quickActions = { ...overlayDraft.quickActions, [action]: enabled };
+    if (!Object.values(quickActions).some(Boolean)) {
+      setOverlayNotice("Keep at least one Quick Access action visible.");
+      setOverlayNoticeIsError(false);
+      return;
+    }
+    setOverlayDraft({ ...overlayDraft, quickActions });
+    setOverlayNotice("Action visibility is ready to save for this display.");
+    setOverlayNoticeIsError(false);
+  }
+
+  function discardOverlayChanges() {
+    setOverlayDraft(overlaySavedPreferences);
+    setSaveAsDraft(overlaySettings.saveAs);
+    setOverlayNotice("Unsaved Quick Access and Save As changes were discarded.");
+    setOverlayNoticeIsError(false);
+  }
+
   async function refreshDiagnostics() {
     if (!nativeRuntime) return;
 
     try {
       const report = await invoke<Diagnostics>("get_diagnostics");
       setDiagnostics(report);
-      setDiagnosticsNotice(
-        "Read-only. Quote these lines when you report a problem.",
-      );
-      setDiagnosticsNoticeIsError(false);
+      setDiagnosticsNotice(report.automation_status?.message ??
+        "Read-only. Quote these lines when you report a problem.");
+      setDiagnosticsNoticeIsError(report.automation_status?.isError ?? false);
+      if (report.automation_status?.isError) setActiveSection("advanced");
     } catch (error) {
       setDiagnostics(null);
       setDiagnosticsNotice(`Could not load diagnostics: ${String(error)}`);
       setDiagnosticsNoticeIsError(true);
+    }
+  }
+
+  async function refreshSyncStatus() {
+    if (!nativeRuntime) return;
+
+    try {
+      setSyncStatus(await invoke<SyncRuntimeStatus>("get_sync_status"));
+    } catch (error) {
+      setSyncStatus((current) => ({ ...current, warning: String(error) }));
     }
   }
 
@@ -307,6 +790,13 @@ function App() {
 
   useEffect(() => {
     if (!nativeRuntime) return;
+    void invoke<DeviceInfo>("get_device_info")
+      .then(setDeviceInfo)
+      .catch(() => setDeviceInfo(PREVIEW_DEVICE_INFO));
+  }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime) return;
     let active = true;
     const statusListener = listen<AuthAccountStatus>(
       "auth-status-changed",
@@ -320,7 +810,8 @@ function App() {
             : "Sign in before syncing captures to your private web library.",
         );
         setAuthNoticeIsError(false);
-        setAuthAction(null);
+        setReconnectNotice(null);
+        void refreshSyncStatus();
       },
     );
     const failureListener = listen<AuthFailureEvent>(
@@ -329,7 +820,6 @@ function App() {
         if (!active) return;
         setAuthNotice(payload.message);
         setAuthNoticeIsError(true);
-        setAuthAction(null);
       },
     );
 
@@ -360,10 +850,36 @@ function App() {
     };
   }, [nativeRuntime]);
 
+  useEffect(() => {
+    if (!nativeRuntime) return;
+    let active = true;
+    const statusListener = listen<SyncRuntimeStatus>(
+      "sync-status-changed",
+      ({ payload }) => {
+        if (!active) return;
+        setSyncStatus(payload);
+        setSyncAction(false);
+      },
+    );
+    const captureListener = listen("capture-finished", () => {
+      if (active) void refreshSyncStatus();
+    });
+
+    void refreshSyncStatus();
+    const handleFocus = () => void refreshSyncStatus();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", handleFocus);
+      void statusListener.then((unlisten) => unlisten());
+      void captureListener.then((unlisten) => unlisten());
+    };
+  }, [nativeRuntime]);
+
   async function requestSignIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!nativeRuntime || authAction !== null) return;
-    setAuthAction("email");
+    const action = "email";
+    if (!nativeRuntime || !beginAuthAction(action)) return;
     setAuthNotice("Requesting a secure sign-in email…");
     setAuthNoticeIsError(false);
     try {
@@ -371,17 +887,17 @@ function App() {
       setAuthNotice(
         "Check your email, then choose Open Capso on the confirmation page. The link expires in five minutes.",
       );
-      setAuthAction(null);
     } catch (error) {
       setAuthNotice(String(error));
       setAuthNoticeIsError(true);
-      setAuthAction(null);
+    } finally {
+      endAuthAction(action);
     }
   }
 
   async function signOut() {
-    if (!nativeRuntime || authAction !== null) return;
-    setAuthAction("sign_out");
+    const action = "sign_out";
+    if (!nativeRuntime || !beginAuthAction(action)) return;
     setAuthNotice("Signing out…");
     setAuthNoticeIsError(false);
     try {
@@ -393,7 +909,65 @@ function App() {
       setAuthNotice(String(error));
       setAuthNoticeIsError(true);
     } finally {
-      setAuthAction(null);
+      endAuthAction(action);
+    }
+  }
+
+  async function retrySync() {
+    if (!nativeRuntime || syncAction) return;
+    setSyncAction(true);
+    setAuthNotice("Retrying saved captures…");
+    setAuthNoticeIsError(false);
+    try {
+      await invoke("retry_sync");
+      window.setTimeout(() => void refreshSyncStatus(), 800);
+    } catch (error) {
+      setSyncAction(false);
+      setAuthNotice(String(error));
+      setAuthNoticeIsError(true);
+    }
+  }
+
+  async function reconnectAccount() {
+    const action = "reconnect";
+    if (!nativeRuntime || !beginAuthAction(action)) return;
+    setReconnectNotice(null);
+    setAuthNoticeIsError(false);
+    try {
+      await invoke("request_reconnect_email");
+      setReconnectNotice(
+        "Check your account email, then choose Open Capso. Local captures stay queued while you reconnect.",
+      );
+    } catch (error) {
+      setAuthNotice(String(error));
+      setAuthNoticeIsError(true);
+    } finally {
+      endAuthAction(action);
+    }
+  }
+
+  async function openWebLibrary() {
+    if (!nativeRuntime || libraryAction) return;
+    setLibraryAction(true);
+    setAuthNoticeIsError(false);
+    try {
+      await invoke("open_web_library");
+      setAuthNotice("Opened your web library in the default browser.");
+    } catch (error) {
+      setAuthNotice(String(error));
+      setAuthNoticeIsError(true);
+    } finally {
+      setLibraryAction(false);
+    }
+  }
+
+  async function openCaptureHistory() {
+    if (!nativeRuntime) return;
+    setHistoryAction(true);
+    try {
+      await invoke("open_capture_history");
+    } finally {
+      setHistoryAction(false);
     }
   }
 
@@ -404,6 +978,23 @@ function App() {
     const handleFocus = () => void refreshSystemStatus();
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
+  }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime) return;
+    let active = true;
+    void invoke<OverlaySettingsSnapshot>("get_overlay_settings")
+      .then((snapshot) => {
+        if (active) installOverlaySettings(snapshot);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setOverlayNotice(`Could not load Quick Access behavior: ${String(error)}`);
+        setOverlayNoticeIsError(true);
+      });
+    return () => {
+      active = false;
+    };
   }, [nativeRuntime]);
 
   // Diagnostics are a snapshot, so they load once on mount and refresh whenever
@@ -418,9 +1009,29 @@ function App() {
     void refreshDiagnostics();
   }, [nativeRuntime, activeSection]);
 
+  useEffect(() => {
+    if (!nativeRuntime) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AutomationFeedback>("automation-status-changed", ({ payload }) => {
+      if (disposed) return;
+      setDiagnosticsNotice(payload.message);
+      setDiagnosticsNoticeIsError(payload.isError);
+      if (payload.isError) setActiveSection("advanced");
+      void refreshDiagnostics();
+    }).then((remove) => {
+      if (disposed) remove();
+      else unlisten = remove;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [nativeRuntime]);
+
   async function handleScreenRecording() {
-    if (!nativeRuntime || screenRecordingGranted) return;
-    setSystemAction("permission");
+    const action = "permission";
+    if (!nativeRuntime || screenRecordingGranted || !beginSystemAction(action)) return;
     setSystemNoticeIsError(false);
 
     try {
@@ -449,20 +1060,20 @@ function App() {
       setSystemNotice(String(error));
       setSystemNoticeIsError(true);
     } finally {
-      setSystemAction(null);
+      endSystemAction(action);
     }
   }
 
   async function toggleLaunchAtLogin() {
+    const action = "login";
     if (
       !nativeRuntime ||
-      systemAction !== null ||
-      systemStatus.launchAtLogin === "unavailable"
+      systemStatus.launchAtLogin === "unavailable" ||
+      !beginSystemAction(action)
     ) {
       return;
     }
 
-    setSystemAction("login");
     setSystemNotice(
       launchAtLoginEnabled
         ? "Turning off launch at login…"
@@ -497,12 +1108,13 @@ function App() {
       setSystemNotice(message);
       setSystemNoticeIsError(true);
     } finally {
-      setSystemAction(null);
+      endSystemAction(action);
     }
   }
 
   async function openLoginItemSettings() {
-    if (!nativeRuntime) return;
+    const action = "login_settings";
+    if (!nativeRuntime || !beginSystemAction(action)) return;
     try {
       await invoke("open_login_item_settings");
       setSystemNotice(
@@ -512,6 +1124,8 @@ function App() {
     } catch (error) {
       setSystemNotice(String(error));
       setSystemNoticeIsError(true);
+    } finally {
+      endSystemAction(action);
     }
   }
 
@@ -543,7 +1157,8 @@ function App() {
   }
 
   async function save() {
-    if (!nativeRuntime) return;
+    if (!nativeRuntime || shortcutSaveInFlight.current) return;
+    shortcutSaveInFlight.current = true;
     setIsSaving(true);
     setNotice("Checking shortcuts…");
     setNoticeIsError(false);
@@ -571,6 +1186,7 @@ function App() {
         // Keep the last known status; the original update error is actionable.
       }
     } finally {
+      shortcutSaveInFlight.current = false;
       setIsSaving(false);
     }
   }
@@ -635,7 +1251,7 @@ function App() {
           <h1>Settings</h1>
           <p className="header-copy">
             {authStatus.status === "signed_in"
-              ? "Captures sync automatically to your library."
+              ? syncState.message
               : "Sign in to sync captures to your library."}
           </p>
         </div>
@@ -819,9 +1435,10 @@ function App() {
           <button
             type="button"
             className="settings-link"
+            disabled={systemAction !== null}
             onClick={openLoginItemSettings}
           >
-            Open Login Items
+            {systemAction === "login_settings" ? "Opening…" : "Open Login Items"}
           </button>
         )}
 
@@ -833,6 +1450,190 @@ function App() {
           {systemNotice}
         </div>
           </section>
+
+          <section className="system-card quick-access-settings" aria-labelledby="quick-access-settings-heading">
+            <div className="section-heading">
+              <div>
+                <h2 id="quick-access-settings-heading">Quick Access behavior</h2>
+                <p>Position, size and autoclose are remembered per display.</p>
+              </div>
+              <span data-muted={true}>Per display</span>
+            </div>
+
+            <div className="quick-access-settings__grid">
+              <label>
+                <span>Display</span>
+                <select
+                  aria-label="Quick Access display"
+                  value={overlayDisplayId}
+                  disabled={overlaySaving}
+                  onChange={(event) => chooseOverlayDisplay(event.currentTarget.value)}
+                >
+                  {overlaySettings.displays.map((display) => (
+                    <option key={display.id} value={display.id}>
+                      {display.name}{display.isPrimary ? " · Main" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Position</span>
+                <select
+                  aria-label="Quick Access position"
+                  value={overlayDraft.placement}
+                  disabled={overlaySaving}
+                  onChange={(event) => setOverlayDraft({
+                    ...overlayDraft,
+                    placement: event.currentTarget.value as OverlayPlacement,
+                  })}
+                >
+                  <option value="top_left">Top left</option>
+                  <option value="top_right">Top right</option>
+                  <option value="bottom_left">Bottom left</option>
+                  <option value="bottom_right">Bottom right</option>
+                </select>
+              </label>
+              <label>
+                <span>Size</span>
+                <select
+                  aria-label="Quick Access size"
+                  value={overlayDraft.size}
+                  disabled={overlaySaving}
+                  onChange={(event) => setOverlayDraft({
+                    ...overlayDraft,
+                    size: event.currentTarget.value as OverlaySize,
+                  })}
+                >
+                  <option value="compact">Compact · 304 × 194</option>
+                  <option value="regular">Regular · 384 × 244</option>
+                  <option value="large">Large · 464 × 294</option>
+                </select>
+              </label>
+              <label>
+                <span>Autoclose</span>
+                <select
+                  aria-label="Quick Access autoclose"
+                  value={overlayDraft.autoDismiss}
+                  disabled={overlaySaving}
+                  onChange={(event) => setOverlayDraft({
+                    ...overlayDraft,
+                    autoDismiss: event.currentTarget.value as OverlayAutoDismiss,
+                  })}
+                >
+                  <option value="eight_seconds">After 8 seconds</option>
+                  <option value="fifteen_seconds">After 15 seconds</option>
+                  <option value="never">Never</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset className="quick-access-settings__actions">
+              <legend>Quick actions</legend>
+              <p>Keep at least one Quick Access action visible.</p>
+              <div>
+                {([
+                  ["pin", "Pin"],
+                  ["annotate", "Annotate"],
+                  ["copy", "Copy"],
+                  ["save", "Save"],
+                ] as const).map(([action, label]) => (
+                  <label key={action}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${label} in Quick Access`}
+                      checked={overlayDraft.quickActions[action]}
+                      disabled={overlaySaving}
+                      onChange={(event) => setOverlayQuickAction(action, event.currentTarget.checked)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="quick-access-settings__save-as">
+              <legend>Save As defaults <span>Every display</span></legend>
+              <div>
+                <label>
+                  <span>Format</span>
+                  <select
+                    aria-label="Default Save As format"
+                    value={saveAsDraft.format}
+                    disabled={overlaySaving}
+                    onChange={(event) => {
+                      setSaveAsDraft({
+                        ...saveAsDraft,
+                        format: event.currentTarget.value as OverlaySaveAsPreferences["format"],
+                      });
+                      setOverlayNotice("Default export format is ready to save.");
+                      setOverlayNoticeIsError(false);
+                    }}
+                  >
+                    <option value="png">PNG · lossless transparency</option>
+                    <option value="jpeg">JPEG · white background</option>
+                  </select>
+                </label>
+                <label className="quick-access-settings__template">
+                  <span>Filename</span>
+                  <input
+                    type="text"
+                    aria-label="Save As filename template"
+                    aria-invalid={saveAsTemplateIssue !== null}
+                    maxLength={96}
+                    value={saveAsDraft.filenameTemplate}
+                    disabled={overlaySaving}
+                    onChange={(event) => {
+                      const filenameTemplate = event.currentTarget.value;
+                      const issue = saveAsTemplateError(filenameTemplate);
+                      setSaveAsDraft({ ...saveAsDraft, filenameTemplate });
+                      setOverlayNotice(
+                        issue
+                          ? "Fix the Save As filename before saving."
+                          : "Filename template is ready to save for every display.",
+                      );
+                      setOverlayNoticeIsError(issue !== null);
+                    }}
+                  />
+                </label>
+              </div>
+              <p data-error={saveAsTemplateIssue !== null}>
+                {saveAsTemplateIssue
+                  ? saveAsTemplateIssue
+                  : `Example · ${suggestedCaptureFilename(new Date(), saveAsDraft)}`}
+              </p>
+              <small>Use {"{date}"} and {"{time}"}. Internal History UUIDs never change.</small>
+            </fieldset>
+
+            <div className="quick-access-settings__preview" data-size={overlayDraft.size} data-placement={overlayDraft.placement} aria-hidden="true">
+              <span><i /></span>
+            </div>
+
+            <div className="system-notice" data-error={overlayNoticeIsError} aria-live="polite">
+              {overlayNotice}
+            </div>
+            <footer className="actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={overlaySaving}
+                onClick={restoreOverlayDefaults}
+              >Restore defaults</button>
+              {overlayDirty && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={overlaySaving}
+                  onClick={discardOverlayChanges}
+                >Discard changes</button>
+              )}
+              <button
+                type="button"
+                className="primary-button"
+                disabled={!overlayDirty || overlaySaving || saveAsTemplateIssue !== null}
+                onClick={() => void saveOverlaySettings()}
+              >{overlaySaving ? "Saving…" : "Save changes"}</button>
+            </footer>
+          </section>
         </div>
       )}
 
@@ -842,10 +1643,11 @@ function App() {
         <div className="section-heading">
           <h2 id="account-heading">Cloud sync</h2>
           <span
-            data-ready={authStatus.status === "signed_in"}
+            data-ready={syncState.tone === "ready"}
+            data-error={syncState.tone === "attention"}
             data-muted={!authConfigured}
           >
-            {accountPresentation.status}
+            {syncState.status}
           </span>
         </div>
 
@@ -904,12 +1706,142 @@ function App() {
             <span>{accountPresentation.message}</span>
           </div>
         )}
+
+        <div className="account-row">
+          <div className="system-copy">
+            <strong>{deviceInfo.name}</strong>
+            <span>{deviceInfo.platform} · Capso {deviceInfo.appVersion}</span>
+          </div>
+          <button
+            type="button"
+            className="compact-button"
+            disabled={!nativeRuntime || libraryAction}
+            onClick={() => void openWebLibrary()}
+          >
+            {libraryAction ? "Opening…" : "Open web library"}
+          </button>
+        </div>
+
+        {authStatus.status === "signed_in" && (
+          <div className="account-row">
+            <div className="system-copy">
+              <strong>{syncState.title}</strong>
+              <span>{syncState.message}</span>
+            </div>
+            {syncState.action === "retry" && (
+              <button
+                type="button"
+                className="compact-button"
+                disabled={!nativeRuntime || syncAction}
+                onClick={() => void retrySync()}
+              >
+                {syncAction ? "Retrying…" : "Retry now"}
+              </button>
+            )}
+            {syncState.action === "details" && (
+              <button
+                type="button"
+                className="compact-button"
+                onClick={() => setActiveSection("advanced")}
+              >
+                View details
+              </button>
+            )}
+            {syncState.action === "history" && (
+              <button
+                type="button"
+                className="compact-button"
+                disabled={!nativeRuntime || historyAction}
+                onClick={() => void openCaptureHistory()}
+              >
+                {historyAction ? "Opening…" : "Review in History"}
+              </button>
+            )}
+            {syncState.action === "reconnect" && (
+              <button
+                type="button"
+                className="compact-button"
+                disabled={!nativeRuntime || authAction !== null}
+                onClick={() => void reconnectAccount()}
+              >
+                {authAction === "reconnect" ? "Sending…" : "Reconnect"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {authStatus.status === "signed_in" && reconnectNotice !== null && (
+          <div className="account-notice" aria-live="polite">
+            {reconnectNotice}
+          </div>
+        )}
+
+        {authStatus.status === "signed_in" && authNoticeIsError && (
+          <div className="account-notice" data-error="true" aria-live="polite">
+            {authNotice}
+          </div>
+        )}
           </section>
         </div>
       )}
 
       {activeSection === "advanced" && (
         <div id="advanced-panel" role="tabpanel" aria-labelledby="advanced-tab" className="settings-panel">
+          <section className="system-card settings-portability" aria-labelledby="settings-portability-heading">
+            <div className="section-heading">
+              <h2 id="settings-portability-heading">Settings portability</h2>
+              <span data-muted={true}>Local JSON · version 1</span>
+            </div>
+            <p className="settings-portability__guidance">
+              Carries global shortcuts, remembered capture choices, and Quick Access profiles.
+              It never includes your account, captures, upload queue, or editable projects.
+            </p>
+            <div className="settings-portability__scope" aria-label="Portable settings scope">
+              <div>
+                <strong>Included</strong>
+                <span>Shortcuts · Capture HUD · Quick Access</span>
+              </div>
+              <div>
+                <strong>Stays on this Mac</strong>
+                <span>Account · Library · Previous Area</span>
+              </div>
+            </div>
+            <div className="settings-portability__actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={settingsTransferAction !== null || isDirty || overlayDirty}
+                title={isDirty || overlayDirty ? "Save or discard current changes before exporting." : undefined}
+                onClick={() => void exportSettings()}
+              >
+                {settingsTransferAction === "export" ? "Exporting…" : "Export settings"}
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={settingsTransferAction !== null}
+                onClick={() => void importSettings()}
+              >
+                {settingsTransferAction === "import" ? "Importing…" : "Import settings"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button settings-portability__reset"
+                disabled={settingsTransferAction !== null}
+                onClick={() => void resetAllSettings()}
+              >
+                {settingsTransferAction === "reset" ? "Resetting…" : "Reset all settings"}
+              </button>
+            </div>
+            <div
+              className="system-notice"
+              data-error={settingsTransferNoticeIsError}
+              aria-live="polite"
+            >
+              {settingsTransferNotice}
+            </div>
+          </section>
+
           <section className="system-card" aria-labelledby="diagnostics-heading">
             <div className="section-heading">
               <h2 id="diagnostics-heading">Diagnostics</h2>
@@ -954,6 +1886,35 @@ function App() {
             >
               {diagnosticsNotice}
             </div>
+          </section>
+
+          <section className="system-card" aria-labelledby="automation-heading">
+            <div className="section-heading">
+              <h2 id="automation-heading">URL automation</h2>
+              <span data-muted={true}>Raycast · Shortcuts · scripts</span>
+                </div>
+                <p className="automation-guidance">
+                  Open one exact URL locally. Only capture URLs accept the optional delay{" "}
+                  <code>?delay=3</code>, <code>?delay=5</code>, or <code>?delay=10</code>;
+                  every other parameter, fragment, and unknown action is rejected.
+                </p>
+            <div className="automation-routes">
+              {AUTOMATION_ROUTES.map(([label, route]) => (
+                <div className="automation-route" key={route}>
+                  <span>{label}</span>
+                  <code>{route}</code>
+                </div>
+              ))}
+            </div>
+            {diagnostics?.automation_status && (
+              <div
+                className="system-notice"
+                data-error={diagnostics.automation_status.isError}
+                aria-live="polite"
+              >
+                {diagnostics.automation_status.message}
+              </div>
+            )}
           </section>
         </div>
       )}

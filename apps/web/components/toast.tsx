@@ -30,20 +30,28 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <Ctx.Provider value={push}>
       {children}
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2">
+      <div
+        role="region"
+        aria-live="polite"
+        aria-label="Recent actions"
+        className="pointer-events-none fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2"
+      >
         {toasts.map((t) => (
           <div
             key={t.id}
+            role="group"
+            aria-label={t.text}
             className="capso-toast pointer-events-auto flex items-center gap-3 rounded-lg bg-foreground px-4 py-2.5 text-xs text-background shadow-lg"
           >
             <span>{t.text}</span>
             {t.undo && (
               <button
+                aria-label={`${t.label}: ${t.text}`}
                 onClick={() => {
                   t.undo?.();
                   setToasts((x) => x.filter((y) => y.id !== t.id));
                 }}
-                className="font-medium underline underline-offset-2"
+                className="min-h-11 shrink-0 px-1 font-medium underline underline-offset-2"
               >
                 {t.label}
               </button>

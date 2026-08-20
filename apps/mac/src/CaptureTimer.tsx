@@ -1,17 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type RegionTimerStatus = {
+type CaptureTimerStatus = {
   generation: number;
   running: boolean;
   secondsRemaining: number;
+  mode: "region" | "window" | "fullscreen";
+  freezeScreen: boolean;
 };
 
-const PREVIEW_TIMER: RegionTimerStatus = {
+const PREVIEW_TIMER: CaptureTimerStatus = {
   generation: 1,
   running: true,
   secondsRemaining: 5,
+  mode: "region",
+  freezeScreen: false,
+};
+
+const MODE_LABEL: Record<CaptureTimerStatus["mode"], string> = {
+  region: "Area",
+  window: "Window",
+  fullscreen: "Full screen",
 };
 
 function isTauriRuntime() {
@@ -20,22 +30,33 @@ function isTauriRuntime() {
 
 export default function CaptureTimer() {
   const nativeRuntime = useMemo(isTauriRuntime, []);
-  const [timer, setTimer] = useState<RegionTimerStatus | null>(() =>
+  const [timer, setTimer] = useState<CaptureTimerStatus | null>(() =>
     nativeRuntime ? null : PREVIEW_TIMER,
   );
   const [busy, setBusy] = useState(false);
+  const cancelGenerationInFlight = useRef<number | null>(null);
 
   useEffect(() => {
     if (!nativeRuntime) return;
     let disposed = false;
+    let receivedTimerEvent = false;
     let unlisten: UnlistenFn | undefined;
 
     void (async () => {
-      unlisten = await listen<RegionTimerStatus>("region-timer-changed", ({ payload }) => {
-        if (!disposed) setTimer(payload);
+      unlisten = await listen<CaptureTimerStatus>("capture-timer-changed", ({ payload }) => {
+        if (disposed) return;
+        receivedTimerEvent = true;
+        if (
+          cancelGenerationInFlight.current !== null
+          && (payload.generation !== cancelGenerationInFlight.current || !payload.running)
+        ) {
+          cancelGenerationInFlight.current = null;
+          setBusy(false);
+        }
+        setTimer(payload);
       });
-      const current = await invoke<RegionTimerStatus>("get_region_self_timer_status");
-      if (!disposed) setTimer(current);
+      const current = await invoke<CaptureTimerStatus>("get_capture_timer_status");
+      if (!disposed && !receivedTimerEvent) setTimer(current);
     })();
 
     return () => {
@@ -45,12 +66,17 @@ export default function CaptureTimer() {
   }, [nativeRuntime]);
 
   async function cancelTimer() {
-    if (!nativeRuntime || !timer?.running || busy) return;
+    if (!nativeRuntime || !timer?.running || cancelGenerationInFlight.current !== null) return;
+    const generation = timer.generation;
+    cancelGenerationInFlight.current = timer.generation;
     setBusy(true);
     try {
-      await invoke("cancel_region_self_timer");
+      await invoke("cancel_capture_timer");
     } finally {
-      setBusy(false);
+      if (cancelGenerationInFlight.current === generation) {
+        cancelGenerationInFlight.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -71,24 +97,28 @@ export default function CaptureTimer() {
   }
 
   return (
-    <main className="capture-timer" aria-label="Area capture timer">
+    <main className="capture-timer" aria-label={`${MODE_LABEL[timer.mode]} capture timer`}>
       <div className="capture-timer__count" aria-hidden="true">
         {timer.secondsRemaining}
       </div>
       <div className="capture-timer__copy">
-        <strong>Area capture</strong>
-        <span>Starting in {timer.secondsRemaining} seconds</span>
+        <strong>{timer.freezeScreen ? "Frozen Area capture" : `${MODE_LABEL[timer.mode]} capture`}</strong>
+        <span>
+          {timer.freezeScreen
+            ? `Main display freezes in ${timer.secondsRemaining} seconds`
+            : `Starting in ${timer.secondsRemaining} seconds`}
+        </span>
       </div>
       <button
         type="button"
-        aria-label="Cancel area capture timer"
+        aria-label={`Cancel ${MODE_LABEL[timer.mode].toLowerCase()} capture timer`}
         disabled={busy}
         onClick={() => void cancelTimer()}
       >
         Cancel
       </button>
       <p className="capture-timer__announcement" aria-live="polite">
-        Area capture timer active. Cancel is available.
+        {timer.freezeScreen ? "Frozen Area" : MODE_LABEL[timer.mode]} capture timer active. Cancel is available.
       </p>
     </main>
   );

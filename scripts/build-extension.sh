@@ -41,7 +41,10 @@ if grep -q "node_modules/" <<<"$listing"; then
   echo "build-extension: node_modules leaked into the zip — fix the -x list." >&2
   exit 1
 fi
-for required in manifest.json background.js capture.js capture-spec.generated.js; do
+for required in \
+  manifest.json background.js capture.js capture-coordinator.js \
+  capture-spec.generated.js config.js delivery.js outbox.js projects.js \
+  popup-status.js popup.html popup.js tokens.generated.js; do
   if ! grep -q " ${required}$" <<<"$listing"; then
     echo "build-extension: $required is missing from the zip — the extension would not load." >&2
     exit 1

@@ -13,6 +13,8 @@ use std::sync::{
 pub(crate) enum DrainWake {
     Startup,
     CaptureEnqueued,
+    AnnotationSaved,
+    RemotePoll,
     ConnectivityRestored,
     CredentialsRestored,
     RetryDeadline,
@@ -44,7 +46,7 @@ pub(crate) trait UploadTransport: Send + Sync {
 
 pub(crate) trait DrainQueue: Send + Sync {
     fn claim_next(&self, now_ms: u64) -> Result<Option<QueueItem>, String>;
-    fn mark_uploaded(&self, id: &str) -> Result<(), String>;
+    fn mark_uploaded(&self, id: &str, uploaded_at_ms: u64) -> Result<(), String>;
     fn mark_failed(&self, id: &str, failed_at_ms: u64, error: &str) -> Result<(), String>;
     fn mark_terminal(&self, id: &str, error: &str) -> Result<(), String>;
     fn mark_held(&self, id: &str, message: &str) -> Result<(), String>;
@@ -62,10 +64,10 @@ impl DrainQueue for Mutex<DurableUploadQueue> {
             .claim_next(now_ms)
     }
 
-    fn mark_uploaded(&self, id: &str) -> Result<(), String> {
+    fn mark_uploaded(&self, id: &str, uploaded_at_ms: u64) -> Result<(), String> {
         self.lock()
             .map_err(|_| queue_lock_error())?
-            .mark_uploaded(id)
+            .mark_uploaded(id, uploaded_at_ms)
     }
 
     fn mark_failed(&self, id: &str, failed_at_ms: u64, error: &str) -> Result<(), String> {
@@ -100,10 +102,10 @@ impl DrainQueue for Mutex<QueueRuntime> {
             .claim_next(now_ms)
     }
 
-    fn mark_uploaded(&self, id: &str) -> Result<(), String> {
+    fn mark_uploaded(&self, id: &str, uploaded_at_ms: u64) -> Result<(), String> {
         self.lock()
             .map_err(|_| queue_lock_error())?
-            .mark_uploaded(id)
+            .mark_uploaded(id, uploaded_at_ms)
     }
 
     fn mark_failed(&self, id: &str, failed_at_ms: u64, error: &str) -> Result<(), String> {
@@ -267,7 +269,7 @@ impl DrainCoordinator {
                 UploadResult::Confirmed(acknowledgement)
                     if acknowledgement.capture_id == item.id =>
                 {
-                    queue.mark_uploaded(&item.id)?;
+                    queue.mark_uploaded(&item.id, now_ms)?;
                     report.uploaded += 1;
                 }
                 UploadResult::Confirmed(acknowledgement) => {
@@ -791,7 +793,7 @@ mod tests {
             Err("Injected transient queue read failure.".into())
         }
 
-        fn mark_uploaded(&self, _id: &str) -> Result<(), String> {
+        fn mark_uploaded(&self, _id: &str, _uploaded_at_ms: u64) -> Result<(), String> {
             panic!("no item can be uploaded in this fixture")
         }
 

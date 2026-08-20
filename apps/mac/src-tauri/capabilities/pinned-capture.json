@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "pinned-capture",
   "description": "Scoped event access for Capso's always-on-top pinned capture",
-  "windows": ["pinned-capture"],
+  "windows": ["pinned-capture-*"],
   "permissions": ["core:event:default"]
 }

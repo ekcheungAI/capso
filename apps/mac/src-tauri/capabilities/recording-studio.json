@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recording-studio",
+  "description": "Scoped event access for Capso's local screen recording controls",
+  "windows": ["recording-studio"],
+  "permissions": ["core:event:default"]
+}

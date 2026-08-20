@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OverlayDragGesture, suggestedCaptureFilename } from "./overlay-drag.ts";
+import {
+  OverlayDragGesture,
+  saveAsFilters,
+  saveAsTemplateError,
+  suggestedCaptureFilename,
+} from "./overlay-drag.ts";
 
 test("a click below the movement threshold never starts native drag", () => {
   const gesture = new OverlayDragGesture(6);
@@ -34,4 +39,49 @@ test("the friendly drag filename uses one consistent local calendar", () => {
   const localTime = new Date(2026, 0, 2, 3, 4, 5);
 
   assert.equal(suggestedCaptureFilename(localTime), "Capso 2026-01-02 at 03.04.05.png");
+});
+
+test("Save As renders the validated template and preferred extension in one local calendar", () => {
+  const localTime = new Date(2026, 0, 2, 3, 4, 5);
+
+  assert.equal(
+    suggestedCaptureFilename(localTime, {
+      filenameTemplate: "Client review {date} — {time}",
+      format: "jpeg",
+    }),
+    "Client review 2026-01-02 — 03.04.05.jpg",
+  );
+  assert.equal(
+    suggestedCaptureFilename(localTime, {
+      filenameTemplate: "{date} {time}",
+      format: "png",
+    }),
+    "2026-01-02 03.04.05.png",
+  );
+});
+
+test("the preferred Save As format is first without removing either explicit choice", () => {
+  assert.deepEqual(saveAsFilters("jpeg"), [
+    { name: "JPEG image", extensions: ["jpg", "jpeg"] },
+    { name: "PNG image", extensions: ["png"] },
+  ]);
+  assert.deepEqual(saveAsFilters("png"), [
+    { name: "PNG image", extensions: ["png"] },
+    { name: "JPEG image", extensions: ["jpg", "jpeg"] },
+  ]);
+});
+
+test("Save As templates reject path syntax, hidden names and unknown tokens", () => {
+  assert.equal(saveAsTemplateError("Capso {date} at {time}"), null);
+  assert.equal(saveAsTemplateError("Client review"), null);
+  for (const invalid of [
+    "",
+    "../escape {date}",
+    "folder/name {time}",
+    "folder\\name {time}",
+    ".hidden {date}",
+    "Unknown {project}",
+  ]) {
+    assert.notEqual(saveAsTemplateError(invalid), null, invalid);
+  }
 });

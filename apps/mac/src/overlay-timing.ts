@@ -6,6 +6,15 @@ export type OverlayTimerScheduler = {
   clear: (handle: OverlayTimerHandle) => void;
 };
 
+export function createOverlayAutoDismissTimer(
+  durationMs: number | null,
+  callback: () => void,
+  scheduler: OverlayTimerScheduler,
+) {
+  if (durationMs === null) return null;
+  return new PausableOverlayTimer(durationMs, callback, scheduler);
+}
+
 /**
  * One-shot timeout whose remaining duration survives hover, dialogs, and
  * explicit actions. Resetting for a new capture invalidates the old timer.

@@ -9,6 +9,7 @@ import { CapsoMark } from "@/components/mark.generated";
 import { retrieve } from "@/lib/retrieve";
 import { plural } from "@/lib/plural";
 import { accountFetch } from "@/lib/supabase/client";
+import { threadRailPresentation } from "@/lib/thread-rail";
 
 export default function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -30,6 +31,7 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
   }, [messages, screenshots]);
 
   const rail = lastCited.length > 0 ? lastCited : shots.slice(0, 2);
+  const railPresentation = threadRailPresentation(shots.length, lastCited.length);
 
   if (!ready) return <SkeletonGrid />;
   if (shots.length === 0)
@@ -123,7 +125,12 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
           ))}
         </div>
 
-        <div className="space-y-4 border-t border-line pt-5">
+        <div
+          className="space-y-4 border-t border-line pt-5"
+          role="log"
+          aria-live="polite"
+          aria-label="Project conversation"
+        >
           {messages.length === 0 && (
             <p className="text-xs text-muted">
               Ask about these captures - &ldquo;what do these have in common?&rdquo;,
@@ -170,12 +177,12 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && void ask()}
             placeholder="Ask about this project…"
-            className="flex-1 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm"
+            className="min-h-11 flex-1 rounded-lg border border-line bg-surface px-4 text-sm"
           />
           <button
             onClick={() => void ask()}
             disabled={busy || !q.trim()}
-            className="rounded-lg bg-accent px-4 py-2.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+            className="min-h-11 rounded-lg bg-accent px-4 text-xs font-medium text-accent-ink disabled:opacity-40"
           >
             Ask
           </button>
@@ -186,9 +193,12 @@ export default function ThreadPage({ params }: { params: Promise<{ id: string }>
           which hid the citation thumbnails entirely below 1024px with no
           fallback. Below lg it's a horizontal strip, matching the captures
           row above; at lg+ it's the original right-hand column. */}
-      <aside className="w-full shrink-0 lg:w-64">
+      <aside
+        className="w-full shrink-0 lg:w-64"
+        aria-label={railPresentation.ariaLabel}
+      >
         <p className="mb-2 text-xs uppercase tracking-wide text-muted">
-          {lastCited.length > 0 ? `Sources · ${rail.length}` : `In this project · ${rail.length}`}
+          {railPresentation.heading}
         </p>
         <ul className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
           {rail.map((s) => (
@@ -227,11 +237,12 @@ function Answer({
         const shot = m ? lookup(m[1]!) : undefined;
         if (!shot) return <span key={i}>{part}</span>;
         return (
-          <Link
-            key={i}
-            href={`/s/${shot.id}`}
-            className="mx-1 inline-flex items-center rounded border border-line px-1.5 py-0.5 align-middle text-xs text-muted hover:border-accent"
-          >
+              <Link
+                key={i}
+                href={`/s/${shot.id}`}
+                aria-label={`Open source ${shot.title}`}
+                className="mx-1 inline-flex min-h-11 items-center rounded border border-line px-2 align-middle text-xs text-muted hover:border-accent"
+              >
             {shot.title.split(" - ")[0]}
           </Link>
         );

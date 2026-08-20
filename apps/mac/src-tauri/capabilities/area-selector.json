@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "area-selector",
+  "description": "Scoped event access for Capso's full-display Area precision selector",
+  "windows": ["area-selector"],
+  "permissions": ["core:event:default"]
+}

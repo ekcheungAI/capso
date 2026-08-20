@@ -8,6 +8,7 @@ use objc2_foundation::NSData;
 use tauri::{AppHandle, Manager};
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+const MAX_DIRECT_CLIPBOARD_PNG_BYTES: usize = 25 * 1_024 * 1_024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -354,6 +355,72 @@ pub(crate) async fn recopy_current_capture_to_general_pasteboard(
         }
     };
     copy_registered_png_to_general_pasteboard(app, ticket).await
+}
+
+pub(crate) async fn recopy_current_png_bytes_to_general_pasteboard(
+    app: AppHandle,
+    path: PathBuf,
+    png: Vec<u8>,
+) -> ClipboardStatus {
+    if !png.starts_with(PNG_SIGNATURE) || png.len() > MAX_DIRECT_CLIPBOARD_PNG_BYTES {
+        return clipboard_failure(
+            "clipboard_invalid_png",
+            "The current annotation is not a safe bounded PNG payload.",
+        );
+    }
+    let ticket = match app.state::<Mutex<ClipboardRuntime>>().lock() {
+        Ok(runtime) => match runtime.ticket_for_current(&path) {
+            Ok(ticket) => ticket,
+            Err(status) => return status,
+        },
+        Err(_) => {
+            return clipboard_failure(
+                "clipboard_state_failed",
+                "The clipboard state is temporarily unavailable.",
+            )
+        }
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let commit_app = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            let status = match commit_app.state::<Mutex<ClipboardRuntime>>().lock() {
+                Ok(runtime) => {
+                    let mut writer = MacClipboard;
+                    commit_registered_payload(&runtime, &ticket, &png, &mut writer)
+                }
+                Err(_) => clipboard_failure(
+                    "clipboard_state_failed",
+                    "The clipboard state is temporarily unavailable.",
+                ),
+            };
+            let _ = sender.send(status);
+        }) {
+            return clipboard_failure(
+                "clipboard_schedule_failed",
+                format!("Could not schedule the macOS clipboard copy: {error}"),
+            );
+        }
+        match tauri::async_runtime::spawn_blocking(move || wait_for_scheduled_write(receiver)).await
+        {
+            Ok(status) => status,
+            Err(error) => clipboard_failure(
+                "clipboard_task_failed",
+                format!("The macOS clipboard task stopped unexpectedly: {error}"),
+            ),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, ticket, png);
+        clipboard_failure(
+            "clipboard_unavailable",
+            "Image clipboard copy is only available in the macOS app",
+        )
+    }
 }
 
 /// Schedules the AppKit mutation but does not hold the invoking webview open

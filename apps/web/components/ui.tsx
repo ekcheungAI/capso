@@ -215,7 +215,7 @@ export function ScreenshotCard({
       {onSelect && !processing && (
         <button
           onClick={() => onSelect(s.id)}
-          aria-label={selected ? "Deselect" : "Select"}
+          aria-label={selected ? `Deselect ${s.title}` : `Select ${s.title}`}
           className={`absolute top-3 left-3 z-10 h-11 w-11 rounded-lg border text-xs leading-none ${
             selected
               ? "border-accent bg-accent text-accent-ink"
@@ -313,12 +313,14 @@ export function ScreenshotCard({
               setSeating(true);
               suggestion.onConfirm();
             }}
+            aria-label={`Confirm ${s.title} in ${suggestion.label}`}
             className="min-h-11 rounded-full bg-accent px-3 text-xs font-medium text-accent-ink"
           >
             ✓ Confirm
           </button>
           <Link
             href={`/s/${s.id}`}
+            aria-label={`Move ${s.title} to a different project`}
             className="flex min-h-11 items-center rounded-full border border-line px-3 text-xs text-muted hover:border-accent hover:text-accent"
           >
             Move to…
@@ -477,7 +479,7 @@ export function LedgerStrip({
       {waiting > 0 && (
         <>
           {" · "}
-          <Link href="/inbox" className="underline underline-offset-2">
+          <Link href="/inbox" className="inline-flex min-h-11 items-center underline underline-offset-2 sm:min-h-0">
             {waiting} waiting
           </Link>
         </>
@@ -511,7 +513,7 @@ export function EmptyState({
       <p className="text-sm font-medium">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-muted">{body}</p>
       {action !== undefined && (
-        <p className="mt-4 text-xs text-muted [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_button]:text-accent [&_button]:underline [&_button]:underline-offset-2">
+        <p className="mt-4 text-xs text-muted [&_a]:inline-flex [&_a]:min-h-11 [&_a]:items-center [&_a]:justify-center [&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2 [&_button]:inline-flex [&_button]:min-h-11 [&_button]:items-center [&_button]:justify-center [&_button]:text-accent [&_button]:underline [&_button]:underline-offset-2">
           {action}
         </p>
       )}

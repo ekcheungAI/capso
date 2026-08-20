@@ -52,6 +52,7 @@ type CorrectionRow = {
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_RPC_RESPONSE_BYTES = 64 * 1024;
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
+const JPEG_SIGNATURE = [255, 216, 255];
 
 function exactSegment(value: string) {
   return /^[0-9a-f-]+$/i.test(value) && !value.includes("..");
@@ -65,9 +66,11 @@ export function canonicalOriginalPath(
   const path = storagePath.startsWith("originals/")
     ? storagePath.slice("originals/".length)
     : storagePath;
-  const expected = `${userId}/${screenshotId}.png`;
+  const expected = `${userId}/${screenshotId}`;
+  const extension = path.slice(expected.length);
   if (
-    path !== expected ||
+    ![".png", ".jpg", ".jpeg", ".webp"].includes(extension.toLowerCase()) ||
+    !path.startsWith(expected) ||
     !exactSegment(userId) ||
     !exactSegment(screenshotId) ||
     path.split("/").length !== 2
@@ -75,6 +78,24 @@ export function canonicalOriginalPath(
     throw new Error("invalid claimed storage path");
   }
   return path;
+}
+
+function imageType(path: string, bytes: Uint8Array): string | null {
+  const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+  if (
+    extension === ".png" &&
+    PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)
+  ) return "image/png";
+  if (
+    [".jpg", ".jpeg"].includes(extension) &&
+    JPEG_SIGNATURE.every((byte, index) => bytes[index] === byte)
+  ) return "image/jpeg";
+  if (
+    extension === ".webp" && bytes.length >= 12 &&
+    new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF" &&
+    new TextDecoder().decode(bytes.subarray(8, 12)) === "WEBP"
+  ) return "image/webp";
+  return null;
 }
 
 function storageUrl(base: string, path: string) {
@@ -241,12 +262,9 @@ export class SupabaseWorkerRepository implements WorkerRepository {
     }
 
     const imageBytes = await boundedBytes(imageResponse, MAX_IMAGE_BYTES);
-    if (
-      imageBytes.length === 0 ||
-      imageBytes.length > MAX_IMAGE_BYTES ||
-      !PNG_SIGNATURE.every((byte, index) => imageBytes[index] === byte)
-    ) {
-      throw new Error("claimed screenshot is not a bounded PNG");
+    const mediaType = imageType(originalPath, imageBytes);
+    if (imageBytes.length === 0 || imageBytes.length > MAX_IMAGE_BYTES || !mediaType) {
+      throw new Error("claimed screenshot is not a bounded raster matching its path");
     }
 
     const projects = (await boundedJson<ProjectRow[]>(
@@ -284,7 +302,7 @@ export class SupabaseWorkerRepository implements WorkerRepository {
       .filter((line): line is string => line !== null);
 
     return {
-      image: { mediaType: "image/png", base64: bytesToBase64(imageBytes) },
+      image: { mediaType, base64: bytesToBase64(imageBytes) },
       projects,
       corrections,
       pageUrl: job.pageUrl,

@@ -14,16 +14,26 @@
   }
   h1 { font-size: 13px; margin: 0 0 2px; }
   p { margin: 0; font-size: 11px; color: var(--muted); }
-  button {
-    width: 100%; margin-top: 12px; padding: 8px; border: 0;
+  #go {
+    width: 100%; min-height: 44px; margin-top: 12px; padding: 8px; border: 0;
     border-radius: var(--radius-input);
     background: var(--accent); color: var(--accent-ink);
     font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
     transition: opacity var(--dur-press) var(--ease-out-strong);
   }
-  button:hover:not(:disabled) { opacity: 0.88; }
-  button:disabled { opacity: .5; cursor: default; }
-  button:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+  #go:hover:not(:disabled) { opacity: 0.88; }
+  #go:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+  fieldset { margin: 12px 0 0; padding: 0; border: 0; }
+  legend { margin-bottom: 5px; font-size: 11px; color: var(--muted); }
+  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface); }
+  .modes label { position: relative; display: grid; min-height: 44px; place-items: center; border-radius: 7px; color: var(--muted); font-size: 11px; cursor: pointer; }
+  .modes label:has(input:checked) { background: var(--background); color: var(--foreground); box-shadow: 0 1px 5px rgb(0 0 0 / .08); }
+  .modes label:has(input:focus-visible) { outline: 2px solid var(--foreground); outline-offset: 2px; }
+  .modes input { position: absolute; opacity: 0; }
+  .project { display: grid; gap: 5px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+  .project select { width: 100%; min-height: 44px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--radius-input); background: var(--surface); color: var(--foreground); font: inherit; }
+  .project small { line-height: 1.35; color: var(--muted); }
   .last { margin-top: 10px; font-size: 11px; color: var(--muted); }
   /* Where it is sending and what it can see. Without these the popup could
      report a failure without ever revealing that it was pointed at a dev server
@@ -37,16 +47,38 @@
      and this is text. --danger is a light/dark pair because no single red
      clears 4.5:1 on both grounds — the trap the old terracotta fell into. */
   .err { color: var(--danger); }
+  .recovery { display: flex; align-items: center; gap: 10px; }
+  .retry { width: auto; min-height: 44px; margin: 0; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-input); background: var(--surface); color: var(--foreground); font: inherit; font-size: 11px; cursor: pointer; }
+  .recovery a { display: inline-flex; min-height: 44px; align-items: center; }
 </style>
 <h1>Capso</h1>
-<p>Captures the visible tab into your memory.</p>
-<button id="go">Capture tab</button>
-<div class="last" id="last"></div>
+<p>Collect a view, page element, free area, or the whole page.</p>
+<fieldset>
+  <legend>Capture mode</legend>
+  <div class="modes">
+    <label><input type="radio" name="mode" value="visible" checked />Visible</label>
+    <label><input type="radio" name="mode" value="element" />Element</label>
+    <label><input type="radio" name="mode" value="area" />Area</label>
+    <label><input type="radio" name="mode" value="full_page" />Full</label>
+  </div>
+</fieldset>
+<label class="project" for="project">
+  File to
+  <select id="project">
+    <option value="">Let Capso decide</option>
+  </select>
+  <small id="projectNote" role="status" aria-live="polite" hidden></small>
+</label>
+<button id="go">Capture visible area</button>
+<div class="last" id="last" role="status" aria-live="polite"></div>
 <dl class="facts">
   <div><dt>Sends to</dt><dd id="dest" class="weak">…</dd></div>
   <div><dt>This tab</dt><dd id="tab" class="weak">…</dd></div>
 </dl>
 <!-- Only rendered when something is actually stuck, so it is a fix rather than
      a permanent piece of chrome. -->
-<div class="last" id="fix" hidden><a href="#" id="openOptions">Open settings to fix this</a></div>
-<script src="popup.js"></script>
+<div class="last recovery" id="fix" hidden>
+  <button type="button" class="retry" id="retry">Retry now</button>
+  <a href="#" id="openOptions">Open settings</a>
+</div>
+<script type="module" src="popup.js"></script>

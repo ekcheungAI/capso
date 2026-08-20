@@ -54,6 +54,7 @@ type Api = State & {
   ) => Promise<void>;
   archive: (s: Screenshot, archived: boolean) => Promise<void>;
   forget: (correctionId: string) => Promise<void>;
+  rememberCorrection: (correction: Correction) => Promise<boolean>;
   say: (m: Omit<Message, "id" | "createdAt">) => Promise<Message>;
   threadMessages: (threadId: string) => Message[];
   reset: () => Promise<void>;
@@ -196,6 +197,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       async forget(correctionId) {
         await store.forgetCorrection(correctionId);
         setS((p) => ({ ...p, corrections: p.corrections.filter((c) => c.id !== correctionId) }));
+      },
+      async rememberCorrection(correction) {
+        const restored = await store.restoreCorrection(correction);
+        if (restored) {
+          setS((p) => ({
+            ...p,
+            corrections: p.corrections.some((candidate) => candidate.id === correction.id)
+              ? p.corrections
+              : [correction, ...p.corrections],
+          }));
+        }
+        return restored;
       },
       async say(m) {
         const msg = await store.addMessage(m);

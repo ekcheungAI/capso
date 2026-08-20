@@ -6,6 +6,8 @@ import { useStore } from "@/lib/store/provider";
 import type { Screenshot } from "@/lib/store";
 import { EmptyState, INTENT_LABEL, SkeletonGrid, Thumb } from "@/components/ui";
 import { plural } from "@/lib/plural";
+import { memoryRuleSummary } from "@/lib/memory-rules";
+import { useToast } from "@/components/toast";
 
 type Tab = "learned" | "tidy" | "review";
 
@@ -41,7 +43,7 @@ export default function MemoryPage() {
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`-mb-px border-b-2 px-3 py-2 text-xs ${
+            className={`-mb-px min-h-11 border-b-2 px-3 text-xs ${
               tab === key ? "border-accent font-medium" : "border-transparent text-muted"
             }`}
           >
@@ -60,66 +62,85 @@ export default function MemoryPage() {
 /* ---------------------------------------------------------------- learned */
 
 function Learned() {
-  const { corrections, screenshots, threadName, forget } = useStore();
-
-  const projectCorrections = corrections.filter((c) => c.field === "project");
-  const accepted = projectCorrections.filter((c) => c.wasAiAccepted).length;
-  const total = projectCorrections.length;
-  const rate = total === 0 ? null : Math.round((accepted / total) * 100);
-
-  // Rules are read straight out of the correction ledger: where you moved things
-  // to, and what those captures had in common. This is exactly what gets injected
-  // as few-shot context, shown back in plain language.
-  const rules = useMemo(() => {
-    const byTarget = new Map<string, { count: number; intents: Set<string> }>();
-    for (const c of projectCorrections) {
-      if (c.wasAiAccepted) continue;
-      const shot = screenshots.find((s) => s.id === c.screenshotId);
-      const entry = byTarget.get(c.userValue) ?? { count: 0, intents: new Set<string>() };
-      entry.count += 1;
-      if (shot) entry.intents.add(INTENT_LABEL[shot.intent]);
-      byTarget.set(c.userValue, entry);
-    }
-    return [...byTarget.entries()].sort((a, b) => b[1].count - a[1].count);
-  }, [projectCorrections, screenshots]);
+  const { corrections, screenshots, threadName, forget, rememberCorrection } = useStore();
+  const toast = useToast();
+  const summary = useMemo(
+    () => memoryRuleSummary(corrections, screenshots),
+    [corrections, screenshots],
+  );
+  const shotsById = useMemo(
+    () => new Map(screenshots.map((screenshot) => [screenshot.id, screenshot])),
+    [screenshots],
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
-        <Stat label="Suggestions accepted" value={rate === null ? "-" : `${rate}%`} />
-        <Stat label="Corrections on file" value={String(total)} />
+        <Stat
+          label="Project suggestions accepted"
+          value={summary.acceptanceRate === null ? "-" : `${summary.acceptanceRate}%`}
+        />
+        <Stat label="Project decisions on file" value={String(summary.total)} />
         <Stat
           label="Feeding the next guess"
-          // Matches classify.ts's fewShotLines(), which only ever injects
-          // field==="project" corrections — the raw ledger mixes in tag/intent/
-          // why_saved corrections too and overstated what actually feeds the model.
-          value={`${Math.min(projectCorrections.length, 20)} of ${projectCorrections.length}`}
+          value={`${summary.contextUsed} of ${summary.total}`}
         />
       </div>
+      <p className="text-xs text-muted">
+        This is your agreement rate, not model confidence. It measures project decisions you accepted;
+        individual confidence stays with the capture that produced it.
+      </p>
 
       <section>
         <h2 className="mb-2 text-base font-semibold">Rules it has picked up</h2>
-        {rules.length === 0 ? (
+        {summary.rules.length === 0 ? (
           <p className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-xs text-muted">
             Nothing learned yet. Move a capture to a different project and the rule appears here.
           </p>
         ) : (
           <ul className="space-y-2">
-            {rules.map(([target, { count, intents }]) => (
-              <li
-                key={target}
-                className="rounded-lg bg-surface px-3 py-2.5 text-xs ring-1 ring-line"
-              >
-                <p>
-                  When you correct it, you usually move things to{" "}
-                  <span className="font-medium">{threadName(target === "inbox" ? null : target)}</span>{" "}
-                  <span className="text-muted">
-                    ({count} time{count === 1 ? "" : "s"}
-                    {intents.size > 0 && ` · mostly ${[...intents].slice(0, 2).join(", ")}`})
-                  </span>
-                </p>
-              </li>
-            ))}
+            {summary.rules.map((rule) => {
+              const examples = rule.exampleIds
+                .map((id) => shotsById.get(id))
+                .filter((shot): shot is Screenshot => Boolean(shot));
+              return (
+                <li
+                  key={rule.target}
+                  className="rounded-lg bg-surface px-3 py-2.5 text-xs ring-1 ring-line"
+                >
+                  <p>
+                    When you correct it, you usually move things to{" "}
+                    <span className="font-medium">
+                      {threadName(rule.target === "inbox" ? null : rule.target)}
+                    </span>{" "}
+                    <span className="text-muted">
+                      ({plural(rule.correctionCount, "time")}
+                      {rule.intents.length > 0 &&
+                        ` · mostly ${rule.intents.slice(0, 2).map((intent) => INTENT_LABEL[intent]).join(", ")}`})
+                    </span>
+                  </p>
+                  <p className="mt-1 text-muted">
+                    Based on {plural(rule.correctionCount, "correction")}
+                    {examples.length > 0 ? (
+                      <>
+                        {` across ${plural(examples.length, "capture")}: `}
+                        {examples.slice(0, 3).map((shot, index) => (
+                          <span key={shot.id}>
+                            {index > 0 && ", "}
+                            <Link href={`/s/${shot.id}`} className="hover:text-foreground hover:underline">
+                              {shot.title}
+                            </Link>
+                          </span>
+                        ))}
+                        {examples.length > 3 && ` +${examples.length - 3} more`}
+                      </>
+                    ) : (
+                      "; the original captures are no longer in the library."
+                    )}
+                  </p>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -167,11 +188,18 @@ function Learned() {
                     </span>
                   </span>
                   <button
-                    onClick={() => void forget(c.id)}
+                    onClick={() => {
+                      void (async () => {
+                        await forget(c.id);
+                        toast("Stopped using this example for future guesses", () => {
+                          void rememberCorrection(c);
+                        });
+                      })();
+                    }}
                     title="Stop using this as an example"
-                    className="shrink-0 text-muted hover:text-accent"
+                    className="min-h-11 shrink-0 px-2 text-muted hover:text-accent"
                   >
-                    Forget
+                    Stop teaching
                   </button>
                 </li>
               );
@@ -235,7 +263,7 @@ function Tidy() {
                 </p>
                 <button
                   onClick={() => void archive(b, true)}
-                  className="shrink-0 rounded-md border border-line px-2 py-1 text-xs"
+                  className="min-h-11 shrink-0 rounded-md border border-line px-2 text-xs"
                 >
                   Archive second
                 </button>
@@ -263,7 +291,7 @@ function Tidy() {
                 <span className="flex-1">
                   {t.name} <span className="text-muted">· {plural(byThread(t.id).length, "capture")}</span>
                 </span>
-                <Link href={`/threads/${t.id}`} className="text-muted hover:text-accent">
+                <Link href={`/threads/${t.id}`} className="inline-flex min-h-11 items-center px-2 text-muted hover:text-accent">
                   Open
                 </Link>
               </li>
@@ -284,14 +312,14 @@ function Tidy() {
                 <span className="min-w-0 flex-1 truncate">
                   {s.title} <span className="text-muted">· {threadName(s.threadId)}</span>
                 </span>
-                <button onClick={() => void archive(s, false)} className="text-muted hover:text-accent">
+                <button onClick={() => void archive(s, false)} className="min-h-11 px-2 text-muted hover:text-accent">
                   Restore
                 </button>
                 <button
                   onClick={async () => {
                     if (confirm("Delete permanently? Cannot be undone.")) await remove(s);
                   }}
-                  className="text-muted hover:text-accent"
+                  className="min-h-11 px-2 text-muted hover:text-accent"
                 >
                   Delete
                 </button>
@@ -354,13 +382,13 @@ function Review() {
                   void visit(s.id, "opened_detail");
                   setDone((d) => new Set(d).add(s.id));
                 }}
-                className="rounded-md bg-accent px-3 py-1 text-xs text-accent-ink"
+                className="min-h-11 rounded-md bg-accent px-3 text-xs text-accent-ink"
               >
                 Still useful
               </button>
               <button
                 onClick={() => void archive(s, true)}
-                className="rounded-md border border-line px-3 py-1 text-xs"
+                className="min-h-11 rounded-md border border-line px-3 text-xs"
               >
                 Archive
               </button>

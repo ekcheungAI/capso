@@ -1,15 +1,18 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager, Runtime};
 
 const QUEUE_SCHEMA_VERSION: u32 = 1;
+const MAX_CAPTURE_BYTES: u64 = 25 * 1_024 * 1_024;
+const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 pub(crate) const RETRY_DELAYS_MS: [u64; 3] = [5_000, 30_000, 120_000];
 pub(crate) const MAX_AUTOMATIC_ATTEMPTS: u8 = (RETRY_DELAYS_MS.len() + 1) as u8;
 
@@ -19,6 +22,8 @@ pub(crate) enum QueueSource {
     Region,
     Window,
     Fullscreen,
+    Created,
+    Browser,
     Recovered,
 }
 
@@ -35,6 +40,7 @@ impl From<crate::capture::CaptureMode> for QueueSource {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum QueueItemStatus {
+    RemotePending,
     Pending,
     Uploading,
     Failed,
@@ -54,6 +60,14 @@ pub(crate) struct QueueItem {
     pub(crate) last_error: Option<String>,
     #[serde(default)]
     pub(crate) annotated: bool,
+    #[serde(default)]
+    pub(crate) project_id: Option<String>,
+    #[serde(default)]
+    pub(crate) uploaded_at_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) remote_content_hash: Option<String>,
+    #[serde(default)]
+    pub(crate) remote_local_hash: Option<String>,
 }
 
 impl QueueItem {
@@ -65,6 +79,7 @@ impl QueueItem {
 
     fn ready_at(&self, now_ms: u64) -> bool {
         match self.status {
+            QueueItemStatus::RemotePending => false,
             QueueItemStatus::Pending => self.attempts < MAX_AUTOMATIC_ATTEMPTS,
             QueueItemStatus::Failed if self.attempts < MAX_AUTOMATIC_ATTEMPTS => self
                 .next_attempt_at_ms
@@ -98,9 +113,16 @@ pub(crate) enum EnqueueOutcome {
     AlreadyPresent,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RemoteStageOutcome {
+    NeedsDownload,
+    Current,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QueueSummary {
+    pub(crate) remote_pending: usize,
     pub(crate) pending: usize,
     pub(crate) uploading: usize,
     pub(crate) retrying: usize,
@@ -117,11 +139,25 @@ pub(crate) enum CaptureQueueStatus {
     Failed { code: &'static str, message: String },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum CaptureSyncStatus {
+    Local,
+    Ready,
+    Waiting,
+    Syncing,
+    Retrying,
+    NeedsAttention,
+    Synced,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QueueRuntimeStatus {
     pub(crate) summary: QueueSummary,
     pub(crate) warning: Option<String>,
+    pub(crate) last_success_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -187,6 +223,7 @@ impl DurableUploadQueue {
         };
         let recovered = queue.recover_unavailable_sources()
             | queue.recover_interrupted(restart_time_ms)
+            | queue.recover_remote_adoptions(restart_time_ms)
             | queue.reconcile_orphaned_captures(restart_time_ms)?
             | queue.reconcile_annotation_metadata()?;
         if recovered {
@@ -234,12 +271,203 @@ impl DurableUploadQueue {
                     next_attempt_at_ms: None,
                     last_error: None,
                     annotated: false,
+                    project_id: None,
+                    uploaded_at_ms: None,
+                    remote_content_hash: None,
+                    remote_local_hash: None,
                 });
                 Ok(())
             },
             sync_parent,
         )?;
         Ok(EnqueueOutcome::Inserted)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_remote_capture(
+        &mut self,
+        id: &str,
+        capture_source: QueueSource,
+        created_at_ms: u64,
+        content_hash: &str,
+    ) -> Result<RemoteStageOutcome, String> {
+        self.stage_remote_capture_in_project(id, capture_source, created_at_ms, content_hash, None)
+    }
+
+    pub(crate) fn stage_remote_capture_in_project(
+        &mut self,
+        id: &str,
+        capture_source: QueueSource,
+        created_at_ms: u64,
+        content_hash: &str,
+        project_id: Option<&str>,
+    ) -> Result<RemoteStageOutcome, String> {
+        if !canonical_uuid(id)
+            || created_at_ms == 0
+            || !valid_content_hash(content_hash)
+            || project_id.is_some_and(|project_id| !canonical_uuid(project_id))
+        {
+            return Err("Capso received invalid remote capture metadata.".into());
+        }
+        let path = self.capture_directory.join(format!("{id}.png"));
+        if let Some(existing) = self.document.entries.iter().find(|item| item.id == id) {
+            if existing.file_path != path {
+                return Err("The remote capture identifier has a different protected path.".into());
+            }
+            if let Some(existing_hash) = existing.remote_content_hash.as_deref() {
+                if existing_hash != content_hash {
+                    return Err("The remote capture identity changed unexpectedly.".into());
+                }
+            }
+            if path.exists() {
+                let is_remote_pending = existing.status == QueueItemStatus::RemotePending;
+                let expected_local_hash = if is_remote_pending {
+                    existing.remote_local_hash.as_deref()
+                } else if existing.remote_content_hash.is_none() {
+                    Some(content_hash)
+                } else {
+                    None
+                };
+                if expected_local_hash.is_some_and(|expected_hash| {
+                    capture_content_hash(&path)
+                        .map(|actual_hash| actual_hash != expected_hash)
+                        .unwrap_or(true)
+                }) {
+                    return Err("The local capture does not match the remote identity.".into());
+                }
+                self.transaction(|document| {
+                    let existing = document
+                        .entries
+                        .iter_mut()
+                        .find(|item| item.id == id)
+                        .ok_or_else(|| "The queued capture no longer exists.".to_string())?;
+                    existing.source = capture_source;
+                    existing.created_at_ms = created_at_ms;
+                    existing.project_id = project_id.map(str::to_string);
+                    Ok(())
+                })?;
+                return Ok(if is_remote_pending {
+                    RemoteStageOutcome::NeedsDownload
+                } else {
+                    RemoteStageOutcome::Current
+                });
+            }
+        }
+
+        self.transaction(|document| {
+            if let Some(existing) = document.entries.iter_mut().find(|item| item.id == id) {
+                existing.source = capture_source;
+                existing.created_at_ms = created_at_ms;
+                existing.status = QueueItemStatus::RemotePending;
+                existing.attempts = 0;
+                existing.next_attempt_at_ms = None;
+                existing.last_error = None;
+                existing.uploaded_at_ms = None;
+                existing.remote_content_hash = Some(content_hash.into());
+                existing.remote_local_hash = None;
+                existing.project_id = project_id.map(str::to_string);
+            } else {
+                document.entries.push(QueueItem {
+                    id: id.into(),
+                    file_path: path,
+                    created_at_ms,
+                    source: capture_source,
+                    status: QueueItemStatus::RemotePending,
+                    attempts: 0,
+                    next_attempt_at_ms: None,
+                    last_error: None,
+                    annotated: false,
+                    project_id: project_id.map(str::to_string),
+                    uploaded_at_ms: None,
+                    remote_content_hash: Some(content_hash.into()),
+                    remote_local_hash: None,
+                });
+            }
+            Ok(())
+        })?;
+        Ok(RemoteStageOutcome::NeedsDownload)
+    }
+
+    pub(crate) fn prepare_remote_capture_install(
+        &mut self,
+        id: &str,
+        local_content_hash: &str,
+    ) -> Result<(), String> {
+        if !canonical_uuid(id) || !valid_content_hash(local_content_hash) {
+            return Err("Capso received invalid local screenshot identity metadata.".into());
+        }
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The staged remote capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::RemotePending {
+                return Err("Only a staged remote capture can prepare its local install.".into());
+            }
+            if item
+                .remote_local_hash
+                .as_deref()
+                .is_some_and(|existing| existing != local_content_hash)
+            {
+                return Err("The normalized remote capture identity changed unexpectedly.".into());
+            }
+            item.remote_local_hash = Some(local_content_hash.into());
+            item.last_error = None;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn complete_remote_capture(
+        &mut self,
+        id: &str,
+        completed_at_ms: u64,
+    ) -> Result<(), String> {
+        if !canonical_uuid(id) || completed_at_ms == 0 {
+            return Err("Capso received invalid remote capture completion metadata.".into());
+        }
+        let item = self
+            .document
+            .entries
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| "The staged remote capture no longer exists.".to_string())?;
+        if item.status != QueueItemStatus::RemotePending {
+            return Err("Only a staged remote capture can complete its download.".into());
+        }
+        let expected_hash = item.remote_local_hash.clone().ok_or_else(|| {
+            "The staged remote capture is missing its local protected hash.".to_string()
+        })?;
+        let actual_hash = capture_content_hash(&item.file_path)
+            .map_err(|_| "The downloaded capture cannot be verified safely yet.".to_string())?;
+        if actual_hash != expected_hash {
+            self.transaction(|document| {
+                let item = document
+                    .entries
+                    .iter_mut()
+                    .find(|item| item.id == id)
+                    .ok_or_else(|| "The staged remote capture no longer exists.".to_string())?;
+                item.last_error =
+                    Some("The downloaded capture does not match its protected cloud hash.".into());
+                Ok(())
+            })?;
+            return Err("The downloaded capture does not match its protected cloud hash.".into());
+        }
+
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The staged remote capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::RemotePending {
+                return Err("Only a staged remote capture can complete its download.".into());
+            }
+            item.status = QueueItemStatus::Uploaded;
+            item.uploaded_at_ms = Some(completed_at_ms);
+            item.last_error = None;
+            Ok(())
+        })
     }
 
     // DUR-01b's network adapter will consume these transitions. DUR-01a keeps
@@ -294,6 +522,24 @@ impl DurableUploadQueue {
         })
     }
 
+    fn assign_project(&mut self, id: &str, project_id: Option<&str>) -> Result<(), String> {
+        if project_id.is_some_and(|project_id| !canonical_uuid(project_id)) {
+            return Err("That project identifier is invalid.".into());
+        }
+        self.transaction(|document| {
+            let item = document
+                .entries
+                .iter_mut()
+                .find(|item| item.id == id)
+                .ok_or_else(|| "The queued capture no longer exists.".to_string())?;
+            if item.status != QueueItemStatus::Pending || item.attempts != 0 {
+                return Err("That capture can no longer be filed before upload.".into());
+            }
+            item.project_id = project_id.map(str::to_string);
+            Ok(())
+        })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn mark_failed(
         &mut self,
@@ -343,7 +589,10 @@ impl DurableUploadQueue {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn mark_uploaded(&mut self, id: &str) -> Result<(), String> {
+    pub(crate) fn mark_uploaded(&mut self, id: &str, uploaded_at_ms: u64) -> Result<(), String> {
+        if uploaded_at_ms == 0 {
+            return Err("A successful upload needs a valid completion time.".into());
+        }
         self.transaction(|document| {
             let item = document
                 .entries
@@ -356,6 +605,7 @@ impl DurableUploadQueue {
             item.status = QueueItemStatus::Uploaded;
             item.next_attempt_at_ms = None;
             item.last_error = None;
+            item.uploaded_at_ms = Some(uploaded_at_ms);
             Ok(())
         })
     }
@@ -391,6 +641,43 @@ impl DurableUploadQueue {
             .collect()
     }
 
+    pub(crate) fn capture_sources(&self) -> HashMap<String, QueueSource> {
+        self.document
+            .entries
+            .iter()
+            .map(|item| (item.id.clone(), item.source))
+            .collect()
+    }
+
+    pub(crate) fn capture_projects(&self) -> HashMap<String, String> {
+        self.document
+            .entries
+            .iter()
+            .filter_map(|item| {
+                item.project_id
+                    .as_ref()
+                    .map(|project_id| (item.id.clone(), project_id.clone()))
+            })
+            .collect()
+    }
+
+    pub(crate) fn uploaded_capture_ids(&self) -> HashSet<String> {
+        self.document
+            .entries
+            .iter()
+            .filter(|item| item.status == QueueItemStatus::Uploaded)
+            .map(|item| item.id.clone())
+            .collect()
+    }
+
+    pub(crate) fn last_success_at_ms(&self) -> Option<u64> {
+        self.document
+            .entries
+            .iter()
+            .filter_map(|item| item.uploaded_at_ms)
+            .max()
+    }
+
     pub(crate) fn summary(&self) -> QueueSummary {
         let mut summary = QueueSummary {
             total: self.document.entries.len(),
@@ -398,6 +685,7 @@ impl DurableUploadQueue {
         };
         for item in &self.document.entries {
             match item.status {
+                QueueItemStatus::RemotePending => summary.remote_pending += 1,
                 QueueItemStatus::Pending => summary.pending += 1,
                 QueueItemStatus::Uploading => summary.uploading += 1,
                 QueueItemStatus::Failed if item.is_terminal() => summary.failed += 1,
@@ -448,6 +736,37 @@ impl DurableUploadQueue {
                     )
                 });
                 recovered = true;
+            }
+        }
+        recovered
+    }
+
+    fn recover_remote_adoptions(&mut self, restart_time_ms: u64) -> bool {
+        let mut recovered = false;
+        for item in &mut self.document.entries {
+            if item.status != QueueItemStatus::RemotePending {
+                continue;
+            }
+            let Some(expected_hash) = item.remote_local_hash.as_deref() else {
+                continue;
+            };
+            match capture_content_hash(&item.file_path) {
+                Ok(actual_hash) if actual_hash == expected_hash => {
+                    item.status = QueueItemStatus::Uploaded;
+                    item.uploaded_at_ms = Some(restart_time_ms);
+                    item.last_error = None;
+                    recovered = true;
+                }
+                Ok(_) => {
+                    item.last_error = Some(
+                        "The downloaded capture does not match its protected cloud hash.".into(),
+                    );
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    item.last_error =
+                        Some("The downloaded capture cannot be verified safely yet.".into());
+                }
             }
         }
         recovered
@@ -507,6 +826,10 @@ impl DurableUploadQueue {
                     "Recovered a durable capture that was interrupted before queue handoff.".into(),
                 ),
                 annotated: false,
+                project_id: None,
+                uploaded_at_ms: None,
+                remote_content_hash: None,
+                remote_local_hash: None,
             });
         }
 
@@ -521,7 +844,10 @@ impl DurableUploadQueue {
     fn recover_unavailable_sources(&mut self) -> bool {
         let mut recovered = false;
         for item in &mut self.document.entries {
-            if item.status == QueueItemStatus::Uploaded {
+            if matches!(
+                item.status,
+                QueueItemStatus::RemotePending | QueueItemStatus::Uploaded
+            ) {
                 continue;
             }
             let unavailable = match fs::symlink_metadata(&item.file_path) {
@@ -687,7 +1013,7 @@ pub(crate) struct QueueRuntime {
 }
 
 impl QueueRuntime {
-    fn initialize(&mut self, queue: Result<DurableUploadQueue, String>) {
+    pub(crate) fn initialize(&mut self, queue: Result<DurableUploadQueue, String>) {
         self.quick_access_reservations.clear();
         self.annotation_reservations.clear();
         match queue {
@@ -738,13 +1064,106 @@ impl QueueRuntime {
                 .map(DurableUploadQueue::summary)
                 .unwrap_or_default(),
             warning: self.warning.clone(),
+            last_success_at_ms: self
+                .queue
+                .as_ref()
+                .and_then(DurableUploadQueue::last_success_at_ms),
         }
+    }
+
+    pub(crate) fn capture_sync_status(&self, source: &Path) -> Result<CaptureSyncStatus, String> {
+        let Some(queue) = self.queue.as_ref() else {
+            return Ok(CaptureSyncStatus::Unavailable);
+        };
+        let id = capture_id_from_path(&queue.capture_directory, source)?;
+        let item = queue.item(&id);
+        Ok(capture_sync_status_for_item(
+            item,
+            self.quick_access_reservations.contains(&id),
+        ))
     }
 
     pub(crate) fn capture_timestamps(&self) -> Result<HashMap<String, u64>, String> {
         self.queue
             .as_ref()
             .map(DurableUploadQueue::capture_timestamps)
+            .ok_or_else(|| self.unavailable_message())
+    }
+
+    pub(crate) fn capture_sources(&self) -> Result<HashMap<String, QueueSource>, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::capture_sources)
+            .ok_or_else(|| self.unavailable_message())
+    }
+
+    pub(crate) fn capture_projects(&self) -> Result<HashMap<String, String>, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::capture_projects)
+            .ok_or_else(|| self.unavailable_message())
+    }
+
+    pub(crate) fn stage_remote_capture(
+        &mut self,
+        id: &str,
+        capture_source: QueueSource,
+        created_at_ms: u64,
+        content_hash: &str,
+        project_id: Option<&str>,
+    ) -> Result<(RemoteStageOutcome, PathBuf), String> {
+        let queue = self.queue.as_mut().ok_or_else(|| {
+            self.warning
+                .clone()
+                .unwrap_or_else(|| "Capso's upload queue is not initialized.".into())
+        })?;
+        let path = queue.capture_directory.join(format!("{id}.png"));
+        match queue.stage_remote_capture_in_project(
+            id,
+            capture_source,
+            created_at_ms,
+            content_hash,
+            project_id,
+        ) {
+            Ok(outcome) => {
+                self.warning = None;
+                Ok((outcome, path))
+            }
+            Err(error) => {
+                self.warning = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn complete_remote_capture(
+        &mut self,
+        id: &str,
+        completed_at_ms: u64,
+    ) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.complete_remote_capture(id, completed_at_ms),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn prepare_remote_capture_install(
+        &mut self,
+        id: &str,
+        local_content_hash: &str,
+    ) -> Result<(), String> {
+        let result = match self.queue.as_mut() {
+            Some(queue) => queue.prepare_remote_capture_install(id, local_content_hash),
+            None => Err(self.unavailable_message()),
+        };
+        self.record_drain_result(result)
+    }
+
+    pub(crate) fn uploaded_capture_ids(&self) -> Result<HashSet<String>, String> {
+        self.queue
+            .as_ref()
+            .map(DurableUploadQueue::uploaded_capture_ids)
             .ok_or_else(|| self.unavailable_message())
     }
 
@@ -842,6 +1261,26 @@ impl QueueRuntime {
         self.queue.as_mut().ok_or(unavailable)?.mark_annotated(id)
     }
 
+    pub(crate) fn assign_project(
+        &mut self,
+        source: &Path,
+        project_id: Option<&str>,
+    ) -> Result<(), String> {
+        let queue = self
+            .queue
+            .as_ref()
+            .ok_or_else(|| self.unavailable_message())?;
+        let id = capture_id_from_path(&queue.capture_directory, source)?;
+        if !self.quick_access_reservations.contains(&id) {
+            return Err("That capture is no longer reserved for filing before upload.".into());
+        }
+        let unavailable = self.unavailable_message();
+        self.queue
+            .as_mut()
+            .ok_or(unavailable)?
+            .assign_project(&id, project_id)
+    }
+
     pub(crate) fn complete_annotation(&mut self, id: &str) -> Result<(), String> {
         if self.annotation_reservations.remove(id) {
             Ok(())
@@ -850,9 +1289,9 @@ impl QueueRuntime {
         }
     }
 
-    pub(crate) fn mark_uploaded(&mut self, id: &str) -> Result<(), String> {
+    pub(crate) fn mark_uploaded(&mut self, id: &str, uploaded_at_ms: u64) -> Result<(), String> {
         let result = match self.queue.as_mut() {
-            Some(queue) => queue.mark_uploaded(id),
+            Some(queue) => queue.mark_uploaded(id, uploaded_at_ms),
             None => Err(self.unavailable_message()),
         };
         self.record_drain_result(result)
@@ -939,6 +1378,16 @@ pub(crate) fn current_status(app: &AppHandle) -> Result<QueueRuntimeStatus, Stri
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".into())
 }
 
+pub(crate) fn capture_sync_status_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+    source: &Path,
+) -> Result<CaptureSyncStatus, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .capture_sync_status(source)
+}
+
 pub(crate) fn retry_monitor_snapshot_for_app<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<RetryMonitorSnapshot, String> {
@@ -955,6 +1404,24 @@ pub(crate) fn capture_timestamps_for_app<R: Runtime>(
         .lock()
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
         .capture_timestamps()
+}
+
+pub(crate) fn capture_sources_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<HashMap<String, QueueSource>, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .capture_sources()
+}
+
+pub(crate) fn capture_projects_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<HashMap<String, String>, String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .capture_projects()
 }
 
 pub(crate) fn publish_quick_access_for_app<R: Runtime>(
@@ -975,6 +1442,17 @@ pub(crate) fn release_quick_access_for_app<R: Runtime>(
         .lock()
         .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
         .release_quick_access(capture)
+}
+
+pub(crate) fn assign_project_for_app<R: Runtime>(
+    app: &AppHandle<R>,
+    capture: &Path,
+    project_id: Option<&str>,
+) -> Result<(), String> {
+    app.state::<std::sync::Mutex<QueueRuntime>>()
+        .lock()
+        .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+        .assign_project(capture, project_id)
 }
 
 pub(crate) async fn enqueue_capture(
@@ -1020,6 +1498,67 @@ fn canonical_uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value)
         .map(|id| id.to_string() == value)
         .unwrap_or(false)
+}
+
+fn valid_content_hash(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+fn capture_content_hash(path: &Path) -> io::Result<String> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file()
+        || !(PNG_SIGNATURE.len() as u64..=MAX_CAPTURE_BYTES).contains(&metadata.len())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "remote capture is not a bounded direct file",
+        ));
+    }
+    let mut file = File::open(path)?;
+    let mut signature = [0_u8; PNG_SIGNATURE.len()];
+    file.read_exact(&mut signature)?;
+    if signature != *PNG_SIGNATURE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "remote capture is not a PNG",
+        ));
+    }
+    let mut digest = Sha256::new();
+    digest.update(signature);
+    let mut buffer = [0_u8; 64 * 1_024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(format!("sha256:{:x}", digest.finalize()))
+}
+
+fn capture_sync_status_for_item(
+    item: Option<&QueueItem>,
+    held_for_quick_access: bool,
+) -> CaptureSyncStatus {
+    let Some(item) = item else {
+        return CaptureSyncStatus::Local;
+    };
+    if held_for_quick_access && item.status == QueueItemStatus::Pending && item.attempts == 0 {
+        return CaptureSyncStatus::Ready;
+    }
+    match item.status {
+        QueueItemStatus::RemotePending => CaptureSyncStatus::Waiting,
+        QueueItemStatus::Pending => CaptureSyncStatus::Waiting,
+        QueueItemStatus::Uploading => CaptureSyncStatus::Syncing,
+        QueueItemStatus::Failed if item.is_terminal() => CaptureSyncStatus::NeedsAttention,
+        QueueItemStatus::Failed => CaptureSyncStatus::Retrying,
+        QueueItemStatus::Uploaded => CaptureSyncStatus::Synced,
+    }
 }
 
 fn capture_id_from_path(capture_directory: &Path, source: &Path) -> Result<String, String> {
@@ -1077,7 +1616,45 @@ fn validate_document(document: &QueueDocument, capture_directory: &Path) -> Resu
         if item.attempts > MAX_AUTOMATIC_ATTEMPTS {
             return Err("A queued capture has an invalid attempt count.".into());
         }
+        if item.status != QueueItemStatus::Uploaded && item.uploaded_at_ms.is_some() {
+            return Err("An incomplete queued capture has an upload completion time.".into());
+        }
+        if item
+            .remote_content_hash
+            .as_deref()
+            .is_some_and(|hash| !valid_content_hash(hash))
+        {
+            return Err("A remote queued capture has an invalid protected hash.".into());
+        }
+        if item
+            .remote_local_hash
+            .as_deref()
+            .is_some_and(|hash| !valid_content_hash(hash))
+        {
+            return Err("A remote queued capture has an invalid local protected hash.".into());
+        }
+        if !matches!(
+            item.status,
+            QueueItemStatus::RemotePending | QueueItemStatus::Uploaded
+        ) && (item.remote_content_hash.is_some() || item.remote_local_hash.is_some())
+        {
+            return Err("A local upload has unexpected remote identity metadata.".into());
+        }
+        if item
+            .project_id
+            .as_deref()
+            .is_some_and(|project_id| !canonical_uuid(project_id))
+        {
+            return Err("A queued capture has an invalid project identifier.".into());
+        }
         match item.status {
+            QueueItemStatus::RemotePending
+                if item.attempts != 0
+                    || item.next_attempt_at_ms.is_some()
+                    || item.remote_content_hash.is_none() =>
+            {
+                return Err("A pending remote capture has invalid recovery state.".into());
+            }
             QueueItemStatus::Pending
                 if item.attempts >= MAX_AUTOMATIC_ATTEMPTS || item.next_attempt_at_ms.is_some() =>
             {
@@ -1096,7 +1673,13 @@ fn validate_document(document: &QueueDocument, capture_directory: &Path) -> Resu
                 return Err("A failed queued upload has invalid retry state.".into());
             }
             QueueItemStatus::Uploaded
-                if item.attempts == 0 || item.next_attempt_at_ms.is_some() =>
+                if (item.attempts == 0
+                    && (item.remote_content_hash.is_none()
+                        || item.remote_local_hash.is_none()))
+                    || (item.attempts > 0
+                        && (item.remote_content_hash.is_some()
+                            || item.remote_local_hash.is_some()))
+                    || item.next_attempt_at_ms.is_some() =>
             {
                 return Err("A completed queued upload has invalid attempt state.".into());
             }
@@ -1109,13 +1692,15 @@ fn validate_document(document: &QueueDocument, capture_directory: &Path) -> Resu
 #[cfg(test)]
 mod tests {
     use super::{
-        DurableUploadQueue, EnqueueOutcome, QueueItemStatus, QueueRuntime, QueueSource,
+        capture_sync_status_for_item, CaptureSyncStatus, DurableUploadQueue, EnqueueOutcome,
+        QueueItem, QueueItemStatus, QueueRuntime, QueueSource, RemoteStageOutcome,
         RetryMonitorSnapshot, MAX_AUTOMATIC_ATTEMPTS, RETRY_DELAYS_MS,
     };
     use crate::drain::{
         DrainCoordinator, DrainWake, TransportAvailability, UploadAcknowledgement, UploadResult,
         UploadTransport, WakeResult,
     };
+    use sha2::{Digest, Sha256};
     use std::{
         fs,
         path::Path,
@@ -1173,6 +1758,18 @@ mod tests {
         assert_eq!(restored.summary().pending, 3);
         assert_eq!(restored.summary().total, 3);
         assert_eq!(
+            restored.capture_sources().get(FIRST_ID),
+            Some(&QueueSource::Region)
+        );
+        assert_eq!(
+            restored.capture_sources().get(SECOND_ID),
+            Some(&QueueSource::Window)
+        );
+        assert_eq!(
+            restored.capture_sources().get(THIRD_ID),
+            Some(&QueueSource::Fullscreen)
+        );
+        assert_eq!(
             restored
                 .claim_next(5_000)
                 .expect("persist first claim")
@@ -1180,7 +1777,9 @@ mod tests {
                 .id,
             FIRST_ID
         );
-        restored.mark_uploaded(FIRST_ID).expect("complete first");
+        restored
+            .mark_uploaded(FIRST_ID, 5_001)
+            .expect("complete first");
         assert_eq!(
             restored
                 .claim_next(5_000)
@@ -1189,7 +1788,9 @@ mod tests {
                 .id,
             SECOND_ID
         );
-        restored.mark_uploaded(SECOND_ID).expect("complete second");
+        restored
+            .mark_uploaded(SECOND_ID, 5_002)
+            .expect("complete second");
         assert_eq!(
             restored
                 .claim_next(5_000)
@@ -1198,7 +1799,9 @@ mod tests {
                 .id,
             THIRD_ID
         );
-        restored.mark_uploaded(THIRD_ID).expect("complete third");
+        restored
+            .mark_uploaded(THIRD_ID, 5_003)
+            .expect("complete third");
         assert!(restored
             .claim_next(5_000)
             .expect("read exhausted queue")
@@ -1208,6 +1811,7 @@ mod tests {
         let mut completed =
             DurableUploadQueue::open(&store, &captures, 6_000).expect("restore completed queue");
         assert_eq!(completed.summary().uploaded, 3);
+        assert_eq!(completed.last_success_at_ms(), Some(5_003));
         assert!(completed
             .claim_next(6_000)
             .expect("read completed queue")
@@ -1225,6 +1829,25 @@ mod tests {
     }
 
     #[test]
+    fn in_app_created_capture_provenance_round_trips_without_becoming_an_area() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1).expect("open queue");
+        let source = capture(&captures, FIRST_ID);
+        queue
+            .enqueue(&source, QueueSource::Created, 2)
+            .expect("enqueue created capture");
+        drop(queue);
+
+        let restored = DurableUploadQueue::open(&store, &captures, 3).expect("restore queue");
+        assert_eq!(
+            restored.capture_sources().get(FIRST_ID),
+            Some(&QueueSource::Created)
+        );
+    }
+
+    #[test]
     fn history_timestamps_survive_status_changes_and_restart() {
         let root = tempfile::tempdir().expect("temporary app data");
         let captures = root.path().join("captures");
@@ -1235,7 +1858,9 @@ mod tests {
             .enqueue(&source, QueueSource::Region, 1_234)
             .expect("enqueue capture");
         queue.claim_next(2_000).expect("claim").expect("item");
-        queue.mark_uploaded(FIRST_ID).expect("complete upload");
+        queue
+            .mark_uploaded(FIRST_ID, 7_000)
+            .expect("complete upload");
         drop(queue);
 
         let restored =
@@ -1245,6 +1870,208 @@ mod tests {
             restored.capture_timestamps(),
             std::collections::HashMap::from([(FIRST_ID.to_string(), 1_234)])
         );
+        assert_eq!(restored.last_success_at_ms(), Some(7_000));
+    }
+
+    #[test]
+    fn remote_capture_adoption_survives_restart_without_becoming_an_upload() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let pixels = b"\x89PNG\r\n\x1a\nremote capture fixture";
+        let content_hash = format!("sha256:{:x}", Sha256::digest(pixels));
+
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1_000).expect("open queue");
+        assert_eq!(
+            queue
+                .stage_remote_capture(FIRST_ID, QueueSource::Window, 2_000, &content_hash,)
+                .expect("stage remote capture"),
+            RemoteStageOutcome::NeedsDownload,
+        );
+        assert_eq!(queue.summary().remote_pending, 1);
+        assert_eq!(queue.summary().queued(), 0);
+        assert!(queue
+            .claim_next(2_001)
+            .expect("claim local upload")
+            .is_none());
+        drop(queue);
+
+        let mut staged =
+            DurableUploadQueue::open(&store, &captures, 3_000).expect("restore staged queue");
+        assert_eq!(
+            staged.item(FIRST_ID).map(|item| item.status),
+            Some(QueueItemStatus::RemotePending),
+        );
+        staged
+            .prepare_remote_capture_install(FIRST_ID, &content_hash)
+            .expect("persist local PNG identity");
+        drop(staged);
+
+        fs::create_dir_all(&captures).expect("create captures");
+        fs::write(captures.join(format!("{FIRST_ID}.png")), pixels).expect("install remote pixels");
+        let mut recovered =
+            DurableUploadQueue::open(&store, &captures, 4_000).expect("recover installed remote");
+        let item = recovered.item(FIRST_ID).expect("remote queue item");
+        assert_eq!(item.status, QueueItemStatus::Uploaded);
+        assert_eq!(item.attempts, 0);
+        assert_eq!(item.uploaded_at_ms, Some(4_000));
+        assert_eq!(recovered.capture_timestamps().get(FIRST_ID), Some(&2_000),);
+        assert_eq!(
+            recovered.capture_sources().get(FIRST_ID),
+            Some(&QueueSource::Window),
+        );
+        assert!(recovered
+            .claim_next(4_001)
+            .expect("claim local upload")
+            .is_none());
+    }
+
+    #[test]
+    fn completed_remote_download_becomes_visible_without_restarting_the_app() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let pixels = b"\x89PNG\r\n\x1a\ncompleted remote capture";
+        let content_hash = format!("sha256:{:x}", Sha256::digest(pixels));
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1_000).expect("open queue");
+        queue
+            .stage_remote_capture(FIRST_ID, QueueSource::Fullscreen, 2_000, &content_hash)
+            .expect("stage remote capture");
+        queue
+            .prepare_remote_capture_install(FIRST_ID, &content_hash)
+            .expect("persist local PNG identity");
+        fs::create_dir_all(&captures).expect("create captures");
+        fs::write(captures.join(format!("{FIRST_ID}.png")), pixels).expect("install remote pixels");
+
+        queue
+            .complete_remote_capture(FIRST_ID, 3_000)
+            .expect("complete remote download");
+
+        let item = queue.item(FIRST_ID).expect("completed queue item");
+        assert_eq!(item.status, QueueItemStatus::Uploaded);
+        assert_eq!(item.attempts, 0);
+        assert_eq!(item.uploaded_at_ms, Some(3_000));
+        assert_eq!(queue.summary().remote_pending, 0);
+        assert_eq!(queue.summary().uploaded, 1);
+        assert!(queue
+            .claim_next(3_001)
+            .expect("claim local upload")
+            .is_none());
+    }
+
+    #[test]
+    fn remote_project_assignment_and_browser_provenance_survive_local_adoption() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let pixels = b"\x89PNG\r\n\x1a\nremote browser capture";
+        let content_hash = format!("sha256:{:x}", Sha256::digest(pixels));
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1_000).expect("open queue");
+
+        queue
+            .stage_remote_capture_in_project(
+                FIRST_ID,
+                QueueSource::Browser,
+                2_000,
+                &content_hash,
+                Some(SECOND_ID),
+            )
+            .expect("stage organized browser capture");
+        queue
+            .prepare_remote_capture_install(FIRST_ID, &content_hash)
+            .expect("persist local PNG identity");
+        fs::create_dir_all(&captures).expect("create captures");
+        fs::write(captures.join(format!("{FIRST_ID}.png")), pixels).expect("install remote pixels");
+        queue
+            .complete_remote_capture(FIRST_ID, 3_000)
+            .expect("complete remote download");
+        drop(queue);
+
+        let restored = DurableUploadQueue::open(&store, &captures, 4_000).expect("restore queue");
+        let item = restored.item(FIRST_ID).expect("remote queue item");
+        assert_eq!(item.source, QueueSource::Browser);
+        assert_eq!(item.project_id.as_deref(), Some(SECOND_ID));
+        assert_eq!(
+            restored
+                .capture_projects()
+                .get(FIRST_ID)
+                .map(String::as_str),
+            Some(SECOND_ID),
+            "History can organise an adopted extension capture without reading queue internals",
+        );
+    }
+
+    #[test]
+    fn normalized_browser_png_recovers_from_its_persisted_local_hash() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let cloud_jpeg = b"remote JPEG identity";
+        let local_png = b"\x89PNG\r\n\x1a\nnormalized browser PNG";
+        let cloud_hash = format!("sha256:{:x}", Sha256::digest(cloud_jpeg));
+        let local_hash = format!("sha256:{:x}", Sha256::digest(local_png));
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1_000).expect("open queue");
+        queue
+            .stage_remote_capture_in_project(
+                FIRST_ID,
+                QueueSource::Browser,
+                2_000,
+                &cloud_hash,
+                None,
+            )
+            .expect("stage browser object");
+
+        queue
+            .prepare_remote_capture_install(FIRST_ID, &local_hash)
+            .expect("persist normalized PNG identity");
+        fs::create_dir_all(&captures).expect("create captures");
+        fs::write(captures.join(format!("{FIRST_ID}.png")), local_png)
+            .expect("install normalized PNG");
+        drop(queue);
+
+        let restored = DurableUploadQueue::open(&store, &captures, 3_000)
+            .expect("recover normalized browser capture");
+        let item = restored.item(FIRST_ID).expect("browser queue item");
+        assert_eq!(item.status, QueueItemStatus::Uploaded);
+        assert_eq!(
+            item.remote_content_hash.as_deref(),
+            Some(cloud_hash.as_str())
+        );
+        assert_eq!(item.remote_local_hash.as_deref(), Some(local_hash.as_str()));
+    }
+
+    #[test]
+    fn mismatched_remote_pixels_remain_pending_and_never_enter_the_upload_fifo() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let expected_hash = format!("sha256:{:x}", Sha256::digest(b"expected remote pixels"));
+        let mut queue = DurableUploadQueue::open(&store, &captures, 1_000).expect("open queue");
+        queue
+            .stage_remote_capture(FIRST_ID, QueueSource::Region, 2_000, &expected_hash)
+            .expect("stage remote capture");
+        queue
+            .prepare_remote_capture_install(FIRST_ID, &expected_hash)
+            .expect("persist expected local identity");
+        drop(queue);
+
+        let path = capture(&captures, FIRST_ID);
+        let mut recovered =
+            DurableUploadQueue::open(&store, &captures, 3_000).expect("restore remote queue");
+        let item = recovered.item(FIRST_ID).expect("remote queue item");
+        assert_eq!(item.status, QueueItemStatus::RemotePending);
+        assert!(item
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("does not match")));
+        assert!(
+            path.exists(),
+            "recovery must not delete ambiguous user-visible pixels"
+        );
+        assert!(recovered
+            .claim_next(4_000)
+            .expect("claim local upload")
+            .is_none());
     }
 
     #[test]
@@ -1288,6 +2115,66 @@ mod tests {
                 .id,
             FIRST_ID
         );
+    }
+
+    #[test]
+    fn quick_access_project_choice_is_durable_and_frozen_when_upload_starts() {
+        const PROJECT_ID: &str = "018f22c4-cada-7c6b-9d5b-fc35f7f92276";
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let source = capture(&captures, FIRST_ID);
+        let queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        let mut runtime = QueueRuntime::default();
+        runtime.initialize(Ok(queue));
+        runtime
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue and reserve Quick Access");
+        runtime
+            .assign_project(&source, Some(PROJECT_ID))
+            .expect("file the exact held capture");
+        assert_eq!(
+            runtime
+                .queue
+                .as_ref()
+                .and_then(|queue| queue.item(FIRST_ID))
+                .and_then(|item| item.project_id.as_deref()),
+            Some(PROJECT_ID)
+        );
+
+        drop(runtime);
+        let mut restored =
+            DurableUploadQueue::open(&store, &captures, 1).expect("restore project choice");
+        assert_eq!(
+            restored
+                .item(FIRST_ID)
+                .and_then(|item| item.project_id.as_deref()),
+            Some(PROJECT_ID)
+        );
+        restored.claim_next(2).expect("claim").expect("queued item");
+        assert!(restored
+            .assign_project(FIRST_ID, Some("018f22c4-cada-7c6b-9d5b-fc35f7f92277"),)
+            .is_err());
+    }
+
+    #[test]
+    fn project_choice_requires_the_live_quick_access_reservation() {
+        let root = tempfile::tempdir().expect("temporary app data");
+        let captures = root.path().join("captures");
+        let store = root.path().join("upload-queue.json");
+        let source = capture(&captures, FIRST_ID);
+        let queue = DurableUploadQueue::open(&store, &captures, 0).expect("open queue");
+        let mut runtime = QueueRuntime::default();
+        runtime.initialize(Ok(queue));
+        runtime
+            .enqueue(&source, QueueSource::Region, 0)
+            .expect("enqueue and reserve Quick Access");
+        runtime
+            .release_quick_access(&source)
+            .expect("release Quick Access");
+        assert!(runtime
+            .assign_project(&source, Some("018f22c4-cada-7c6b-9d5b-fc35f7f92276"),)
+            .is_err());
     }
 
     #[derive(Clone, Debug, Default)]
@@ -1476,7 +2363,7 @@ mod tests {
                     .expect("healthy item is not blocked");
                 assert_eq!(healthy_claim.id, SECOND_ID);
                 queue
-                    .mark_uploaded(SECOND_ID)
+                    .mark_uploaded(SECOND_ID, 3_001)
                     .expect("complete healthy item");
             }
         }
@@ -1634,7 +2521,9 @@ mod tests {
             .mark_failed(&second_claim.id, 1_000, "retry second")
             .expect("fail second");
         let third_claim = queue.claim_next(102).expect("claim third").expect("third");
-        queue.mark_uploaded(&third_claim.id).expect("upload third");
+        queue
+            .mark_uploaded(&third_claim.id, 6_001)
+            .expect("upload third");
 
         assert_eq!(queue.next_retry_at_ms(), Some(5_100));
         assert_eq!(
@@ -1871,5 +2760,59 @@ mod tests {
         assert!(queue.enqueue(&symlink, QueueSource::Region, 0).is_err());
         assert_eq!(queue.summary().total, 0);
         assert!(!store.exists());
+    }
+
+    #[test]
+    fn capture_specific_sync_status_never_confuses_local_safety_with_cloud_delivery() {
+        let item = |status, attempts, next_attempt_at_ms| QueueItem {
+            id: FIRST_ID.into(),
+            file_path: std::path::PathBuf::from(format!("/tmp/{FIRST_ID}.png")),
+            created_at_ms: 0,
+            source: QueueSource::Region,
+            status,
+            attempts,
+            next_attempt_at_ms,
+            last_error: None,
+            annotated: false,
+            project_id: None,
+            uploaded_at_ms: None,
+            remote_content_hash: None,
+            remote_local_hash: None,
+        };
+
+        assert_eq!(
+            capture_sync_status_for_item(None, false),
+            CaptureSyncStatus::Local
+        );
+        assert_eq!(
+            capture_sync_status_for_item(Some(&item(QueueItemStatus::Pending, 0, None)), true),
+            CaptureSyncStatus::Ready
+        );
+        assert_eq!(
+            capture_sync_status_for_item(Some(&item(QueueItemStatus::Pending, 0, None)), false),
+            CaptureSyncStatus::Waiting
+        );
+        assert_eq!(
+            capture_sync_status_for_item(Some(&item(QueueItemStatus::Uploading, 1, None)), false),
+            CaptureSyncStatus::Syncing
+        );
+        assert_eq!(
+            capture_sync_status_for_item(
+                Some(&item(QueueItemStatus::Failed, 1, Some(5_000))),
+                false
+            ),
+            CaptureSyncStatus::Retrying
+        );
+        assert_eq!(
+            capture_sync_status_for_item(
+                Some(&item(QueueItemStatus::Failed, MAX_AUTOMATIC_ATTEMPTS, None)),
+                false
+            ),
+            CaptureSyncStatus::NeedsAttention
+        );
+        assert_eq!(
+            capture_sync_status_for_item(Some(&item(QueueItemStatus::Uploaded, 1, None)), false),
+            CaptureSyncStatus::Synced
+        );
     }
 }

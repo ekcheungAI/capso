@@ -1,17 +1,29 @@
 mod annotation;
+mod annotation_project;
+mod annotation_sync;
+mod area_selector;
 mod auth;
+mod automation;
 mod capture;
+mod capture_hud;
+mod capture_mirror;
 mod clipboard;
+mod device;
 mod dragout;
 mod drain;
+mod freeze;
 mod history;
 mod ingest;
 mod latency;
+mod ocr;
 mod overlay;
 mod pin;
+mod projects;
 mod queue;
+mod recording;
 mod retry;
 mod self_timer;
+mod settings_transfer;
 mod shortcuts;
 mod sync;
 mod system;
@@ -31,6 +43,7 @@ use tauri::{
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 struct TauriShortcutRegistry<'a> {
@@ -213,12 +226,294 @@ impl AuthFeedbackState {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SyncFailureRecord {
+    message: String,
+    reconnect_required: bool,
+}
+
+#[derive(Debug, Default)]
+struct SyncFeedbackState(Mutex<Option<SyncFailureRecord>>);
+
+impl SyncFeedbackState {
+    fn record_failure(&self, message: &str) {
+        if let Ok(mut failure) = self.0.lock() {
+            *failure = Some(SyncFailureRecord {
+                message: message.into(),
+                reconnect_required: sync_error_requires_reconnect(message),
+            });
+        }
+    }
+
+    fn current(&self) -> Option<SyncFailureRecord> {
+        self.0.lock().ok().and_then(|failure| failure.clone())
+    }
+
+    fn clear(&self) {
+        if let Ok(mut failure) = self.0.lock() {
+            *failure = None;
+        }
+    }
+}
+
+fn sync_error_requires_reconnect(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("sign in again")
+        || lower.contains("start sign-in again")
+        || lower.contains("saved session is invalid")
+        || lower.contains("this mac was disconnected")
+}
+
+fn sync_error_is_device_revoked(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("this mac was disconnected")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncUiSnapshot {
+    summary: queue::QueueSummary,
+    annotation_summary: annotation_sync::AnnotationSyncSummary,
+    warning: Option<String>,
+    last_success_at_ms: Option<u64>,
+    reconnect_required: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthUiSnapshot {
     configured: bool,
     account: auth::AuthAccountStatus,
     last_failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceInfo {
+    name: &'static str,
+    platform: &'static str,
+    app_version: String,
+}
+
+#[tauri::command]
+fn get_device_info(app: AppHandle) -> DeviceInfo {
+    DeviceInfo {
+        name: "This Mac",
+        platform: "macOS",
+        app_version: app.package_info().version.to_string(),
+    }
+}
+
+#[tauri::command]
+fn open_web_library() -> Result<(), String> {
+    history::open_library()
+}
+
+#[tauri::command]
+fn get_local_history(app: AppHandle) -> Result<history::HistorySnapshot, String> {
+    history::history_for_app(&app)
+}
+
+fn announce_history_change(app: &AppHandle) {
+    let _ = app.emit("history-changed", ());
+    if let Err(error) = refresh_tray_status(app) {
+        eprintln!("Could not refresh the Capso tray after a History change: {error}");
+    }
+}
+
+#[tauri::command]
+fn remove_history_captures(app: AppHandle, ids: Vec<String>) -> Result<Vec<String>, String> {
+    let removed = history::remove_from_history_for_app(&app, &ids)?;
+    announce_history_change(&app);
+    Ok(removed)
+}
+
+#[tauri::command]
+fn clear_capture_history(app: AppHandle) -> Result<Vec<String>, String> {
+    let removed = history::clear_history_for_app(&app)?;
+    announce_history_change(&app);
+    Ok(removed)
+}
+
+#[tauri::command]
+fn restore_history_captures(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    history::restore_to_history_for_app(&app, &ids)?;
+    announce_history_change(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn open_capture_history(app: AppHandle) -> Result<(), String> {
+    history::show_history_window(&app)
+}
+
+#[tauri::command]
+fn get_overlay_settings(app: AppHandle) -> Result<overlay::OverlaySettingsSnapshot, String> {
+    overlay::get_overlay_settings(&app)
+}
+
+#[tauri::command]
+fn get_save_as_preferences(app: AppHandle) -> Result<overlay::OverlaySaveAsPreferences, String> {
+    overlay::get_save_as_preferences(&app)
+}
+
+#[tauri::command]
+fn update_overlay_settings(
+    app: AppHandle,
+    display_id: String,
+    preferences: overlay::OverlayPreferences,
+    save_as: overlay::OverlaySaveAsPreferences,
+) -> Result<overlay::OverlaySettingsSnapshot, String> {
+    overlay::update_overlay_settings(&app, &display_id, preferences, save_as)
+}
+
+#[tauri::command]
+fn get_annotation_project_sync_status(
+    app: AppHandle,
+) -> Result<annotation_sync::AnnotationSyncRuntimeStatus, String> {
+    annotation_sync::status_for_app(&app)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn retry_annotation_project_sync(
+    app: AppHandle,
+    id: String,
+) -> Result<annotation_sync::AnnotationSyncRuntimeStatus, String> {
+    let status = annotation_sync::retry_for_app(&app, &id)?;
+    spawn_background_sync(app, drain::DrainWake::AnnotationSaved);
+    Ok(status)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn keep_local_annotation_project(
+    app: AppHandle,
+    id: String,
+) -> Result<annotation_sync::AnnotationSyncRuntimeStatus, String> {
+    let status = annotation_sync::keep_local_for_app(&app, &id)?;
+    spawn_background_sync(app, drain::DrainWake::AnnotationSaved);
+    Ok(status)
+}
+
+#[tauri::command]
+fn restore_history_capture(app: AppHandle, id: String) -> Result<overlay::OverlayStatus, String> {
+    restore_recent_capture(&app, &id)
+}
+
+#[tauri::command]
+async fn recognize_history_capture_text(
+    app: AppHandle,
+    id: String,
+) -> Result<ocr::OcrResult, String> {
+    ocr::recognize_history_capture_text(app, id).await
+}
+
+#[tauri::command]
+async fn recognize_selected_png_text(
+    app: AppHandle,
+) -> Result<Option<ocr::SelectedOcrResult>, String> {
+    ocr::recognize_selected_png_text(app).await
+}
+
+#[tauri::command]
+async fn recognize_screen_selection_text(
+    app: AppHandle,
+) -> Result<Option<ocr::SelectedOcrResult>, String> {
+    ocr::recognize_screen_selection_text(app).await
+}
+
+#[tauri::command]
+async fn copy_recognized_text(
+    app: AppHandle,
+    capture_id: String,
+    session_id: u64,
+) -> Result<(), String> {
+    ocr::copy_recognized_text(app, capture_id, session_id).await
+}
+
+#[tauri::command]
+async fn copy_recognized_link(
+    app: AppHandle,
+    capture_id: String,
+    session_id: u64,
+    link_index: usize,
+) -> Result<(), String> {
+    ocr::copy_recognized_link(app, capture_id, session_id, link_index).await
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CombineHistoryResult {
+    width: u32,
+    height: u32,
+    bytes: u64,
+    capture: capture::CaptureOutcome,
+}
+
+#[tauri::command]
+async fn combine_history_captures(
+    app: AppHandle,
+    ids: Vec<String>,
+    layout: history::CombineLayout,
+) -> Result<CombineHistoryResult, String> {
+    let _capture_lease = capture::acquire_capture_lease().map_err(|error| error.message)?;
+    if annotation::is_active(&app) {
+        return Err("Finish or cancel the open annotation before combining captures.".into());
+    }
+    if capture_timer_is_running(&app) {
+        return Err("Wait for the active capture to finish before combining history.".into());
+    }
+    let directory = history::capture_directory(&app)?;
+    let output_id = uuid::Uuid::new_v4().to_string();
+    let combined = tauri::async_runtime::spawn_blocking(move || {
+        history::combine_captures(&directory, &ids, layout, &output_id)
+    })
+    .await
+    .map_err(|error| format!("The combine task stopped unexpectedly: {error}"))??;
+    let result = capture::publish_created_capture(&app, combined.path.clone()).await;
+    finish_launched_capture(&app, &result, None);
+    result
+        .map(|capture| CombineHistoryResult {
+            width: combined.width,
+            height: combined.height,
+            bytes: combined.bytes,
+            capture,
+        })
+        .map_err(|error| error.message)
+}
+
+#[tauri::command]
+async fn frame_history_capture(
+    app: AppHandle,
+    id: String,
+    style: history::FrameStyle,
+) -> Result<CombineHistoryResult, String> {
+    let _capture_lease = capture::acquire_capture_lease().map_err(|error| error.message)?;
+    if annotation::is_active(&app) {
+        return Err("Finish or cancel the open annotation before framing a capture.".into());
+    }
+    if capture_timer_is_running(&app) {
+        return Err("Wait for the active capture to finish before framing history.".into());
+    }
+    let directory = history::capture_directory(&app)?;
+    let output_id = uuid::Uuid::new_v4().to_string();
+    let framed = tauri::async_runtime::spawn_blocking(move || {
+        history::frame_capture(&directory, &id, style, &output_id)
+    })
+    .await
+    .map_err(|error| format!("The social framing task stopped unexpectedly: {error}"))??;
+    let result = capture::publish_created_capture(&app, framed.path.clone()).await;
+    finish_launched_capture(&app, &result, None);
+    result
+        .map(|capture| CombineHistoryResult {
+            width: framed.width,
+            height: framed.height,
+            bytes: framed.bytes,
+            capture,
+        })
+        .map_err(|error| error.message)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -238,7 +533,31 @@ fn receive_auth_callback(app: &AppHandle, callback: &str) {
         });
     match result {
         Ok(status) => {
+            let reset_device = app
+                .state::<SyncFeedbackState>()
+                .current()
+                .is_some_and(|failure| sync_error_is_device_revoked(&failure.message));
+            if reset_device {
+                let reset_result = app
+                    .state::<Mutex<sync::ProductionSyncRuntime>>()
+                    .lock()
+                    .map_err(|_| {
+                        "Capso's Mac identity is temporarily unavailable; reconnect again."
+                            .to_string()
+                    })
+                    .and_then(|sync| sync.reset_device_identity());
+                if let Err(error) = reset_result {
+                    app.state::<SyncFeedbackState>().record_failure(&error);
+                    let _ = app.emit("auth-status-changed", &status);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    return;
+                }
+            }
             app.state::<AuthFeedbackState>().clear();
+            app.state::<SyncFeedbackState>().clear();
             let _ = app.emit("auth-status-changed", &status);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -262,6 +581,111 @@ fn spawn_auth_callback(app: AppHandle, callback: String) {
     let _auth_task = tauri::async_runtime::spawn_blocking(move || {
         receive_auth_callback(&app, &callback);
     });
+}
+
+#[cfg(target_os = "macos")]
+fn run_automation_action(
+    app: &AppHandle,
+    action: automation::AutomationAction,
+) -> Result<&'static str, String> {
+    let capture_request = match action {
+        automation::AutomationAction::CaptureArea { delay_seconds } => {
+            Some((shortcuts::CaptureAction::Region, delay_seconds))
+        }
+        automation::AutomationAction::CaptureWindow { delay_seconds } => {
+            Some((shortcuts::CaptureAction::Window, delay_seconds))
+        }
+        automation::AutomationAction::CaptureFullscreen { delay_seconds } => {
+            Some((shortcuts::CaptureAction::Fullscreen, delay_seconds))
+        }
+        _ => None,
+    };
+    if let Some((capture_action, delay_seconds)) = capture_request {
+        if capture_timer_is_running(app) {
+            return Err("Cancel the running capture timer before using URL automation.".into());
+        }
+        if capture::is_capture_in_progress() || annotation::is_active(app) {
+            return Err(
+                "Finish the current capture or annotation before using URL automation.".into(),
+            );
+        }
+        if system::permission_for_capture(capture_action.mode(), system::screen_recording_granted())
+            == system::CapturePermission::RequiresScreenRecording
+        {
+            show_permission_guidance(app);
+            return Err("Grant Screen Recording before using that URL action.".into());
+        }
+        if delay_seconds == 0 {
+            launch_capture(app.clone(), capture_action);
+        } else if !launch_capture_timer(app.clone(), capture_action, delay_seconds, false)? {
+            return Err("Cancel the running capture timer before using URL automation.".into());
+        }
+        return Ok(match capture_action {
+            shortcuts::CaptureAction::Region if delay_seconds > 0 => {
+                "Area capture timer started by URL automation."
+            }
+            shortcuts::CaptureAction::Window if delay_seconds > 0 => {
+                "Window capture timer started by URL automation."
+            }
+            shortcuts::CaptureAction::Fullscreen if delay_seconds > 0 => {
+                "Full-screen capture timer started by URL automation."
+            }
+            shortcuts::CaptureAction::Region => "Area capture requested by URL automation.",
+            shortcuts::CaptureAction::Window => "Window capture requested by URL automation.",
+            shortcuts::CaptureAction::Fullscreen => {
+                "Full-screen capture requested by URL automation."
+            }
+        });
+    }
+    match action {
+        automation::AutomationAction::OpenHistory => {
+            history::show_history_window(app)?;
+            Ok("History opened by URL automation.")
+        }
+        automation::AutomationAction::OpenRecording => {
+            recording::show_recording_studio(app)?;
+            Ok("Recording Studio opened by URL automation.")
+        }
+        automation::AutomationAction::OpenSettings => {
+            open_settings_window(app);
+            Ok("Settings opened by URL automation.")
+        }
+        automation::AutomationAction::CaptureArea { .. }
+        | automation::AutomationAction::CaptureWindow { .. }
+        | automation::AutomationAction::CaptureFullscreen { .. } => {
+            unreachable!("capture actions return above")
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn receive_deep_link(app: &AppHandle, value: &str) {
+    match automation::parse_deep_link(value) {
+        Ok(automation::DeepLinkRoute::AuthCallback) => {
+            spawn_auth_callback(app.clone(), value.to_string());
+        }
+        Ok(automation::DeepLinkRoute::Automation(action)) => {
+            let result = run_automation_action(app, action);
+            let feedback = match result {
+                Ok(message) => app
+                    .state::<automation::AutomationFeedbackState>()
+                    .record(message, false),
+                Err(message) => {
+                    open_settings_window(app);
+                    app.state::<automation::AutomationFeedbackState>()
+                        .record(message, true)
+                }
+            };
+            let _ = app.emit("automation-status-changed", feedback);
+        }
+        Err(message) => {
+            open_settings_window(app);
+            let feedback = app
+                .state::<automation::AutomationFeedbackState>()
+                .record(message, true);
+            let _ = app.emit("automation-status-changed", feedback);
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -305,6 +729,24 @@ async fn request_sign_in_email(
     .map_err(|error| format!("Capso could not finish its sign-in task: {error}"))?
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn request_reconnect_email(app: AppHandle) -> Result<AuthEmailRequestStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let boundary = app.state::<AuthAccountBoundary>();
+        let _operation = boundary.begin_auth_operation()?;
+        let now_ms = background_sync_now_ms()?;
+        app.state::<auth::ProductionAuthRuntime>()
+            .start_reconnect(now_ms)
+            .map(|_| AuthEmailRequestStatus {
+                status: "email_sent",
+                expires_at_ms: now_ms.saturating_add(auth::HANDOFF_TTL_MS),
+            })
+    })
+    .await
+    .map_err(|error| format!("Capso could not finish its reconnect task: {error}"))?
+}
+
 fn ensure_sign_out_queue_is_safe(status: &queue::QueueRuntimeStatus) -> Result<(), String> {
     let active = status.summary.pending + status.summary.uploading + status.summary.retrying;
     if active == 0 {
@@ -317,6 +759,20 @@ fn ensure_sign_out_queue_is_safe(status: &queue::QueueRuntimeStatus) -> Result<(
     }
 }
 
+fn ensure_sign_out_annotation_sync_is_safe(
+    summary: &annotation_sync::AnnotationSyncSummary,
+) -> Result<(), String> {
+    let unsynced = summary.pending + summary.uploading + summary.failed + summary.conflicts;
+    if unsynced == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Resolve or sync {unsynced} local editable {} before signing out; their protected originals remain on this Mac.",
+            if unsynced == 1 { "project" } else { "projects" }
+        ))
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[tauri::command]
 async fn sign_out(app: AppHandle) -> Result<auth::AuthAccountStatus, String> {
@@ -324,9 +780,15 @@ async fn sign_out(app: AppHandle) -> Result<auth::AuthAccountStatus, String> {
         let boundary = app.state::<AuthAccountBoundary>();
         let _guard = boundary.lock_for_sign_out()?;
         ensure_sign_out_queue_is_safe(&current_queue_status(&app)?)?;
+        let annotation_status = annotation_sync::status_for_app(&app)?;
+        if annotation_status.warning.is_some() {
+            return Err("Capso cannot verify the local editable project queue yet. Reopen the app before signing out; no files were removed.".into());
+        }
+        ensure_sign_out_annotation_sync_is_safe(&annotation_status.summary)?;
         let status = app.state::<auth::ProductionAuthRuntime>().sign_out()?;
         app.state::<AuthFeedbackState>().clear();
         let _ = app.emit("auth-status-changed", &status);
+        app.state::<retry::RetryMonitorSignal>().notify();
         Ok(status)
     })
     .await
@@ -337,7 +799,15 @@ async fn sign_out(app: AppHandle) -> Result<auth::AuthAccountStatus, String> {
 pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
     app.state::<retry::RetryMonitorSignal>().notify();
     let _sync_task = tauri::async_runtime::spawn_blocking(move || {
-        let result = (|| {
+        let result: Result<
+            (
+                drain::WakeResult,
+                capture_mirror::RemoteCaptureReconcileReport,
+                annotation_sync::AnnotationSyncDrainReport,
+                annotation_sync::RemoteAnnotationReconcileReport,
+            ),
+            String,
+        > = (|| {
             let route = retry::SystemConnectivityProbe::new()
                 .ok()
                 .and_then(|probe| probe.is_reachable().ok());
@@ -352,16 +822,133 @@ pub(crate) fn spawn_background_sync(app: AppHandle, wake: drain::DrainWake) {
             let coordinator = app.state::<drain::DrainCoordinator>();
             let queue = app.state::<Mutex<queue::QueueRuntime>>();
             let connectivity_available = app.state::<retry::ConnectivityState>().permits_sync();
-            sync.wake(wake, &coordinator, &*queue, now_ms, connectivity_available)
+            let capture_result =
+                sync.wake(wake, &coordinator, &*queue, now_ms, connectivity_available)?;
+            let annotation_transport = connectivity_available
+                .then(|| sync.annotation_transport(now_ms))
+                .transpose()?;
+            drop(sync);
+            let (capture_mirror_report, annotation_report, remote_report) = if let Some(transport) =
+                annotation_transport
+            {
+                let capture_mirror_report =
+                    capture_mirror::reconcile_remote_captures(&*queue, &transport, now_ms)?;
+                let ready_capture_ids = queue
+                    .lock()
+                    .map_err(|_| "Capso's upload queue is temporarily unavailable.".to_string())?
+                    .uploaded_capture_ids()?;
+                let annotation_report =
+                    annotation_sync::drain_for_app(&app, &transport, &ready_capture_ids)?;
+                let remote_report = annotation_sync::reconcile_remote_for_app(
+                    &app,
+                    &transport,
+                    &ready_capture_ids,
+                )?;
+                (capture_mirror_report, annotation_report, remote_report)
+            } else {
+                (
+                    capture_mirror::RemoteCaptureReconcileReport::default(),
+                    annotation_sync::AnnotationSyncDrainReport::default(),
+                    annotation_sync::RemoteAnnotationReconcileReport::default(),
+                )
+            };
+            Ok((
+                capture_result,
+                capture_mirror_report,
+                annotation_report,
+                remote_report,
+            ))
         })();
-        if let Err(error) = result {
-            eprintln!("Capso background sync wake failed safely: {error}");
+        match &result {
+            Ok((drain::WakeResult::Ran(report), _, _, _))
+                if report
+                    .last_hold
+                    .as_deref()
+                    .is_some_and(sync_error_requires_reconnect) =>
+            {
+                app.state::<SyncFeedbackState>().record_failure(
+                    report
+                        .last_hold
+                        .as_deref()
+                        .expect("reconnect hold checked above"),
+                );
+            }
+            Ok((_, capture_mirror_report, _, _)) if capture_mirror_report.last_error.is_some() => {
+                app.state::<SyncFeedbackState>().record_failure(
+                    capture_mirror_report
+                        .last_error
+                        .as_deref()
+                        .expect("remote screenshot failure checked above"),
+                );
+            }
+            Ok(_) => app.state::<SyncFeedbackState>().clear(),
+            Err(error) => {
+                app.state::<SyncFeedbackState>().record_failure(error);
+                eprintln!("Capso background sync wake failed safely: {error}");
+            }
+        }
+        if let Ok((_, capture_mirror_report, _, _)) = &result {
+            if capture_mirror_report.downloaded > 0 {
+                let _ = app.emit("history-changed", ());
+            }
         }
         if let Err(error) = refresh_tray_status(&app) {
             eprintln!("Could not refresh Capso after background sync: {error}");
         }
+        if let Ok(status) = current_sync_status(&app) {
+            let _ = app.emit("sync-status-changed", status);
+        }
         app.state::<retry::RetryMonitorSignal>().notify();
     });
+}
+
+/// Settings reads the same durable queue snapshot as the tray. The command is
+/// intentionally read-only: queue transitions remain owned by the drain.
+#[tauri::command]
+fn get_sync_status(app: AppHandle) -> Result<SyncUiSnapshot, String> {
+    current_sync_status(&app)
+}
+
+fn current_sync_status(app: &AppHandle) -> Result<SyncUiSnapshot, String> {
+    let queue = current_queue_status(app)?;
+    let annotation_status = annotation_sync::status_for_app(app)?;
+    let feedback = app.state::<SyncFeedbackState>().current();
+    let queue_warning = queue.warning.is_some() || annotation_status.warning.is_some();
+    Ok(SyncUiSnapshot {
+        summary: queue.summary,
+        annotation_summary: annotation_status.summary,
+        warning: queue
+            .warning
+            .or(annotation_status.warning)
+            .or_else(|| feedback.as_ref().map(|failure| failure.message.clone())),
+        last_success_at_ms: queue.last_success_at_ms,
+        reconnect_required: !queue_warning
+            && feedback.is_some_and(|failure| failure.reconnect_required),
+    })
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn get_capture_projects(app: AppHandle) -> Result<Vec<projects::CaptureProject>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let boundary = app.state::<AuthAccountBoundary>();
+        let _operation = boundary.begin_auth_operation()?;
+        let now_ms = background_sync_now_ms()?;
+        app.state::<Mutex<sync::ProductionSyncRuntime>>()
+            .lock()
+            .map_err(|_| "Capso's project service is temporarily unavailable.".to_string())?
+            .capture_projects(now_ms)
+    })
+    .await
+    .map_err(|error| format!("Capso could not finish its project request: {error}"))?
+}
+
+/// A manual retry is a wake-up, not a second uploader. Coalescing, credentials,
+/// connectivity and durable transitions still pass through the one coordinator.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn retry_sync(app: AppHandle) {
+    spawn_background_sync(app, drain::DrainWake::RetryDeadline);
 }
 
 #[cfg(target_os = "macos")]
@@ -377,6 +964,7 @@ fn spawn_background_retry_monitor(app: AppHandle) -> Result<(), String> {
         .spawn(move || {
             let mut probe = retry::SystemConnectivityProbe::new().ok();
             let mut planner = retry::RetryDeadlinePlanner::default();
+            let mut remote_planner = retry::RemoteDiscoveryPlanner::default();
             loop {
                 let now_ms = match background_sync_now_ms() {
                     Ok(now_ms) => now_ms,
@@ -392,28 +980,38 @@ fn spawn_background_retry_monitor(app: AppHandle) -> Result<(), String> {
                 let transition = connectivity
                     .observe_probe(probe.as_ref().and_then(|probe| probe.is_reachable().ok()));
                 let snapshot = queue::retry_monitor_snapshot_for_app(&app).unwrap_or_default();
+                let signed_in = app
+                    .state::<auth::ProductionAuthRuntime>()
+                    .status()
+                    .is_ok_and(|status| status.status == "signed_in");
                 let timed_wake = planner.observe(
                     now_ms,
                     snapshot.next_retry_at_ms,
                     connectivity.permits_sync(),
                 );
+                let remote_wake =
+                    remote_planner.observe(now_ms, signed_in, connectivity.permits_sync());
                 let wake = if transition == retry::ConnectivityTransition::Restored {
                     Some(drain::DrainWake::ConnectivityRestored)
                 } else {
-                    timed_wake
+                    timed_wake.or(remote_wake)
                 };
                 if let Some(wake) = wake {
                     spawn_background_sync(app.clone(), wake);
                 }
-                retry::RetryMonitorSignal::wait(
-                    &receiver,
-                    retry::RetryDeadlinePlanner::wait_ms(
-                        now_ms,
-                        snapshot.next_retry_at_ms,
-                        snapshot.has_retryable_work,
-                        &connectivity,
-                    ),
+                let retry_wait = retry::RetryDeadlinePlanner::wait_ms(
+                    now_ms,
+                    snapshot.next_retry_at_ms,
+                    snapshot.has_retryable_work,
+                    &connectivity,
                 );
+                let remote_wait = remote_planner.wait_ms(now_ms, signed_in);
+                let wait_ms = match (retry_wait, remote_wait) {
+                    (Some(left), Some(right)) => Some(left.min(right)),
+                    (Some(wait), None) | (None, Some(wait)) => Some(wait),
+                    (None, None) => None,
+                };
+                retry::RetryMonitorSignal::wait(&receiver, wait_ms);
 
                 if probe.is_none() {
                     probe = retry::SystemConnectivityProbe::new().ok();
@@ -424,7 +1022,86 @@ fn spawn_background_retry_monitor(app: AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Capso could not start its background retry monitor: {error}"))
 }
 
+fn capture_timer_is_running(app: &AppHandle) -> bool {
+    app.state::<Mutex<self_timer::CaptureTimerRuntime>>()
+        .lock()
+        .map(|runtime| runtime.is_running())
+        .unwrap_or(true)
+}
+
+fn finish_launched_capture(
+    app: &AppHandle,
+    result: &Result<capture::CaptureOutcome, capture::CaptureFailure>,
+    successful_capture_warning: Option<&str>,
+) {
+    let desktop_clutter_warning = recording::desktop_clutter_warning(app);
+    let successful_capture_warning = match (
+        successful_capture_warning,
+        desktop_clutter_warning.as_deref(),
+    ) {
+        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
+        (Some(warning), None) | (None, Some(warning)) => Some(warning.to_string()),
+        (None, None) => None,
+    };
+    if let Some(tray) = app.tray_by_id("main") {
+        match result {
+            Err(error) => {
+                let _ = tray.set_tooltip(Some(format!("Capso — {}", error.message)));
+            }
+            Ok(capture::CaptureOutcome::Captured {
+                clipboard: clipboard::ClipboardStatus::Failed { message, .. },
+                ..
+            }) => {
+                let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+            }
+            Ok(capture::CaptureOutcome::Captured {
+                overlay: overlay::OverlayStatus::Failed { message, .. },
+                ..
+            }) => {
+                let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+            }
+            Ok(capture::CaptureOutcome::Captured {
+                queue: queue::CaptureQueueStatus::Failed { message, .. },
+                ..
+            }) => {
+                let _ = tray.set_tooltip(Some(format!(
+                    "Capso — capture saved locally; queue needs attention: {message}"
+                )));
+            }
+            Ok(capture::CaptureOutcome::Captured { .. })
+                if successful_capture_warning.is_some() =>
+            {
+                let _ = tray.set_tooltip(Some(format!(
+                    "Capso — capture saved; {}",
+                    successful_capture_warning.as_deref().unwrap_or_default()
+                )));
+            }
+            Ok(_) => {}
+        }
+    }
+
+    if let Some(wake) = background_wake_for_capture(result) {
+        #[cfg(target_os = "macos")]
+        spawn_background_sync(app.clone(), wake);
+    }
+    let _ = app.emit("capture-finished", capture_event(result));
+}
+
 fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
+    if capture_timer_is_running(&app) {
+        if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
+            let _ = window.show();
+        }
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_tooltip(Some(
+                "Capso — cancel the running capture timer before starting another capture",
+            ));
+        }
+        return;
+    }
+    if let Some(window) = app.get_webview_window(capture_hud::HUD_LABEL) {
+        let _ = window.hide();
+    }
     if system::permission_for_capture(action.mode(), system::screen_recording_granted())
         == system::CapturePermission::RequiresScreenRecording
     {
@@ -433,62 +1110,120 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
     }
 
     let _capture_task = tauri::async_runtime::spawn(async move {
-        let result = capture::capture_screen(app.clone(), action.mode()).await;
-
-        if let Some(tray) = app.tray_by_id("main") {
-            match &result {
-                Err(error) => {
-                    let _ = tray.set_tooltip(Some(format!("Capso — {}", error.message)));
+        let (result, exact_area) =
+            if action == shortcuts::CaptureAction::Region && system::screen_recording_granted() {
+                match capture::capture_selected_area(app.clone()).await {
+                    Ok((outcome, rect)) => (Ok(outcome), rect),
+                    Err(error) => (Err(error), None),
                 }
-                Ok(capture::CaptureOutcome::Captured {
-                    clipboard: clipboard::ClipboardStatus::Failed { message, .. },
-                    ..
-                }) => {
-                    let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
+            } else {
+                (
+                    capture::capture_screen(app.clone(), action.mode()).await,
+                    None,
+                )
+            };
+        let previous_area_warning = if action == shortcuts::CaptureAction::Region
+            && matches!(result, Ok(capture::CaptureOutcome::Captured { .. }))
+        {
+            let record_app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Some(area) = exact_area {
+                    capture_hud::record_previous_area_rect(
+                        &record_app,
+                        area.rect,
+                        area.pixel_dimensions,
+                    )
+                } else {
+                    capture_hud::record_system_previous_area(&record_app)
                 }
-                Ok(capture::CaptureOutcome::Captured {
-                    overlay: overlay::OverlayStatus::Failed { message, .. },
-                    ..
-                }) => {
-                    let _ = tray.set_tooltip(Some(format!("Capso — capture saved; {message}")));
-                }
-                Ok(capture::CaptureOutcome::Captured {
-                    queue: queue::CaptureQueueStatus::Failed { message, .. },
-                    ..
-                }) => {
-                    let _ = tray.set_tooltip(Some(format!(
-                        "Capso — capture saved locally; queue needs attention: {message}"
-                    )));
-                }
-                Ok(_) => {}
-            }
-        }
-
-        if let Some(wake) = background_wake_for_capture(&result) {
-            #[cfg(target_os = "macos")]
-            spawn_background_sync(app.clone(), wake);
-        }
-
-        let _ = app.emit("capture-finished", capture_event(&result));
+            })
+            .await
+            .map_or_else(
+                |error| Some(format!("Previous Area could not be saved: {error}")),
+                Result::err,
+            )
+        } else {
+            None
+        };
+        finish_launched_capture(&app, &result, previous_area_warning.as_deref());
     });
 }
 
-fn launch_region_self_timer(app: AppHandle) {
-    let outcome = match app.state::<Mutex<self_timer::RegionTimerRuntime>>().lock() {
-        Ok(mut runtime) => runtime.start(),
-        Err(_) => return,
-    };
+fn launch_previous_area_capture(app: AppHandle) -> Result<(), String> {
+    if capture_timer_is_running(&app) {
+        return Err("Cancel the running capture timer before using Previous Area.".into());
+    }
+    if capture::is_capture_in_progress() {
+        return Err("Wait for the current capture to finish before using Previous Area.".into());
+    }
+    let rect = capture_hud::previous_area_for_app(&app)?;
+    if !system::screen_recording_granted() {
+        let _ = hide_capture_hud(app.clone());
+        show_permission_guidance(&app);
+        return Err("Grant Screen Recording before replaying Previous Area.".into());
+    }
+    hide_capture_hud(app.clone())?;
+    let _capture_task = tauri::async_runtime::spawn(async move {
+        let result = capture::capture_previous_area(app.clone(), rect).await;
+        finish_launched_capture(&app, &result, None);
+    });
+    Ok(())
+}
+
+fn launch_frozen_capture(app: AppHandle) -> Result<(), String> {
+    if capture_timer_is_running(&app) {
+        return Err("Cancel the running capture timer before using Freeze Screen.".into());
+    }
+    if capture::is_capture_in_progress() {
+        return Err("Wait for the current capture to finish before using Freeze Screen.".into());
+    }
+    if !system::screen_recording_granted() {
+        let _ = hide_capture_hud(app.clone());
+        show_permission_guidance(&app);
+        return Err("Grant Screen Recording before using Freeze Screen.".into());
+    }
+    if let Some(window) = app.get_webview_window(capture_hud::HUD_LABEL) {
+        let _ = window.hide();
+    }
+    let _capture_task = tauri::async_runtime::spawn(async move {
+        let result = capture::capture_frozen_area(app.clone()).await;
+        finish_launched_capture(&app, &result, None);
+    });
+    Ok(())
+}
+
+fn launch_capture_timer(
+    app: AppHandle,
+    action: shortcuts::CaptureAction,
+    seconds: u8,
+    freeze_screen: bool,
+) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window(capture_hud::HUD_LABEL) {
+        let _ = window.hide();
+    }
+    let outcome = app
+        .state::<Mutex<self_timer::CaptureTimerRuntime>>()
+        .lock()
+        .map_err(|_| "The capture timer is temporarily unavailable.".to_string())?
+        .start(action, seconds, freeze_screen);
     let status = match outcome {
         self_timer::StartOutcome::Started(status) => status,
         self_timer::StartOutcome::AlreadyRunning(status) => {
             if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
                 let _ = window.show();
             }
-            let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+            let _ = app.emit_to(
+                self_timer::TIMER_LABEL,
+                "capture-timer-changed",
+                status.clone(),
+            );
             if let Some(tray) = app.tray_by_id("main") {
-                let _ = tray.set_tooltip(Some("Capso — a 5-second area timer is already running"));
+                let _ = tray.set_tooltip(Some(format!(
+                    "Capso — a {} capture timer is already running",
+                    status.mode.label().to_lowercase()
+                )));
             }
-            return;
+            return Ok(false);
         }
     };
 
@@ -497,84 +1232,232 @@ fn launch_region_self_timer(app: AppHandle) {
     }
     let _ = app.emit_to(
         self_timer::TIMER_LABEL,
-        "region-timer-changed",
+        "capture-timer-changed",
         status.clone(),
     );
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some(
-            "Capso — area capture starts in 5 seconds; Cancel is available",
-        ));
+        let _ = tray.set_tooltip(Some(format!(
+            "Capso — {}{} capture starts in {seconds} seconds; Cancel is available",
+            if freeze_screen { "frozen " } else { "" },
+            action.label().to_lowercase(),
+        )));
     }
 
     let generation = status.generation;
     let _timer_task = tauri::async_runtime::spawn_blocking(move || {
-        for seconds_remaining in (1..self_timer::TIMER_SECONDS).rev() {
+        for seconds_remaining in (1..seconds).rev() {
             thread::sleep(Duration::from_secs(1));
             let status = app
-                .state::<Mutex<self_timer::RegionTimerRuntime>>()
+                .state::<Mutex<self_timer::CaptureTimerRuntime>>()
                 .lock()
                 .ok()
                 .and_then(|mut runtime| runtime.tick(generation, seconds_remaining));
             let Some(status) = status else {
                 return;
             };
-            let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+            let _ = app.emit_to(self_timer::TIMER_LABEL, "capture-timer-changed", status);
         }
 
         thread::sleep(Duration::from_secs(1));
-        let should_capture = app
-            .state::<Mutex<self_timer::RegionTimerRuntime>>()
+        let target = app
+            .state::<Mutex<self_timer::CaptureTimerRuntime>>()
             .lock()
             .map(|mut runtime| runtime.finish(generation))
-            .unwrap_or(false);
-        if !should_capture {
+            .unwrap_or(None);
+        let Some(target) = target else {
             return;
-        }
+        };
         if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
             let _ = window.hide();
         }
-        launch_capture(app, shortcuts::CaptureAction::Region);
+        if target.freeze_screen {
+            let _ = launch_frozen_capture(app);
+        } else {
+            launch_capture(app, target.mode);
+        }
     });
+    Ok(true)
 }
 
 #[tauri::command]
-fn get_region_self_timer_status(
-    state: State<'_, Mutex<self_timer::RegionTimerRuntime>>,
-) -> Result<self_timer::RegionTimerStatus, String> {
+fn get_capture_timer_status(
+    state: State<'_, Mutex<self_timer::CaptureTimerRuntime>>,
+) -> Result<self_timer::CaptureTimerStatus, String> {
     state
         .lock()
         .map(|runtime| runtime.status())
-        .map_err(|_| "The area capture timer is temporarily unavailable.".to_string())
+        .map_err(|_| "The capture timer is temporarily unavailable.".to_string())
 }
 
 #[tauri::command]
-fn cancel_region_self_timer(
+fn cancel_capture_timer(
     app: AppHandle,
-    state: State<'_, Mutex<self_timer::RegionTimerRuntime>>,
+    state: State<'_, Mutex<self_timer::CaptureTimerRuntime>>,
 ) -> Result<bool, String> {
     let cancelled = state
         .lock()
-        .map_err(|_| "The area capture timer is temporarily unavailable.".to_string())?
+        .map_err(|_| "The capture timer is temporarily unavailable.".to_string())?
         .cancel();
     let Some(status) = cancelled else {
         return Ok(false);
     };
 
-    let _ = app.emit_to(self_timer::TIMER_LABEL, "region-timer-changed", status);
+    let _ = app.emit_to(
+        self_timer::TIMER_LABEL,
+        "capture-timer-changed",
+        status.clone(),
+    );
     if let Some(window) = app.get_webview_window(self_timer::TIMER_LABEL) {
         let _ = window.hide();
     }
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some("Capso — area capture timer cancelled"));
+        let _ = tray.set_tooltip(Some(format!(
+            "Capso — {} capture timer cancelled",
+            status.mode.label().to_lowercase()
+        )));
     }
     Ok(true)
 }
 
-fn cancel_region_self_timer_from_window(app: &AppHandle) {
-    let state = app.state::<Mutex<self_timer::RegionTimerRuntime>>();
+fn cancel_capture_timer_from_window(app: &AppHandle) {
+    let state = app.state::<Mutex<self_timer::CaptureTimerRuntime>>();
     if let Ok(mut runtime) = state.lock() {
         let _ = runtime.cancel();
     };
+}
+
+#[tauri::command]
+fn get_capture_hud_settings(
+    app: AppHandle,
+) -> Result<capture_hud::LoadedCaptureHudSettings, String> {
+    capture_hud::status_for_app(&app)
+}
+
+#[tauri::command]
+fn show_capture_hud(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(capture_hud::HUD_LABEL)
+        .ok_or_else(|| "Capso's capture controls are unavailable.".to_string())?;
+    let _ = window.center();
+    window
+        .show()
+        .and_then(|_| {
+            let _ = app.emit_to(capture_hud::HUD_LABEL, "capture-hud-opened", ());
+            window.set_focus()
+        })
+        .map_err(|error| format!("Could not open Capso's capture controls: {error}"))
+}
+
+#[tauri::command]
+fn hide_capture_hud(app: AppHandle) -> Result<(), String> {
+    app.get_webview_window(capture_hud::HUD_LABEL)
+        .ok_or_else(|| "Capso's capture controls are unavailable.".to_string())?
+        .hide()
+        .map_err(|error| format!("Could not close Capso's capture controls: {error}"))
+}
+
+#[tauri::command]
+fn start_capture_from_hud(
+    app: AppHandle,
+    settings: capture_hud::CaptureHudSettings,
+) -> Result<(), String> {
+    let settings = capture_hud::validate_settings(settings)?;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not locate Capso's settings directory: {error}"))?;
+    capture_hud::store_settings(&app_data, settings)?;
+    hide_capture_hud(app.clone())?;
+    if settings.delay_seconds == 0 {
+        if settings.freeze_screen {
+            launch_frozen_capture(app)?;
+        } else {
+            launch_capture(app, settings.mode);
+        }
+    } else {
+        let _ = launch_capture_timer(
+            app,
+            settings.mode,
+            settings.delay_seconds,
+            settings.freeze_screen,
+        )?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn start_previous_area_capture(app: AppHandle) -> Result<(), String> {
+    launch_previous_area_capture(app)
+}
+
+#[tauri::command]
+fn get_freeze_frame(state: State<'_, freeze::FreezeCoordinator>) -> Option<freeze::FreezeFrame> {
+    state.current()
+}
+
+#[tauri::command]
+fn freeze_frame_ready(state: State<'_, freeze::FreezeCoordinator>, generation: u64) -> bool {
+    state.mark_ready(generation)
+}
+
+#[tauri::command]
+fn cancel_freeze_capture(
+    app: AppHandle,
+    state: State<'_, freeze::FreezeCoordinator>,
+    generation: u64,
+) -> bool {
+    let cancelled = state.cancel(generation);
+    if cancelled {
+        if let Some(window) = app.get_webview_window(freeze::FREEZE_LABEL) {
+            let _ = window.hide();
+        }
+    }
+    cancelled
+}
+
+fn cancel_freeze_capture_from_window(app: &AppHandle) {
+    let state = app.state::<freeze::FreezeCoordinator>();
+    if let Some(frame) = state.current() {
+        let _ = state.cancel(frame.generation);
+    }
+}
+
+#[tauri::command]
+fn get_area_selector(
+    state: State<'_, area_selector::AreaSelectorCoordinator>,
+) -> Option<area_selector::AreaSelectorSession> {
+    state.current()
+}
+
+#[tauri::command]
+fn complete_area_selection(
+    state: State<'_, area_selector::AreaSelectorCoordinator>,
+    generation: u64,
+    selection: area_selector::AreaSelection,
+) -> bool {
+    state.complete(generation, selection)
+}
+
+#[tauri::command]
+fn cancel_area_selection(
+    app: AppHandle,
+    state: State<'_, area_selector::AreaSelectorCoordinator>,
+    generation: u64,
+) -> bool {
+    let cancelled = state.cancel(generation);
+    if cancelled {
+        if let Some(window) = app.get_webview_window(area_selector::AREA_SELECTOR_LABEL) {
+            let _ = window.hide();
+        }
+    }
+    cancelled
+}
+
+fn cancel_area_selection_from_window(app: &AppHandle) {
+    let state = app.state::<area_selector::AreaSelectorCoordinator>();
+    if let Some(session) = state.current() {
+        let _ = state.cancel(session.generation);
+    }
 }
 
 fn show_permission_guidance(app: &AppHandle) {
@@ -619,6 +1502,201 @@ fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Str
         .app_config_dir()
         .map(|directory| directory.join("shortcut-settings.json"))
         .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
+}
+
+fn portable_settings_paths(app: &AppHandle) -> Result<settings_transfer::SettingsPaths, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not locate Capso's settings directory: {error}"))?;
+    Ok(settings_transfer::SettingsPaths {
+        shortcuts: shortcut_settings_path(app)?,
+        capture: capture_hud::settings_path(&app_data),
+        quick_access: overlay::overlay_settings_path(app)?,
+    })
+}
+
+fn current_portable_settings(
+    app: &AppHandle,
+    shortcut_state: &State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+) -> Result<settings_transfer::PortableSettingsDocument, String> {
+    let shortcuts = shortcut_state
+        .lock()
+        .map_err(|_| "Shortcut settings are temporarily unavailable.".to_string())?
+        .status();
+    if let Some(warning) = shortcuts.storage_warning {
+        return Err(format!(
+            "Resolve the saved shortcut warning before exporting settings: {warning}"
+        ));
+    }
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not locate Capso's settings directory: {error}"))?;
+    let capture = capture_hud::load_settings(&app_data);
+    if let Some(warning) = capture.storage_warning {
+        return Err(format!(
+            "Resolve the remembered capture warning before exporting settings: {warning}"
+        ));
+    }
+    Ok(settings_transfer::document(
+        shortcuts.settings,
+        capture.settings,
+        overlay::stored_overlay_settings(app)?,
+    ))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsExportResult {
+    file_name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsImportResult {
+    source_name: String,
+    shortcut_status: shortcuts::ShortcutStatus,
+}
+
+fn finish_settings_transfer(state: &State<'_, Mutex<settings_transfer::SettingsTransferRuntime>>) {
+    if let Ok(mut runtime) = state.lock() {
+        runtime.finish();
+    }
+}
+
+#[tauri::command]
+async fn export_portable_settings(
+    app: AppHandle,
+    shortcut_state: State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+    transfer_state: State<'_, Mutex<settings_transfer::SettingsTransferRuntime>>,
+) -> Result<Option<SettingsExportResult>, String> {
+    transfer_state
+        .lock()
+        .map_err(|_| "Settings transfer is temporarily unavailable.".to_string())?
+        .begin()?;
+    let result = (|| {
+        let document = current_portable_settings(&app, &shortcut_state)?;
+        let selected = app
+            .dialog()
+            .file()
+            .set_title("Export Capso settings")
+            .set_file_name("Capso Settings.json")
+            .add_filter("Capso settings", &["json"])
+            .blocking_save_file();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| "Choose a readable local destination for Capso settings.".to_string())?;
+        settings_transfer::write_document(&path, &document)?;
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The exported settings file name is unreadable.".to_string())?
+            .to_string();
+        Ok(Some(SettingsExportResult { file_name }))
+    })();
+    finish_settings_transfer(&transfer_state);
+    result
+}
+
+fn apply_portable_settings(
+    app: &AppHandle,
+    shortcut_state: &State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+    document: &settings_transfer::PortableSettingsDocument,
+) -> Result<shortcuts::ShortcutStatus, String> {
+    let paths = portable_settings_paths(app)?;
+    let candidate = shortcuts::validate_shortcut_settings(document.shortcuts.clone())?;
+    let mut runtime = shortcut_state
+        .lock()
+        .map_err(|_| "Shortcut settings are temporarily unavailable.".to_string())?;
+    let registered_before = runtime.active_bindings.clone();
+    let restore_on_failure = runtime.desired_active_bindings();
+    let mut registry = TauriShortcutRegistry { app };
+    settings_transfer::apply_document_files(&paths, document, || {
+        if let Err(error) = shortcuts::replace_registered_shortcuts(
+            &mut registry,
+            &registered_before,
+            &restore_on_failure,
+            &candidate.bindings,
+            || Ok(()),
+        ) {
+            runtime.reconcile_failed_update(&error);
+            return Err(error.message);
+        }
+        Ok(())
+    })?;
+    runtime.replace_with(candidate);
+    let status = runtime.status();
+    drop(runtime);
+    if let Err(error) = refresh_tray_status(app) {
+        eprintln!("Could not refresh the Capso tray after settings import: {error}");
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+async fn import_portable_settings(
+    app: AppHandle,
+    shortcut_state: State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+    transfer_state: State<'_, Mutex<settings_transfer::SettingsTransferRuntime>>,
+) -> Result<Option<SettingsImportResult>, String> {
+    transfer_state
+        .lock()
+        .map_err(|_| "Settings transfer is temporarily unavailable.".to_string())?
+        .begin()?;
+    let result = (|| {
+        let selected = app
+            .dialog()
+            .file()
+            .set_title("Import Capso settings")
+            .add_filter("Capso settings", &["json"])
+            .blocking_pick_file();
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let path = selected
+            .into_path()
+            .map_err(|_| "Choose a readable local Capso settings file.".to_string())?;
+        let document = settings_transfer::read_document(&path)?;
+        let source_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "The imported settings file name is unreadable.".to_string())?
+            .to_string();
+        let shortcut_status = apply_portable_settings(&app, &shortcut_state, &document)?;
+        Ok(Some(SettingsImportResult {
+            source_name,
+            shortcut_status,
+        }))
+    })();
+    finish_settings_transfer(&transfer_state);
+    result
+}
+
+#[tauri::command]
+fn reset_portable_settings(
+    app: AppHandle,
+    shortcut_state: State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+    transfer_state: State<'_, Mutex<settings_transfer::SettingsTransferRuntime>>,
+) -> Result<SettingsImportResult, String> {
+    transfer_state
+        .lock()
+        .map_err(|_| "Settings transfer is temporarily unavailable.".to_string())?
+        .begin()?;
+    let result = apply_portable_settings(
+        &app,
+        &shortcut_state,
+        &settings_transfer::default_document(),
+    )
+    .map(|shortcut_status| SettingsImportResult {
+        source_name: "Built-in defaults".into(),
+        shortcut_status,
+    });
+    finish_settings_transfer(&transfer_state);
+    result
 }
 
 fn tray_tooltip(
@@ -738,7 +1816,16 @@ fn build_tray_menu<R: Runtime>(
     queue_status: &queue::QueueRuntimeStatus,
     latency_report: &latency::OverlayLatencyReport,
 ) -> tauri::Result<Menu<R>> {
-    let mut menu_builder = MenuBuilder::new(app);
+    let mut menu_builder =
+        MenuBuilder::new(app).text(capture_hud::OPEN_CAPTURE_HUD_MENU_ID, "Capture…");
+    menu_builder = menu_builder.text(
+        recording::OPEN_RECORDING_STUDIO_MENU_ID,
+        recording::recording_menu_label(app),
+    );
+    if overlay::has_temporarily_hidden_capture(app) {
+        menu_builder = menu_builder.text(overlay::SHOW_HIDDEN_OVERLAY_MENU_ID, "Show Quick Access");
+    }
+    menu_builder = menu_builder.separator();
     for definition in shortcuts::definitions() {
         let needs_permission = system_status.screen_recording
             == system::ScreenRecordingStatus::Required
@@ -795,12 +1882,20 @@ fn build_tray_menu<R: Runtime>(
     let open_library = MenuItem::with_id(
         app,
         history::OPEN_LIBRARY_MENU_ID,
-        "Open Library…",
+        "Open Web Library…",
+        true,
+        None::<&str>,
+    )?;
+    let open_history = MenuItem::with_id(
+        app,
+        history::OPEN_HISTORY_MENU_ID,
+        "Capture History…",
         true,
         None::<&str>,
     )?;
     menu_builder = menu_builder
         .separator()
+        .item(&open_history)
         .item(&open_library)
         .item(&recent_submenu);
 
@@ -875,6 +1970,12 @@ fn current_queue_status(app: &AppHandle) -> Result<queue::QueueRuntimeStatus, St
     queue::current_status(app)
 }
 
+pub(crate) fn refresh_recording_tray_title(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_title(recording::recording_tray_title(app));
+    }
+}
+
 fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
     let shortcut_status = current_shortcut_status(app)?;
     let system_status = current_system_status(app)?;
@@ -900,6 +2001,7 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
         )))
         .map_err(|error| error.to_string())?;
     }
+    refresh_recording_tray_title(app);
     Ok(())
 }
 
@@ -981,6 +2083,7 @@ struct Diagnostics {
     latency_statistics: Option<String>,
     queue_label: Option<String>,
     queue_retryable: u32,
+    automation_status: Option<automation::AutomationFeedback>,
 }
 
 #[tauri::command]
@@ -997,6 +2100,7 @@ fn get_diagnostics(app: AppHandle) -> Result<Diagnostics, String> {
         latency_statistics: latency_copy.statistics,
         queue_label: queue_menu_label(&queue_status),
         queue_retryable: u32::try_from(retryable).unwrap_or(u32::MAX),
+        automation_status: app.state::<automation::AutomationFeedbackState>().current(),
     })
 }
 
@@ -1061,19 +2165,29 @@ pub fn run() {
             }
         }))
         .manage(Mutex::new(shortcuts::ShortcutRuntime::default()))
+        .manage(Mutex::new(
+            settings_transfer::SettingsTransferRuntime::default(),
+        ))
         .manage(Mutex::new(system::PermissionRuntime::default()))
-        .manage(Mutex::new(self_timer::RegionTimerRuntime::default()))
+        .manage(Mutex::new(self_timer::CaptureTimerRuntime::default()))
+        .manage(freeze::FreezeCoordinator::default())
+        .manage(area_selector::AreaSelectorCoordinator::default())
         .manage(Mutex::new(overlay::OverlayRuntime::default()))
         .manage(Mutex::new(pin::PinRuntime::default()))
         .manage(Mutex::new(annotation::AnnotationRuntime::default()))
+        .manage(Mutex::new(annotation_sync::AnnotationSyncRuntime::default()))
         .manage(Mutex::new(clipboard::ClipboardRuntime::default()))
         .manage(Mutex::new(queue::QueueRuntime::default()))
+        .manage(Mutex::new(recording::RecordingRuntime::default()))
+        .manage(Mutex::new(ocr::OcrRuntime::default()))
         .manage(Mutex::new(latency::OverlayLatencyRuntime::default()))
         .manage(drain::DrainCoordinator::default())
         .manage(retry::ConnectivityState::default())
         .manage(retry::RetryMonitorSignal::default())
         .manage(AuthAccountBoundary::default())
         .manage(AuthFeedbackState::default())
+        .manage(SyncFeedbackState::default())
+        .manage(automation::AutomationFeedbackState::default())
         .manage(auth::ProductionAuthRuntime::from_embedded())
         .manage(Mutex::new(sync::ProductionSyncRuntime::from_embedded()))
         .plugin(tauri_plugin_deep_link::init())
@@ -1104,32 +2218,96 @@ pub fn run() {
             capture::capture_screen,
             get_shortcut_settings,
             update_shortcut_settings,
+            export_portable_settings,
+            import_portable_settings,
+            reset_portable_settings,
             get_system_status,
             get_diagnostics,
+            get_sync_status,
+            get_capture_projects,
+            retry_sync,
+            get_device_info,
+            open_web_library,
+            open_capture_history,
+            get_local_history,
+            remove_history_captures,
+            clear_capture_history,
+            restore_history_captures,
+            get_overlay_settings,
+            get_save_as_preferences,
+            update_overlay_settings,
+            restore_history_capture,
+            recognize_history_capture_text,
+            recognize_selected_png_text,
+            recognize_screen_selection_text,
+            copy_recognized_text,
+            copy_recognized_link,
+            combine_history_captures,
+            frame_history_capture,
+            get_annotation_project_sync_status,
+            retry_annotation_project_sync,
+            keep_local_annotation_project,
             request_screen_recording_permission,
             open_screen_recording_settings,
             set_launch_at_login_enabled,
             open_login_item_settings,
-            get_region_self_timer_status,
-            cancel_region_self_timer,
+            get_capture_timer_status,
+            cancel_capture_timer,
+            get_capture_hud_settings,
+            show_capture_hud,
+            hide_capture_hud,
+            start_capture_from_hud,
+            start_previous_area_capture,
+            get_freeze_frame,
+            freeze_frame_ready,
+            cancel_freeze_capture,
+            get_area_selector,
+            complete_area_selection,
+            cancel_area_selection,
             get_auth_status,
             request_sign_in_email,
+            request_reconnect_email,
             sign_out,
             overlay::get_overlay_capture,
+            overlay::get_overlay_sync_status,
+            overlay::get_overlay_file_info,
+            overlay::reveal_overlay_capture,
+            overlay::open_overlay_capture,
+            overlay::assign_overlay_project,
             overlay::overlay_image_ready,
             overlay::overlay_image_failed,
             overlay::overlay_copy_capture,
             overlay::overlay_save_capture,
             overlay::overlay_start_drag,
+            overlay::overlay_hide_temporarily,
             overlay::overlay_dismiss,
             pin::pin_overlay_capture,
             pin::get_pin_capture,
             pin::pin_image_ready,
             pin::copy_pin_capture,
+            pin::resize_pin_capture,
+            pin::set_pin_opacity,
+            pin::set_pin_locked,
             pin::close_pin_capture,
+            recording::open_recording_studio,
+            recording::hide_recording_studio,
+            recording::get_recording_capabilities,
+            recording::request_recording_microphone_access,
+            recording::open_recording_microphone_settings,
+            recording::get_recording_status,
+            recording::start_recording,
+            recording::stop_recording,
+            recording::open_recording_output,
+            recording::reveal_recording_output,
+            recording::trim_recording,
+            recording::export_recording_gif,
             annotation::open_annotation_editor,
+            annotation::open_history_annotation_editor,
             annotation::get_annotation_capture,
             annotation::cancel_annotation_editor,
+            annotation::copy_annotation_image,
+            annotation::export_annotation_copy,
+            annotation::start_annotation_drag,
             annotation::save_annotation_editor
         ])
         .setup(|app| {
@@ -1141,13 +2319,13 @@ pub fn run() {
             {
                 if let Some(urls) = app.deep_link().get_current()? {
                     for url in urls {
-                        spawn_auth_callback(app.handle().clone(), url.to_string());
+                        receive_deep_link(app.handle(), url.as_str());
                     }
                 }
                 let auth_app = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        spawn_auth_callback(auth_app.clone(), url.to_string());
+                        receive_deep_link(&auth_app, url.as_str());
                     }
                 });
             }
@@ -1155,9 +2333,20 @@ pub fn run() {
             if let Ok(cache_directory) = app.path().app_cache_dir() {
                 let _ = dragout::cleanup_drag_exports(&cache_directory.join("drag-exports"));
             }
+            if let Err(error) = ocr::cleanup_ephemeral_selections(app.handle()) {
+                eprintln!("Could not clean stale private OCR screen selections: {error}");
+            }
+            if let Ok(app_data) = app.path().app_data_dir() {
+                if let Err(error) = capture::cleanup_stale_freeze_frames(&app_data) {
+                    eprintln!("Could not clean stale private Freeze Screen frames: {error}");
+                }
+            }
 
             let queue_status = queue::initialize_for_app(app.handle())
                 .map_err(|error| format!("Could not initialize upload queue state: {error}"))?;
+            annotation_sync::initialize_for_app(app.handle()).map_err(|error| {
+                format!("Could not initialize editable project sync state: {error}")
+            })?;
             let latency_report = latency::initialize_for_app(app.handle())
                 .map_err(|error| format!("Could not initialize overlay timing state: {error}"))?;
 
@@ -1165,6 +2354,18 @@ pub fn run() {
             // Access clicks without activating Capso or blocking outside it.
             if let Some(overlay_window) = app.get_webview_window(overlay::OVERLAY_LABEL) {
                 overlay_window.set_ignore_cursor_events(false)?;
+            }
+            if let Err(error) = pin::restore_pinned_captures(app.handle()) {
+                eprintln!("Could not restore pinned captures: {error}");
+            }
+            if let Err(error) = recording::recover_desktop_clutter(app.handle()) {
+                recording::note_desktop_clutter_warning(app.handle(), error.clone());
+                eprintln!(
+                    "Could not recover desktop icons after an interrupted recording: {error}"
+                );
+            }
+            if let Err(error) = recording::recover_interrupted_recordings(app.handle()) {
+                eprintln!("Could not recover interrupted recordings: {error}");
             }
 
             let loaded = match shortcut_settings_path(app.handle()) {
@@ -1219,8 +2420,37 @@ pub fn run() {
                 // icon; Settings is a rare destination behind its own item.
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| {
-                    if event.id() == shortcuts::CAPTURE_REGION_TIMER_MENU_ID {
-                        launch_region_self_timer(app.clone());
+                    if event.id() == capture_hud::OPEN_CAPTURE_HUD_MENU_ID {
+                        if let Err(error) = show_capture_hud(app.clone()) {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not open capture controls; {error}"
+                                )));
+                            }
+                        }
+                    } else if event.id() == recording::OPEN_RECORDING_STUDIO_MENU_ID {
+                        if let Err(error) = recording::show_recording_studio(app) {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not open recording controls; {error}"
+                                )));
+                            }
+                        }
+                    } else if event.id() == shortcuts::CAPTURE_REGION_TIMER_MENU_ID {
+                        let _ = launch_capture_timer(
+                            app.clone(),
+                            shortcuts::CaptureAction::Region,
+                            5,
+                            false,
+                        );
+                    } else if event.id() == overlay::SHOW_HIDDEN_OVERLAY_MENU_ID {
+                        if let Err(error) = overlay::restore_temporarily_hidden_overlay(app) {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not restore Quick Access; {error}"
+                                )));
+                            }
+                        }
                     } else if let Some(action) = shortcuts::action_for_menu_id(event.id().as_ref())
                     {
                         launch_capture(app.clone(), action);
@@ -1229,6 +2459,14 @@ pub fn run() {
                             if let Some(tray) = app.tray_by_id("main") {
                                 let _ = tray.set_tooltip(Some(format!(
                                     "Capso — could not open library; {error}"
+                                )));
+                            }
+                        }
+                    } else if event.id() == history::OPEN_HISTORY_MENU_ID {
+                        if let Err(error) = history::show_history_window(app) {
+                            if let Some(tray) = app.tray_by_id("main") {
+                                let _ = tray.set_tooltip(Some(format!(
+                                    "Capso — could not open history; {error}"
                                 )));
                             }
                         }
@@ -1268,18 +2506,35 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            pin::record_window_geometry(window.app_handle(), window.label(), event);
             // Closing the popover hides it — the app lives in the menu bar.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == self_timer::TIMER_LABEL {
                     api.prevent_close();
-                    cancel_region_self_timer_from_window(window.app_handle());
+                    cancel_capture_timer_from_window(window.app_handle());
                     let _ = window.hide();
                     return;
                 }
-                if window.label() == pin::PIN_LABEL {
+                if window.label() == capture_hud::HUD_LABEL {
                     api.prevent_close();
-                    pin::clear_from_window_close(window.app_handle());
                     let _ = window.hide();
+                    return;
+                }
+                if window.label() == freeze::FREEZE_LABEL {
+                    api.prevent_close();
+                    cancel_freeze_capture_from_window(window.app_handle());
+                    let _ = window.hide();
+                    return;
+                }
+                if window.label() == area_selector::AREA_SELECTOR_LABEL {
+                    api.prevent_close();
+                    cancel_area_selection_from_window(window.app_handle());
+                    let _ = window.hide();
+                    return;
+                }
+                if pin::is_pin_window_label(window.label()) {
+                    api.prevent_close();
+                    pin::close_from_window_request(window.app_handle(), window.label());
                     return;
                 }
                 api.prevent_close();
@@ -1323,6 +2578,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{capture, clipboard, drain, latency, overlay, queue};
+    use crate::annotation_sync;
     use std::{
         sync::{mpsc, Arc},
         thread,
@@ -1510,6 +2766,7 @@ mod tests {
                 ..queue::QueueSummary::default()
             },
             warning: None,
+            last_success_at_ms: None,
         };
         assert_eq!(
             super::queue_menu_label(&one).as_deref(),
@@ -1523,6 +2780,7 @@ mod tests {
                 ..queue::QueueSummary::default()
             },
             warning: None,
+            last_success_at_ms: None,
         };
         assert_eq!(
             super::queue_menu_label(&failed).as_deref(),
@@ -1539,9 +2797,11 @@ mod tests {
                 retrying,
                 failed,
                 uploaded,
+                remote_pending: 0,
                 total: pending + uploading + retrying + failed + uploaded,
             },
             warning: None,
+            last_success_at_ms: None,
         };
 
         assert!(super::ensure_sign_out_queue_is_safe(&status(0, 0, 0, 0, 2)).is_ok());
@@ -1555,6 +2815,28 @@ mod tests {
             super::ensure_sign_out_queue_is_safe(&status(0, 1, 1, 2, 0))
                 .expect_err("active upload and retry block account switch"),
             "Wait for 2 local captures to finish syncing before signing out; no pixels were removed."
+        );
+
+        assert!(super::ensure_sign_out_annotation_sync_is_safe(
+            &annotation_sync::AnnotationSyncSummary {
+                synced: 2,
+                total: 2,
+                ..annotation_sync::AnnotationSyncSummary::default()
+            }
+        )
+        .is_ok());
+        assert_eq!(
+            super::ensure_sign_out_annotation_sync_is_safe(
+                &annotation_sync::AnnotationSyncSummary {
+                    pending: 1,
+                    failed: 1,
+                    conflicts: 1,
+                    total: 3,
+                    ..annotation_sync::AnnotationSyncSummary::default()
+                }
+            )
+            .expect_err("any unsynced editable project blocks an account switch"),
+            "Resolve or sync 3 local editable projects before signing out; their protected originals remain on this Mac."
         );
     }
 
@@ -1592,6 +2874,28 @@ mod tests {
         );
         feedback.clear();
         assert_eq!(feedback.last_failure(), None);
+    }
+
+    #[test]
+    fn only_session_failures_request_reconnect_while_network_errors_stay_retryable() {
+        assert!(super::sync_error_requires_reconnect(
+            "Capso's saved session is invalid; sign in again."
+        ));
+        assert!(super::sync_error_requires_reconnect(
+            "Supabase rejected the sign-in exchange; start sign-in again."
+        ));
+        assert!(super::sync_error_requires_reconnect(
+            "This Mac was disconnected from Capso. Reconnect the same account to resume sync."
+        ));
+        assert!(super::sync_error_is_device_revoked(
+            "This Mac was disconnected from Capso. Reconnect the same account to resume sync."
+        ));
+        assert!(!super::sync_error_requires_reconnect(
+            "Capso could not reach Supabase Auth; try again when online."
+        ));
+        assert!(!super::sync_error_requires_reconnect(
+            "Could not commit Capso's upload queue."
+        ));
     }
 
     #[test]

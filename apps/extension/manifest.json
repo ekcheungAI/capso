@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Capso",
-  "version": "0.3.1",
-  "description": "Capture the current tab into your Capso memory.",
-  "permissions": ["activeTab", "storage", "notifications", "alarms", "unlimitedStorage"],
+  "version": "0.5.0",
+  "description": "Capture a browser view, page element, selected area, or full page into Capso.",
+  "permissions": ["activeTab", "scripting", "storage", "notifications", "alarms", "unlimitedStorage"],
   "host_permissions": ["http://localhost:3000/*"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },
@@ -22,6 +22,15 @@
     "capture-tab": {
       "suggested_key": { "default": "Ctrl+Shift+U", "mac": "Command+Shift+U" },
       "description": "Capture the visible tab"
+    },
+    "capture-area": {
+      "description": "Select an area of the active page"
+    },
+    "capture-element": {
+      "description": "Select a page element or drag a free area"
+    },
+    "capture-full-page": {
+      "description": "Capture the full scrollable page"
     }
   },
   "icons": {

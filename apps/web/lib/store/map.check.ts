@@ -7,6 +7,7 @@ import {
   fromRow,
   hueFor,
   searchTextFor,
+  screenshotWithSeedUuids,
   threadFromRow,
   threadToRow,
   toRow,
@@ -135,6 +136,20 @@ test("seed uuids do not collide across the fixture names", () => {
   const names = ["pricing-redesign", "onboarding-teardown", "capso-bugs", "q3-launch",
     ...Array.from({ length: 13 }, (_, i) => `s${i + 1}`)];
   assert.equal(new Set(names.map(uuidFromSeed)).size, names.length);
+});
+
+test("seed screenshots rewrite confirmed and suggested project references", () => {
+  const seeded = screenshotWithSeedUuids(
+    shot({
+      id: "s11",
+      threadId: "pricing-redesign",
+      suggestedThreadId: "onboarding-teardown",
+    }),
+  );
+
+  assert.equal(seeded.id, uuidFromSeed("s11"));
+  assert.equal(seeded.threadId, uuidFromSeed("pricing-redesign"));
+  assert.equal(seeded.suggestedThreadId, uuidFromSeed("onboarding-teardown"));
 });
 
 // -------------------------------------------------------- search_text ----

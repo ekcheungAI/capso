@@ -132,7 +132,7 @@ export default function HomePage() {
             <p className="mt-1 text-xs text-muted">Pick one to watch Capso understand and file it.</p>
           </div>
           {tray.length > 0 && (
-            <Link href="/inbox" className="text-xs font-medium text-muted hover:text-foreground">
+            <Link href="/inbox" className="inline-flex min-h-11 items-center px-2 text-xs font-medium text-muted hover:text-foreground">
               Review all
             </Link>
           )}
@@ -191,7 +191,7 @@ export default function HomePage() {
         </div>
 
         {threads.filter((thread) => !thread.archived).length > 3 && (
-          <Link href="/library" className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-muted hover:text-foreground">
+          <Link href="/library" className="mt-2 inline-flex min-h-11 items-center gap-2 px-2 text-xs font-medium text-muted hover:text-foreground">
             Browse all projects <ArrowRight size={14} />
           </Link>
         )}
@@ -284,7 +284,7 @@ function ProjectRow({ thread, items, onPull }: { thread: Thread; items: Screensh
   return (
     <article className="grid min-h-20 items-center gap-4 rounded-2xl border border-line bg-surface/55 px-5 py-3 transition-colors duration-[var(--dur-press)] ease-out hover:bg-surface md:grid-cols-[minmax(180px,.8fr)_minmax(260px,1.35fr)_124px_52px]">
       <div className="grid gap-1">
-        <Link href={`/threads/${thread.id}`} className="text-sm font-semibold hover:underline">{thread.name}</Link>
+        <Link href={`/threads/${thread.id}`} className="inline-flex min-h-11 items-center text-sm font-semibold hover:underline">{thread.name}</Link>
         <span className="text-xs text-muted">{items.length} memories · updated {relativeDay(thread.lastActiveAt)}</span>
       </div>
       <div className="flex items-center gap-2.5 overflow-hidden">
@@ -299,7 +299,11 @@ function ProjectRow({ thread, items, onPull }: { thread: Thread; items: Screensh
         {items.length > 4 && <span className="text-xs font-semibold text-muted">+{items.length - 4}</span>}
       </div>
       {preview ? <Thumb s={preview} box="2 / 1" /> : <span className="h-14 rounded-xl border border-dashed border-line" />}
-      <Link href={`/threads/${thread.id}`} className="text-center text-xs font-semibold text-muted hover:text-foreground">Open</Link>
+      <Link
+        href={`/threads/${thread.id}`}
+        aria-label={`Open ${thread.name}`}
+        className="inline-flex min-h-11 items-center justify-center text-center text-xs font-semibold text-muted hover:text-foreground"
+      >Open</Link>
     </article>
   );
 }

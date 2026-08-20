@@ -101,6 +101,12 @@ export type BackendPreference = "auto" | "local";
 
 let preference: BackendPreference = "auto";
 let chosen: Promise<Backend> | null = null;
+const PREFERENCE_KEY = "capso.backend-preference";
+const preferenceListeners = new Set<() => void>();
+
+export function validBackendPreference(value: string | null): BackendPreference {
+  return value === "local" ? "local" : "auto";
+}
 
 /**
  * Pick a backend once, then keep it for the life of the tab.
@@ -111,7 +117,7 @@ let chosen: Promise<Backend> | null = null;
  */
 export function backend(): Promise<Backend> {
   chosen ??= (async (): Promise<Backend> => {
-    if (preference === "local") return local;
+    if (backendPreference() === "local") return local;
 
     const { isConfigured } = await import("@/lib/supabase/client");
     if (!isConfigured()) return local;
@@ -126,11 +132,22 @@ export function backend(): Promise<Backend> {
 /** Deliberate account-entry choice. Changing it invalidates the per-tab cache. */
 export function setBackendPreference(next: BackendPreference) {
   preference = next;
+  if (typeof window !== "undefined") {
+    if (next === "local") window.localStorage.setItem(PREFERENCE_KEY, next);
+    else window.localStorage.removeItem(PREFERENCE_KEY);
+  }
   chosen = null;
+  for (const listener of preferenceListeners) listener();
 }
 
 export function backendPreference(): BackendPreference {
-  return preference;
+  if (typeof window === "undefined") return preference;
+  return validBackendPreference(window.localStorage.getItem(PREFERENCE_KEY));
+}
+
+export function subscribeBackendPreference(listener: () => void) {
+  preferenceListeners.add(listener);
+  return () => preferenceListeners.delete(listener);
 }
 
 /** Test seam: forget the cached choice. */

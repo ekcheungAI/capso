@@ -595,8 +595,7 @@ impl<C, V> SessionCoordinator<C, V> {
         &self.config
     }
 
-    #[cfg(test)]
-    fn http(&self) -> &C {
+    pub(crate) fn http(&self) -> &C {
         &self.auth.http
     }
 
@@ -725,6 +724,18 @@ impl<C: AuthHttpClient, V: SessionVault> NativeSignIn<C, V> {
         Ok(start)
     }
 
+    pub(crate) fn start_reconnect(&self, now_ms: u64) -> Result<AuthStart, AuthContractError> {
+        let email = self.reconnect_email()?;
+        let start = self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())?
+            .begin(now_ms)?;
+        self.auth
+            .request_email_link(&email, &start, &self.confirmation_origin)?;
+        Ok(start)
+    }
+
     #[cfg(test)]
     fn start_email_with_tokens(
         &self,
@@ -743,6 +754,47 @@ impl<C: AuthHttpClient, V: SessionVault> NativeSignIn<C, V> {
         self.auth
             .request_email_link(&email, &start, &self.confirmation_origin)?;
         Ok(start)
+    }
+
+    #[cfg(test)]
+    fn start_reconnect_with_tokens(
+        &self,
+        now_ms: u64,
+        state: &str,
+        verifier: &str,
+    ) -> Result<AuthStart, AuthContractError> {
+        let email = self.reconnect_email()?;
+        let start = self
+            .runtime
+            .lock()
+            .map_err(|_| auth_runtime_unavailable())?
+            .begin_with_tokens(now_ms, state, verifier)?;
+        self.auth
+            .request_email_link(&email, &start, &self.confirmation_origin)?;
+        Ok(start)
+    }
+
+    fn reconnect_email(&self) -> Result<String, AuthContractError> {
+        let session = self
+            .repository
+            .load()
+            .map_err(|_| auth_session_unavailable())?
+            .ok_or_else(|| {
+                AuthContractError::new(
+                    "auth_reconnect_unavailable",
+                    "Sign in to Capso before reconnecting this account.",
+                )
+            })?;
+        session
+            .email
+            .as_deref()
+            .ok_or_else(|| {
+                AuthContractError::new(
+                    "auth_reconnect_email_missing",
+                    "This saved account has no verified email; sign out after local sync is safe, then sign in again.",
+                )
+            })
+            .and_then(normalize_email)
     }
 
     pub(crate) fn complete_callback(
@@ -866,6 +918,15 @@ impl ProductionAuthRuntime {
         match self {
             Self::Ready(sign_in) => sign_in
                 .start_email(email, now_ms)
+                .map_err(|error| error.to_string()),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn start_reconnect(&self, now_ms: u64) -> Result<AuthStart, String> {
+        match self {
+            Self::Ready(sign_in) => sign_in
+                .start_reconnect(now_ms)
                 .map_err(|error| error.to_string()),
             Self::Disabled { warning } => Err(warning.clone()),
         }
@@ -1760,6 +1821,46 @@ mod tests {
             .lock()
             .expect("request lock")
             .is_empty());
+    }
+
+    #[test]
+    fn reconnect_keeps_the_existing_session_until_same_account_pkce_replaces_it() {
+        let repository = SessionRepository::new(MemoryVault::default());
+        let mut existing = AuthSession::for_test(
+            "existing.access.token",
+            "existing_refresh_token",
+            "018f22c4-cada-7c6b-9d5b-fc35f7f92279",
+            9_000,
+        );
+        existing.email = Some("ek@example.com".into());
+        repository.save(&existing).expect("store existing session");
+        let sign_in = NativeSignIn::new(
+            auth_config(),
+            RecordingAuthHttp::responding_in_order([
+                AuthHttpResponse {
+                    status: 200,
+                    body: b"{}".to_vec(),
+                },
+                token_response(200),
+            ]),
+            repository,
+            "https://app.capso.test",
+        )
+        .expect("native reconnect");
+
+        sign_in
+            .start_reconnect_with_tokens(1_000, STATE, VERIFIER)
+            .expect("request same-account reconnect");
+        assert_eq!(
+            sign_in.status().expect("old session remains").user_id,
+            Some("018f22c4-cada-7c6b-9d5b-fc35f7f92279".into())
+        );
+        let reconnected = sign_in
+            .complete_callback(&callback(STATE), 2_000)
+            .expect("same account reconnects");
+        assert_eq!(reconnected.status, "signed_in");
+        assert_eq!(reconnected.email.as_deref(), Some("ek@example.com"));
+        assert_eq!(sign_in.http().requests.lock().expect("requests").len(), 2);
     }
 
     #[test]

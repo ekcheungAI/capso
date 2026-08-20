@@ -139,14 +139,14 @@ export default function ReviewPage() {
           <p className="mt-1 text-xs text-muted">
             {pending.length} capture{pending.length === 1 ? "" : "s"} Capso has a guess for. Keeping
             one teaches it - the next import files itself.{" "}
-            <span className="text-xs">j/k move · ⏎ keep · 1–{threads.length} pick project</span>
+            <span className="hidden text-xs sm:inline">j/k move · ⏎ keep · 1–{threads.length} pick project</span>
           </p>
         </div>
 
         <button
           onClick={() => void confirmAll()}
           disabled={busy}
-          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-40"
+          className="min-h-11 rounded-md bg-accent px-3 text-xs font-medium text-accent-ink disabled:opacity-40"
         >
           {busy ? "Seating…" : `Confirm all ${pending.length}`}
         </button>
@@ -179,15 +179,16 @@ export default function ReviewPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => void file(s, s.suggestedThreadId)}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
+                  className="min-h-11 rounded-md bg-accent px-3 text-xs font-medium text-accent-ink"
                 >
                   ✓ Confirm - {threadName(s.suggestedThreadId)}
                 </button>
 
                 <select
+                  aria-label={`Move ${s.title} to a different project`}
                   defaultValue=""
                   onChange={(e) => e.target.value && void file(s, e.target.value)}
-                  className="rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
+                  className="min-h-11 rounded-md border border-line bg-surface px-2 text-xs"
                 >
                   <option value="" disabled>
                     Move to…

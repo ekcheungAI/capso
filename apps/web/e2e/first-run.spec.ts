@@ -122,6 +122,25 @@ test("the nudge appears for samples and does not return after a capture", async 
   await expect(nudge).toBeHidden();
 });
 
+test("sample setup resolves suggested projects instead of confirming back to Inbox", async ({ page }) => {
+  await page.goto("/review");
+  await page.getByRole("button", { name: /Explore with sample captures/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Confirm - Onboarding teardown/ })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: /Confirm - Q3 launch campaign/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Confirm - Inbox/ })).toHaveCount(0);
+});
+
+test("finishing the tall picker reveals the top of the destination page", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto("/library");
+  await page.getByRole("button", { name: /Explore with sample captures/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test("'Skip for now' leaves first run without choosing a role", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: /Skip for now/ }).click();

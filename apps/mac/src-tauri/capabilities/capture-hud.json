@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-hud",
+  "description": "Scoped event access for Capso's all-in-one capture controls",
+  "windows": ["capture-hud"],
+  "permissions": ["core:event:default"]
+}

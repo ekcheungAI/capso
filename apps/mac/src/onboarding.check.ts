@@ -12,6 +12,8 @@ const at = (o: Partial<FirstRunInput> = {}): FirstRunInput => ({
   screenRecording: "required",
   launchAtLogin: "unknown",
   hotkeyConfirmed: false,
+  cloudConfigured: true,
+  libraryChoice: "undecided",
   hasCaptured: false,
   ...o,
 });
@@ -43,6 +45,48 @@ test("steps advance in order", () => {
   );
 });
 
+test("library connection is an explicit decision before the first capture", () => {
+  const readyForLibrary = at({
+    screenRecording: "granted",
+    hotkeyConfirmed: true,
+    launchAtLogin: "disabled",
+  });
+
+  assert.equal(firstRunAction(readyForLibrary), "library");
+  assert.equal(stateOf(readyForLibrary, "library"), "current");
+  assert.equal(stateOf(readyForLibrary, "capture"), "todo");
+  assert.match(
+    firstRunSteps(readyForLibrary).find((step) => step.id === "library")!.detail,
+    /Mac, the web, and your Chrome extension/i,
+  );
+});
+
+test("connected and deliberate local-only choices both settle the library step", () => {
+  for (const libraryChoice of ["connected", "local_only"] as const) {
+    const input = at({
+      screenRecording: "granted",
+      hotkeyConfirmed: true,
+      launchAtLogin: "disabled",
+      libraryChoice,
+    });
+    assert.equal(stateOf(input, "library"), "done");
+    assert.equal(firstRunAction(input), "capture");
+  }
+
+  const local = firstRunSteps(at({ libraryChoice: "local_only" }))
+    .find((step) => step.id === "library")!;
+  assert.match(local.detail, /Local only/i);
+  assert.match(local.detail, /Account Settings/i);
+});
+
+test("an unconfigured build offers an honest local-only path", () => {
+  const library = firstRunSteps(at({ cloudConfigured: false }))
+    .find((step) => step.id === "library")!;
+
+  assert.match(library.detail, /unavailable in this build/i);
+  assert.match(library.detail, /private on this Mac/i);
+});
+
 test("declining the login item settles it rather than leaving it unfinished", () => {
   // The trap: treating "disabled" as todo leaves a permanent unticked row for a
   // user who deliberately said no.
@@ -55,6 +99,7 @@ test("the optional step never blocks completion", () => {
   const skippedLogin = at({
     screenRecording: "granted",
     hotkeyConfirmed: true,
+    libraryChoice: "local_only",
     hasCaptured: true,
     launchAtLogin: "unknown",
   });
@@ -65,19 +110,26 @@ test("first run is not complete without permission, hotkey or a capture", () => 
   const all = at({
     screenRecording: "granted",
     hotkeyConfirmed: true,
+    libraryChoice: "connected",
     hasCaptured: true,
     launchAtLogin: "enabled",
   });
   assert.equal(firstRunComplete(all), true);
   assert.equal(firstRunComplete({ ...all, screenRecording: "required" }), false);
   assert.equal(firstRunComplete({ ...all, hotkeyConfirmed: false }), false);
+  assert.equal(firstRunComplete({ ...all, libraryChoice: "undecided" }), false);
   assert.equal(firstRunComplete({ ...all, hasCaptured: false }), false);
 });
 
 test("revoking permission mid-run puts the user back on that step", () => {
   // macOS can drop the grant between launches; the flow has to survive going
   // backwards, not just forwards.
-  const back = at({ screenRecording: "required", hotkeyConfirmed: true, hasCaptured: true });
+  const back = at({
+    screenRecording: "required",
+    hotkeyConfirmed: true,
+    libraryChoice: "local_only",
+    hasCaptured: true,
+  });
   assert.equal(firstRunAction(back), "permission");
   assert.equal(firstRunComplete(back), false);
 });
@@ -86,6 +138,7 @@ test("a completed run has no current step", () => {
   const done = at({
     screenRecording: "granted",
     hotkeyConfirmed: true,
+    libraryChoice: "connected",
     hasCaptured: true,
     launchAtLogin: "enabled",
   });

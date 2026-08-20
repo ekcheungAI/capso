@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "freeze-screen",
+  "description": "Scoped event access for Capso's private main-display freeze frame",
+  "windows": ["freeze-screen"],
+  "permissions": ["core:event:default"]
+}

@@ -5,5 +5,8 @@
   <!-- Prevent a Dock/app-switcher appearance before Rust applies Accessory mode. -->
   <key>LSUIElement</key>
   <true/>
+  <!-- Required before Capso can enumerate or request a recording microphone. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Capso uses the microphone only when you explicitly include it in a screen recording.</string>
 </dict>
 </plist>

@@ -1,11 +1,16 @@
 use crate::{
     auth::{AuthHttpClient, AuthSession, SessionCoordinator, SessionVault, SupabaseAuthConfig},
+    device::MacDeviceCredential,
     drain::{DrainCoordinator, DrainQueue, DrainWake, UploadTransport, WakeResult},
+    projects::{fetch_capture_projects, CaptureProject},
     upload::{AuthenticatedUploadTransport, ReqwestHttpClient, UploadSession},
 };
 
 #[cfg(target_os = "macos")]
-use crate::auth::{KeychainSessionVault, ReqwestAuthHttpClient, SessionRepository};
+use crate::{
+    auth::{KeychainSessionVault, ReqwestAuthHttpClient, SessionRepository},
+    device::{DeviceRepository, KeychainDeviceVault, MacDeviceRegistry},
+};
 
 pub(crate) fn public_config(
     url: Option<&str>,
@@ -40,28 +45,71 @@ pub(crate) fn embedded_public_config() -> Result<Option<SupabaseAuthConfig>, Str
 pub(crate) trait UploadTransportFactory: Send + Sync {
     type Transport: UploadTransport;
 
+    fn prepare_device(
+        &self,
+        _config: &SupabaseAuthConfig,
+        _session: &AuthSession,
+        _now_ms: u64,
+    ) -> Result<Option<MacDeviceCredential>, String> {
+        Ok(None)
+    }
+
     fn prepare(
         &self,
         config: &SupabaseAuthConfig,
         session: Option<&AuthSession>,
+        device: Option<&MacDeviceCredential>,
         now_ms: u64,
     ) -> Result<Self::Transport, String>;
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ReqwestUploadTransportFactory;
+#[cfg(target_os = "macos")]
+type NativeDeviceRegistry = MacDeviceRegistry<ReqwestAuthHttpClient, KeychainDeviceVault>;
 
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub(crate) struct ReqwestUploadTransportFactory {
+    devices: NativeDeviceRegistry,
+}
+
+#[cfg(target_os = "macos")]
+impl ReqwestUploadTransportFactory {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            devices: MacDeviceRegistry::new(
+                ReqwestAuthHttpClient::new().map_err(|error| error.to_string())?,
+                DeviceRepository::new(KeychainDeviceVault),
+            ),
+        })
+    }
+
+    fn reset_device_identity(&self) -> Result<(), String> {
+        self.devices.reset()
+    }
+}
+
+#[cfg(target_os = "macos")]
 impl UploadTransportFactory for ReqwestUploadTransportFactory {
     type Transport = AuthenticatedUploadTransport<ReqwestHttpClient>;
+
+    fn prepare_device(
+        &self,
+        config: &SupabaseAuthConfig,
+        session: &AuthSession,
+        now_ms: u64,
+    ) -> Result<Option<MacDeviceCredential>, String> {
+        self.devices.ensure(config, session, now_ms).map(Some)
+    }
 
     fn prepare(
         &self,
         config: &SupabaseAuthConfig,
         session: Option<&AuthSession>,
+        device: Option<&MacDeviceCredential>,
         now_ms: u64,
     ) -> Result<Self::Transport, String> {
         let upload_session =
-            session.and_then(|session| UploadSession::from_auth(config, session, now_ms));
+            session.and_then(|session| UploadSession::from_auth(config, session, device?, now_ms));
         Ok(AuthenticatedUploadTransport::new(
             ReqwestHttpClient::new()?,
             upload_session,
@@ -92,6 +140,40 @@ where
     V: SessionVault,
     F: UploadTransportFactory,
 {
+    pub(crate) fn annotation_transport(&self, now_ms: u64) -> Result<F::Transport, String> {
+        let session = self
+            .sessions
+            .fresh_session(now_ms)
+            .map_err(|error| error.to_string())?;
+        let device = match session.as_ref() {
+            Some(session) => {
+                self.factory
+                    .prepare_device(self.sessions.config(), session, now_ms)?
+            }
+            None => None,
+        };
+        self.factory.prepare(
+            self.sessions.config(),
+            session.as_ref(),
+            device.as_ref(),
+            now_ms,
+        )
+    }
+
+    pub(crate) fn capture_projects(&self, now_ms: u64) -> Result<Vec<CaptureProject>, String> {
+        let session = self
+            .sessions
+            .fresh_session(now_ms)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Sign in to Capso before choosing a project.".to_string())?;
+        fetch_capture_projects(
+            self.sessions.http(),
+            self.sessions.config(),
+            &session,
+            now_ms,
+        )
+    }
+
     pub(crate) fn wake_with_connectivity<Q: DrainQueue>(
         &self,
         wake: DrainWake,
@@ -116,9 +198,19 @@ where
             .sessions
             .fresh_session(now_ms)
             .map_err(|error| error.to_string())?;
-        let transport = self
-            .factory
-            .prepare(self.sessions.config(), session.as_ref(), now_ms)?;
+        let device = match session.as_ref() {
+            Some(session) => {
+                self.factory
+                    .prepare_device(self.sessions.config(), session, now_ms)?
+            }
+            None => None,
+        };
+        let transport = self.factory.prepare(
+            self.sessions.config(),
+            session.as_ref(),
+            device.as_ref(),
+            now_ms,
+        )?;
         coordinator.wake(wake, queue, &transport, now_ms)
     }
 }
@@ -149,7 +241,10 @@ impl ProductionSyncRuntime {
                 SessionRepository::new(KeychainSessionVault),
             )
             .map_err(|error| error.to_string())?;
-            Ok::<_, String>(BackgroundSync::new(sessions, ReqwestUploadTransportFactory))
+            Ok::<_, String>(BackgroundSync::new(
+                sessions,
+                ReqwestUploadTransportFactory::new()?,
+            ))
         })();
 
         match configured {
@@ -184,6 +279,30 @@ impl ProductionSyncRuntime {
                     ..crate::drain::DrainReport::default()
                 }))
             }
+        }
+    }
+
+    pub(crate) fn capture_projects(&self, now_ms: u64) -> Result<Vec<CaptureProject>, String> {
+        match self {
+            Self::Ready(sync) => sync.capture_projects(now_ms),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn annotation_transport(
+        &self,
+        now_ms: u64,
+    ) -> Result<AuthenticatedUploadTransport<ReqwestHttpClient>, String> {
+        match self {
+            Self::Ready(sync) => sync.annotation_transport(now_ms),
+            Self::Disabled { warning } => Err(warning.clone()),
+        }
+    }
+
+    pub(crate) fn reset_device_identity(&self) -> Result<(), String> {
+        match self {
+            Self::Ready(sync) => sync.factory.reset_device_identity(),
+            Self::Disabled { warning } => Err(warning.clone()),
         }
     }
 }
@@ -276,6 +395,10 @@ mod tests {
                     next_attempt_at_ms: None,
                     last_error: None,
                     annotated: false,
+                    project_id: None,
+                    uploaded_at_ms: None,
+                    remote_content_hash: None,
+                    remote_local_hash: None,
                 })),
                 ..Self::default()
             }
@@ -294,7 +417,7 @@ mod tests {
             Ok(Some(claimed))
         }
 
-        fn mark_uploaded(&self, _id: &str) -> Result<(), String> {
+        fn mark_uploaded(&self, _id: &str, _uploaded_at_ms: u64) -> Result<(), String> {
             *self.uploads.lock().expect("upload lock") += 1;
             Ok(())
         }
@@ -358,6 +481,7 @@ mod tests {
             &self,
             _config: &SupabaseAuthConfig,
             session: Option<&AuthSession>,
+            _device: Option<&crate::device::MacDeviceCredential>,
             _now_ms: u64,
         ) -> Result<Self::Transport, String> {
             *self.prepared_user.lock().expect("factory lock") =

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, Fragment, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowRight, CheckCircle, SpinnerGap } from "@phosphor-icons/react";
 import { CapsoMark, CapsoMarkDefs } from "@/components/mark.generated";
 import {
@@ -12,7 +12,7 @@ import {
   type PermanentAccount,
 } from "@/lib/supabase/account";
 import { isConfigured, supabase } from "@/lib/supabase/client";
-import { resetBackend, setBackendPreference } from "@/lib/store/backend";
+import { backendPreference, resetBackend, setBackendPreference, subscribeBackendPreference } from "@/lib/store/backend";
 import { localLibrarySize } from "@/lib/store/import-local";
 import { plural } from "@/lib/plural";
 
@@ -21,6 +21,7 @@ type AccountContextValue =
   | { mode: "signed_in"; userId: string; email: string; signOut: () => Promise<void>; openAccount: null };
 
 const AccountContext = createContext<AccountContextValue | null>(null);
+const subscribeStaticPreview = () => () => undefined;
 
 type GateState =
   | { status: "loading" }
@@ -36,7 +37,20 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
   const configured = isConfigured();
   const [state, setState] = useState<GateState>(configured ? { status: "loading" } : { status: "signed_out" });
   const [localCount, setLocalCount] = useState(0);
-  const [localOnly, setLocalOnly] = useState(false);
+  const devicePreview = useSyncExternalStore(
+    subscribeStaticPreview,
+    () => process.env.NODE_ENV !== "production" &&
+      new URLSearchParams(window.location.search).get("preview") === "devices",
+    () => false,
+  );
+  // The local-only choice is a durable ownership decision, not a dismissal of
+  // the current modal. The server snapshot stays account-first; hydration then
+  // reads this browser's explicit choice without an effect-driven state copy.
+  const localOnly = useSyncExternalStore(
+    subscribeBackendPreference,
+    () => backendPreference() === "local",
+    () => false,
+  );
 
   const refresh = useCallback(async () => {
     if (!configured) return;
@@ -84,8 +98,9 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
     const { data } = sb.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       const account = permanentAccountFromSession(session);
-      setBackendPreference("auto");
-      setLocalOnly(false);
+      if (account.status === "signed_in") {
+        setBackendPreference("auto");
+      }
       resetBackend();
       setState(account);
       if (session?.user.is_anonymous) void sb.auth.signOut({ scope: "local" });
@@ -96,6 +111,20 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
       data.subscription.unsubscribe();
     };
   }, [configured]);
+
+  if (devicePreview) {
+    return (
+      <AccountContext.Provider value={{
+        mode: "signed_in",
+        userId: "44444444-4444-4444-8444-444444444444",
+        email: "elvin@example.com",
+        signOut: async () => undefined,
+        openAccount: null,
+      }}>
+        {children}
+      </AccountContext.Provider>
+    );
+  }
 
   if (!configured) {
     return (
@@ -115,7 +144,6 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
           signOut: null,
           openAccount: () => {
             setBackendPreference("auto");
-            setLocalOnly(false);
             setState({ status: "signed_out" });
           },
         }}
@@ -133,7 +161,6 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
         localCount={localCount}
         continueLocal={() => {
           setBackendPreference("local");
-          setLocalOnly(true);
         }}
       />
     );
@@ -183,7 +210,7 @@ function AccountFrame({ children }: { children: React.ReactNode }) {
 function AccountLoading() {
   return (
     <AccountFrame>
-      <div className="flex items-center gap-3 py-8 text-sm text-muted">
+      <div role="status" aria-live="polite" className="flex items-center gap-3 py-8 text-sm text-muted">
         <SpinnerGap size={20} className="animate-spin" /> Opening your library…
       </div>
     </AccountFrame>
@@ -195,7 +222,7 @@ function AccountError({ message, retry }: { message: string; retry: () => void }
     <AccountFrame>
       <h1 className="text-xl font-semibold tracking-tight">We couldn’t check your account</h1>
       <p className="mt-3 text-sm leading-6 text-muted">{message}</p>
-      <button type="button" onClick={retry} className="mt-6 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-ink">
+      <button type="button" onClick={retry} className="mt-6 min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-ink">
         Try again
       </button>
     </AccountFrame>
@@ -207,6 +234,7 @@ function EmailSignIn({ localCount, continueLocal }: { localCount: number; contin
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const emailRequest = useRef(false);
   const localEntry = localLibraryEntry(localCount);
 
   if (sent) {
@@ -251,19 +279,23 @@ function EmailSignIn({ localCount, continueLocal }: { localCount: number; contin
         </div>
       )}
 
-      <form
-        className="mt-6"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setSending(true);
+          <form
+            className="mt-6"
+            aria-busy={sending}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (emailRequest.current) return;
+              emailRequest.current = true;
+              setSending(true);
           setError(null);
           try {
             await requestPermanentAccountLink(supabase().auth, email, window.location.origin);
             setSent(true);
           } catch (cause) {
             setError(cause instanceof Error ? cause.message : "Capso could not send the sign-in link.");
-          } finally {
-            setSending(false);
+              } finally {
+                setSending(false);
+                emailRequest.current = false;
           }
         }}
       >
@@ -281,9 +313,9 @@ function EmailSignIn({ localCount, continueLocal }: { localCount: number; contin
             className="min-w-0 flex-1 rounded-xl border border-line bg-background px-3.5 py-3 text-sm outline-none transition focus:border-accent"
           />
           <button
-            type="submit"
-            disabled={sending}
-            aria-label="Send sign-in link"
+              type="submit"
+              disabled={sending}
+              aria-label={sending ? "Sending sign-in link" : "Send sign-in link"}
             className="grid w-12 shrink-0 place-items-center rounded-xl bg-accent text-accent-ink disabled:opacity-60"
           >
             {sending ? <SpinnerGap size={18} className="animate-spin" /> : <ArrowRight size={18} weight="bold" />}
