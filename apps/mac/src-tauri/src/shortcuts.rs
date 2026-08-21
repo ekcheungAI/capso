@@ -131,6 +131,9 @@ pub(crate) struct ShortcutRuntime {
     pub(crate) active_bindings: Vec<CaptureBinding>,
     pub(crate) conflicts: Vec<ShortcutConflict>,
     pub(crate) storage_warning: Option<String>,
+    pub(crate) recording_suspended: bool,
+    pub(crate) recording_generation: u64,
+    pub(crate) suspended_bindings: Vec<CaptureBinding>,
 }
 
 impl Default for ShortcutRuntime {
@@ -143,6 +146,9 @@ impl Default for ShortcutRuntime {
             active_bindings: Vec::new(),
             conflicts: Vec::new(),
             storage_warning: None,
+            recording_suspended: false,
+            recording_generation: 0,
+            suspended_bindings: Vec::new(),
         }
     }
 }
@@ -161,6 +167,9 @@ impl ShortcutRuntime {
         shortcut: &Shortcut,
         state: ShortcutState,
     ) -> Option<CaptureAction> {
+        if self.recording_suspended {
+            return None;
+        }
         action_for_event(shortcut, state, &self.bindings)
     }
 
@@ -170,9 +179,48 @@ impl ShortcutRuntime {
         self.bindings = validated.bindings;
         self.conflicts.clear();
         self.storage_warning = None;
+        self.recording_suspended = false;
+        self.suspended_bindings.clear();
+    }
+
+    pub(crate) fn renew_recording_session(&mut self) -> u64 {
+        self.recording_generation = self.recording_generation.wrapping_add(1);
+        if self.recording_generation == 0 {
+            self.recording_generation = 1;
+        }
+        self.recording_generation
+    }
+
+    pub(crate) fn begin_recording_session(
+        &mut self,
+        suspended_bindings: Vec<CaptureBinding>,
+    ) -> u64 {
+        self.suspended_bindings = suspended_bindings;
+        self.active_bindings.clear();
+        self.recording_suspended = true;
+        self.renew_recording_session()
+    }
+
+    pub(crate) fn recording_session_matches(&self, generation: u64) -> bool {
+        self.recording_suspended && self.recording_generation == generation
+    }
+
+    pub(crate) fn finish_recording_resume_success(&mut self, active_bindings: Vec<CaptureBinding>) {
+        self.active_bindings = active_bindings;
+        self.recording_suspended = false;
+        self.suspended_bindings.clear();
+    }
+
+    pub(crate) fn finish_recording_resume_failure(&mut self, failure: &ShortcutUpdateFailure) {
+        self.recording_suspended = false;
+        self.suspended_bindings.clear();
+        self.reconcile_failed_update(failure);
     }
 
     pub(crate) fn desired_active_bindings(&self) -> Vec<CaptureBinding> {
+        if self.recording_suspended {
+            return self.suspended_bindings.clone();
+        }
         let active_ids = self
             .active_bindings
             .iter()
@@ -564,7 +612,7 @@ mod tests {
         action_for_event, action_for_menu_id, conflict_label, definitions, load_shortcut_settings,
         register_capture_shortcuts, replace_registered_shortcuts, save_shortcut_settings,
         validate_shortcut_settings, CaptureAction, ShortcutRegistry, ShortcutRuntime,
-        ShortcutSettings,
+        ShortcutSettings, ShortcutUpdateFailure,
     };
     use std::{
         cell::RefCell,
@@ -963,6 +1011,9 @@ mod tests {
             active_bindings: previous.bindings,
             conflicts: Vec::new(),
             storage_warning: None,
+            recording_suspended: false,
+            recording_generation: 0,
+            suspended_bindings: Vec::new(),
         };
         runtime.reconcile_failed_update(&error);
         assert_eq!(runtime.active_bindings.len(), 4);
@@ -1014,11 +1065,91 @@ mod tests {
             active_bindings: previous.bindings,
             conflicts: Vec::new(),
             storage_warning: None,
+            recording_suspended: false,
+            recording_generation: 0,
+            suspended_bindings: Vec::new(),
         };
         runtime.reconcile_failed_update(&error);
         assert_eq!(runtime.active_bindings.len(), 2);
         assert_eq!(runtime.conflicts.len(), 1);
         assert_eq!(runtime.conflicts[0].action, CaptureAction::Region);
         assert!(runtime.storage_warning.unwrap().contains("incomplete"));
+    }
+
+    #[test]
+    fn failed_recording_resume_ends_suspension_and_keeps_live_shortcuts_actionable() {
+        let previous = validate_shortcut_settings(ShortcutSettings::default()).unwrap();
+        let live = previous.bindings[..2].to_vec();
+        let missing = previous.bindings[2].action;
+        let failure = ShortcutUpdateFailure {
+            message: "macOS restored only part of the shortcut set".into(),
+            active_bindings: live.clone(),
+            rollback_complete: false,
+        };
+        let mut runtime = ShortcutRuntime {
+            settings: previous.settings,
+            bindings: previous.bindings.clone(),
+            active_bindings: Vec::new(),
+            conflicts: Vec::new(),
+            storage_warning: None,
+            recording_suspended: true,
+            recording_generation: 7,
+            suspended_bindings: previous.bindings,
+        };
+
+        runtime.finish_recording_resume_failure(&failure);
+
+        assert!(!runtime.recording_suspended);
+        assert!(runtime.suspended_bindings.is_empty());
+        assert_eq!(runtime.active_bindings.len(), live.len());
+        assert!(runtime
+            .active_bindings
+            .iter()
+            .zip(&live)
+            .all(|(actual, expected)| actual.shortcut.id() == expected.shortcut.id()));
+        assert_eq!(runtime.conflicts.len(), 1);
+        assert_eq!(runtime.conflicts[0].action, missing);
+        assert_eq!(
+            runtime.action_for_event(&runtime.active_bindings[0].shortcut, ShortcutState::Pressed,),
+            Some(runtime.active_bindings[0].action),
+        );
+    }
+
+    #[test]
+    fn transient_recording_resume_failure_with_complete_rollback_is_terminal_and_healthy() {
+        let previous = validate_shortcut_settings(ShortcutSettings::default()).unwrap();
+        let failure = ShortcutUpdateFailure {
+            message: "macOS briefly rejected one registration".into(),
+            active_bindings: previous.bindings.clone(),
+            rollback_complete: true,
+        };
+        let mut runtime = ShortcutRuntime {
+            settings: previous.settings,
+            bindings: previous.bindings.clone(),
+            active_bindings: Vec::new(),
+            conflicts: Vec::new(),
+            storage_warning: None,
+            recording_suspended: true,
+            recording_generation: 9,
+            suspended_bindings: previous.bindings,
+        };
+
+        runtime.finish_recording_resume_failure(&failure);
+
+        assert!(!runtime.recording_suspended);
+        assert!(runtime.suspended_bindings.is_empty());
+        assert_eq!(runtime.active_bindings.len(), 3);
+        assert!(runtime.conflicts.is_empty());
+        assert!(runtime.storage_warning.is_none());
+    }
+
+    #[test]
+    fn only_the_current_recording_generation_owns_resume() {
+        let mut runtime = ShortcutRuntime::default();
+        runtime.recording_suspended = true;
+        runtime.recording_generation = 2;
+
+        assert!(!runtime.recording_session_matches(1));
+        assert!(runtime.recording_session_matches(2));
     }
 }

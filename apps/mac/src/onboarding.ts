@@ -30,10 +30,9 @@ export type Step = {
 
 export type FirstRunInput = {
   screenRecording: "granted" | "required";
-  /** Area capture can use macOS's explicit interactive picker without this grant. */
-  screenRecordingSkipped: boolean;
-  /** `disabled` is a real answer, not an unfinished one — see `optional`. */
+  /** Native status alone cannot distinguish a fresh install from an explicit no. */
   launchAtLogin: "enabled" | "disabled" | string;
+  loginItemDeclined: boolean;
   /** A hotkey always has a default, so this is "has the user seen it", not "is it set". */
   hotkeyConfirmed: boolean;
   /** A configured build may connect; an unconfigured build must say why it cannot. */
@@ -47,8 +46,8 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
   {
     id: "permission",
     title: "Allow screen recording",
-    detail: "Optional for Window and Full Screen. Area capture works without it.",
-    optional: true,
+    detail: "Required for Area, Window, and Full Screen screenshots.",
+    optional: false,
   },
   {
     id: "hotkey",
@@ -79,13 +78,16 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
 function isSatisfied(id: StepId, input: FirstRunInput): boolean {
   switch (id) {
     case "permission":
-      return input.screenRecording === "granted" || input.screenRecordingSkipped;
+      return input.screenRecording === "granted";
     case "hotkey":
       return input.hotkeyConfirmed;
     case "login":
-      // Either answer settles it. Treating `disabled` as unfinished would leave a
-      // permanent unticked row for a user who deliberately said no.
-      return input.launchAtLogin === "enabled" || input.launchAtLogin === "disabled";
+      return (
+        input.launchAtLogin === "enabled" ||
+        input.launchAtLogin === "requiresApproval" ||
+        input.launchAtLogin === "unavailable" ||
+        input.loginItemDeclined
+      );
     case "library":
       return input.libraryChoice !== "undecided";
     case "capture":
@@ -94,12 +96,16 @@ function isSatisfied(id: StepId, input: FirstRunInput): boolean {
 }
 
 function detailFor(step: (typeof ORDER)[number], input: FirstRunInput) {
-  if (
-    step.id === "permission" &&
-    input.screenRecording === "required" &&
-    input.screenRecordingSkipped
-  ) {
-    return "Area only. Grant Screen Recording later to add Window and Full Screen.";
+  if (step.id === "login") {
+    if (input.launchAtLogin === "unavailable") {
+      return "Unavailable in this development build. Continue setup; you can enable it later in a signed build.";
+    }
+    if (input.launchAtLogin === "requiresApproval") {
+      return "Configured. macOS still needs your approval in Login Items.";
+    }
+    if (input.loginItemDeclined) {
+      return "Not enabled. You can change this later in General Settings.";
+    }
   }
   if (step.id !== "library") return step.detail;
   if (input.libraryChoice === "connected") {
@@ -122,8 +128,13 @@ export function firstRunSteps(input: FirstRunInput): Step[] {
   let currentTaken = false;
   return ORDER.map((step) => {
     const done = isSatisfied(step.id, input);
+    const skipped =
+      step.id === "login" &&
+      (input.launchAtLogin === "unavailable" || input.loginItemDeclined);
     let state: StepState;
-    if (done) {
+    if (skipped) {
+      state = "skipped";
+    } else if (done) {
       state = "done";
     } else if (!currentTaken) {
       state = "current";
@@ -136,14 +147,10 @@ export function firstRunSteps(input: FirstRunInput): Step[] {
 }
 
 /**
- * First run is over when every required step is satisfied and capture access has an
- * explicit answer. The permission itself stays optional because Area-only is valid.
+ * First run is over when every required step is satisfied.
  */
 export function firstRunComplete(input: FirstRunInput): boolean {
-  // Screen Recording is optional, but the user must explicitly choose either the
-  // grant or Area-only before the native startup layer can stop asking. Login has
-  // an OS status from the start, so it remains a genuinely non-blocking offer.
-  return ORDER.filter((step) => !step.optional || step.id === "permission").every((step) =>
+  return ORDER.filter((step) => !step.optional).every((step) =>
     isSatisfied(step.id, input),
   );
 }

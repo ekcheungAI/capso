@@ -20,6 +20,16 @@ test("first run serializes mutations and ignores superseded or unmounted refresh
   assert.match(view, /const decline = async \(\) => \{[\s\S]*?!beginFirstRunAction\(\)[\s\S]*?finally \{\s*endFirstRunAction\(\)/);
   assert.match(view, /requestSignIn[\s\S]*?!beginFirstRunAction\(\)[\s\S]*?finally \{\s*endFirstRunAction\(\)/);
   assert.match(view, /const chooseLocalOnly = \(\) => \{\s*if \(actionInFlight\.current\) return/);
-  assert.match(view, /open_screen_recording_settings[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?System Settings opened/);
+  assert.match(view, /const LOGIN_ITEM_DECLINED = "capso\.mac\.loginItemDeclined"/);
+  assert.match(view, /loginItemDeclined:\s*localStorage\.getItem\(LOGIN_ITEM_DECLINED\) === "1"/);
+  assert.match(view, /localStorage\.setItem\(LOGIN_ITEM_DECLINED, "1"\)/);
+  assert.match(view, /const currentStepRef = useRef<HTMLLIElement>\(null\)/);
+  assert.match(
+    view,
+    /useEffect\(\(\) => \{[\s\S]*?currentStepRef\.current\?\.focus\(\)[\s\S]*?\}, \[currentStepId\]\)/,
+  );
+  assert.match(view, /aria-current=\{step\.state === "current" \? "step" : undefined\}/);
+  assert.match(view, /role="status" aria-live="polite"/);
+  assert.match(view, /open_screen_recording_settings[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?setNote\(permissionView\.notice\)/);
   assert.match(view, /request_sign_in_email[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?Check your email/);
 });

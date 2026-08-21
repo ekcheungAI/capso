@@ -148,6 +148,7 @@ struct CaptureEvidence<'a> {
     output_bytes: Option<u64>,
     stderr: &'a str,
     mode: CaptureMode,
+    cancellable: bool,
     selection_completed_at: Instant,
 }
 
@@ -216,6 +217,7 @@ fn run_capture_with_durability<R: CaptureRunner, D: CaptureDurability>(
         capture_id,
         runner,
         durability,
+        mode != CaptureMode::Fullscreen,
         |output| screencapture_args(mode, output),
         |_| Ok(()),
     )
@@ -233,6 +235,7 @@ fn run_window_capture_with_style<R: CaptureRunner>(
         capture_id,
         runner,
         &SystemCaptureDurability,
+        true,
         |output| screencapture_args_with_window_style(CaptureMode::Window, output, style),
         |output| apply_window_style(output, &style),
     )
@@ -250,6 +253,7 @@ fn run_rectangle_capture<R: CaptureRunner>(
         capture_id,
         runner,
         &SystemCaptureDurability,
+        false,
         |output| screencapture_rect_args(rect, output),
         |_| Ok(()),
     )
@@ -297,6 +301,7 @@ fn run_frozen_area_capture<R: CaptureRunner>(
         capture_id,
         runner,
         &SystemCaptureDurability,
+        true,
         frozen_area_args,
         |_| Ok(()),
     )
@@ -407,6 +412,7 @@ fn run_capture_with_arguments<R, D, A, P>(
     capture_id: &str,
     runner: &R,
     durability: &D,
+    cancellable: bool,
     arguments: A,
     postprocess: P,
 ) -> Result<StoredCaptureOutcome, CaptureFailure>
@@ -448,6 +454,7 @@ where
             output_bytes,
             stderr: &process.stderr,
             mode,
+            cancellable,
             selection_completed_at,
         },
     )?;
@@ -494,8 +501,16 @@ fn classify_capture(
         });
     }
 
-    if evidence.output_bytes.is_none() && evidence.stderr.trim().is_empty() {
+    if evidence.output_bytes.is_none() && evidence.stderr.trim().is_empty() && evidence.cancellable
+    {
         return Ok(StoredCaptureOutcome::Cancelled);
+    }
+
+    if evidence.output_bytes.is_none() && evidence.stderr.trim().is_empty() {
+        return Err(CaptureFailure {
+            code: "capture_failed",
+            message: "Screen capture ended without creating an image.".into(),
+        });
     }
 
     if !evidence.stderr.trim().is_empty() {
@@ -516,6 +531,28 @@ fn classify_capture(
         code: "capture_failed",
         message: "Screen capture ended without a usable image.".into(),
     })
+}
+
+fn resolve_cancelled_capture_permission(
+    result: Result<StoredCaptureOutcome, CaptureFailure>,
+    screen_recording_granted: bool,
+) -> Result<StoredCaptureOutcome, CaptureFailure> {
+    let produced_no_pixels = matches!(result, Ok(StoredCaptureOutcome::Cancelled))
+        || matches!(
+            result,
+            Err(CaptureFailure {
+                code: "capture_failed" | "empty_output",
+                ..
+            })
+        );
+    if produced_no_pixels && !screen_recording_granted {
+        return Err(CaptureFailure {
+            code: "screen_recording_required",
+            message: "Screen Recording is required for Area, Window, and Full Screen screenshots."
+                .into(),
+        });
+    }
+    result
 }
 
 pub(crate) fn screencapture_args(mode: CaptureMode, output: &Path) -> Vec<OsString> {
@@ -789,7 +826,8 @@ pub(crate) async fn capture_screen(
     {
         return Err(CaptureFailure {
             code: "screen_recording_required",
-            message: "Grant Screen Recording to capture windows or the full screen.".into(),
+            message: "Screen Recording is required for Area, Window, and Full Screen screenshots."
+                .into(),
         });
     }
 
@@ -826,7 +864,10 @@ pub(crate) async fn capture_screen(
         message: format!("The native capture task stopped unexpectedly: {error}"),
     });
     desktop_clutter.restore();
-    let stored = stored_result??;
+    let stored = resolve_cancelled_capture_permission(
+        stored_result?,
+        crate::system::screen_recording_granted(),
+    )?;
 
     publish_stored_capture(&app, mode, stored).await
 }
@@ -865,13 +906,16 @@ pub(crate) async fn capture_previous_area(
         message: format!("The Previous Area task stopped unexpectedly: {error}"),
     });
     desktop_clutter.restore();
-    let stored = stored_result??;
+    let stored = resolve_cancelled_capture_permission(
+        stored_result?,
+        crate::system::screen_recording_granted(),
+    )?;
     publish_stored_capture(&app, CaptureMode::Region, stored).await
 }
 
 /// Presents Capso's full-display precision selector on the display under the
 /// pointer, then captures the exact bounded rectangle through the same durable
-/// Region pipeline. The native macOS picker remains the permission-free fallback.
+/// Region pipeline. This legacy precision path also requires Screen Recording.
 pub(crate) async fn capture_selected_area(
     app: AppHandle,
 ) -> Result<(CaptureOutcome, Option<CapturedArea>), CaptureFailure> {
@@ -1089,7 +1133,10 @@ pub(crate) async fn capture_selected_area(
         message: format!("The exact Area capture task stopped unexpectedly: {error}"),
     });
     desktop_clutter.restore();
-    let stored = stored_result??;
+    let stored = resolve_cancelled_capture_permission(
+        stored_result?,
+        crate::system::screen_recording_granted(),
+    )?;
     let outcome = publish_stored_capture(&app, CaptureMode::Region, stored).await?;
     Ok((
         outcome,
@@ -1232,14 +1279,18 @@ pub(crate) async fn capture_frozen_area(app: AppHandle) -> Result<CaptureOutcome
 
         let capture_id = capture_id.clone();
         let capture_data = app_data.clone();
-        let stored = tauri::async_runtime::spawn_blocking(move || {
+        let stored_result = tauri::async_runtime::spawn_blocking(move || {
             run_frozen_area_capture(&capture_data, &capture_id, &SystemCaptureRunner)
         })
         .await
         .map_err(|error| CaptureFailure {
             code: "capture_task_failed",
             message: format!("The frozen Area task stopped unexpectedly: {error}"),
-        })??;
+        })?;
+        let stored = resolve_cancelled_capture_permission(
+            stored_result,
+            crate::system::screen_recording_granted(),
+        )?;
         Ok(Some(stored))
     }
     .await;
@@ -1777,10 +1828,73 @@ mod tests {
                     output_bytes: None,
                     stderr: "",
                     mode: CaptureMode::Region,
+                    cancellable: true,
                     selection_completed_at,
                 },
             ),
             Ok(StoredCaptureOutcome::Cancelled)
+        );
+    }
+
+    #[test]
+    fn missing_output_from_a_noninteractive_capture_is_a_failure() {
+        let output = Path::new("/tmp/capso/missing.png");
+
+        assert_eq!(
+            classify_capture(
+                output,
+                CaptureEvidence {
+                    output_bytes: None,
+                    stderr: "",
+                    mode: CaptureMode::Fullscreen,
+                    cancellable: false,
+                    selection_completed_at: Instant::now(),
+                },
+            ),
+            Err(super::CaptureFailure {
+                code: "capture_failed",
+                message: "Screen capture ended without creating an image.".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn cancelled_picker_becomes_permission_guidance_when_access_was_lost() {
+        let failure =
+            super::resolve_cancelled_capture_permission(Ok(StoredCaptureOutcome::Cancelled), false)
+                .expect_err("revoked access is not a user cancellation");
+
+        assert_eq!(failure.code, "screen_recording_required");
+        assert!(failure.message.contains("Area, Window, and Full Screen"));
+        assert_eq!(
+            super::resolve_cancelled_capture_permission(Ok(StoredCaptureOutcome::Cancelled), true,),
+            Ok(StoredCaptureOutcome::Cancelled)
+        );
+    }
+
+    #[test]
+    fn diagnostic_no_output_becomes_permission_guidance_only_after_access_is_lost() {
+        let diagnostic = super::CaptureFailure {
+            code: "capture_failed",
+            message: "macOS did not create an image".into(),
+        };
+        let failure = super::resolve_cancelled_capture_permission(Err(diagnostic.clone()), false)
+            .expect_err("revoked access should replace a no-pixels diagnostic");
+        assert_eq!(failure.code, "screen_recording_required");
+
+        assert_eq!(
+            super::resolve_cancelled_capture_permission(Err(diagnostic.clone()), true),
+            Err(diagnostic)
+        );
+
+        let storage = super::CaptureFailure {
+            code: "storage_failed",
+            message: "disk is full".into(),
+        };
+        assert_eq!(
+            super::resolve_cancelled_capture_permission(Err(storage.clone()), false),
+            Err(storage),
+            "permission recovery must not hide an independent storage failure",
         );
     }
 
@@ -1796,6 +1910,7 @@ mod tests {
                     output_bytes: Some(42),
                     stderr: "",
                     mode: CaptureMode::Window,
+                    cancellable: true,
                     selection_completed_at,
                 },
             ),
@@ -1898,6 +2013,7 @@ mod tests {
                     output_bytes: None,
                     stderr: "screen capture permission denied\n",
                     mode: CaptureMode::Window,
+                    cancellable: true,
                     selection_completed_at,
                 },
             ),
@@ -1920,6 +2036,7 @@ mod tests {
                     output_bytes: Some(0),
                     stderr: "",
                     mode: CaptureMode::Fullscreen,
+                    cancellable: false,
                     selection_completed_at,
                 },
             ),

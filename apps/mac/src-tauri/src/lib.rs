@@ -1062,6 +1062,15 @@ fn finish_launched_capture(
     result: &Result<capture::CaptureOutcome, capture::CaptureFailure>,
     successful_capture_warning: Option<&str>,
 ) {
+    if matches!(
+        result,
+        Err(capture::CaptureFailure {
+            code: "screen_recording_required",
+            ..
+        })
+    ) {
+        show_permission_guidance(app);
+    }
     let desktop_clutter_warning = recording::desktop_clutter_warning(app);
     let successful_capture_warning = match (
         successful_capture_warning,
@@ -1473,10 +1482,7 @@ fn cancel_area_selection_from_window(app: &AppHandle) {
 }
 
 fn show_permission_guidance(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    open_settings_window(app);
     if let Ok(status) = current_system_status(app) {
         let _ = app.emit("system-status-changed", status);
     }
@@ -1504,22 +1510,6 @@ fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Str
         .app_config_dir()
         .map(|directory| directory.join("shortcut-settings.json"))
         .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
-}
-
-fn capture_access_preference_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map(|directory| directory.join("capture-access.json"))
-        .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
-}
-
-fn area_only_capture_preference<R: Runtime>(app: &AppHandle<R>) -> bool {
-    capture_access_preference_path(app)
-        .and_then(|path| system::load_area_only_preference(&path))
-        .unwrap_or_else(|error| {
-            eprintln!("Could not restore the capture access choice: {error}");
-            false
-        })
 }
 
 fn portable_settings_paths(app: &AppHandle) -> Result<settings_transfer::SettingsPaths, String> {
@@ -1720,12 +1710,11 @@ fn reset_portable_settings(
 fn tray_tooltip(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
-    area_only_capture: bool,
     queue_status: &queue::QueueRuntimeStatus,
     latency_report: &latency::OverlayLatencyReport,
 ) -> &'static str {
-    if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
-        "Capso — Screen Recording needed for Window and Fullscreen"
+    if screen_recording_guidance_needed(system_status.screen_recording) {
+        "Capso — Screen Recording needed for capture"
     } else if queue_status.warning.is_some() || queue_status.summary.failed > 0 {
         "Capso — uploads need attention; captures remain saved locally"
     } else if !shortcut_status.conflicts.is_empty() {
@@ -1828,18 +1817,14 @@ fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
 const RETRY_UPLOADS_MENU_ID: &str = "retry-uploads";
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 
-fn screen_recording_guidance_needed(
-    status: system::ScreenRecordingStatus,
-    area_only_capture: bool,
-) -> bool {
-    status == system::ScreenRecordingStatus::Required && !area_only_capture
+fn screen_recording_guidance_needed(status: system::ScreenRecordingStatus) -> bool {
+    status == system::ScreenRecordingStatus::Required
 }
 
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
-    area_only_capture: bool,
     queue_status: &queue::QueueRuntimeStatus,
     _latency_report: &latency::OverlayLatencyReport,
 ) -> tauri::Result<Menu<R>> {
@@ -1950,7 +1935,7 @@ fn build_tray_menu<R: Runtime>(
         }
     }
 
-    if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
+    if screen_recording_guidance_needed(system_status.screen_recording) {
         let permission_warning = MenuItem::with_id(
             app,
             OPEN_SETTINGS_MENU_ID,
@@ -2006,7 +1991,6 @@ pub(crate) fn refresh_recording_tray_title(app: &AppHandle) {
 fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
     let shortcut_status = current_shortcut_status(app)?;
     let system_status = current_system_status(app)?;
-    let area_only_capture = system_status.area_only_capture;
     let queue_status = current_queue_status(app)?;
     let latency_report = latency::current_report(app)?;
     if let Some(tray) = app.tray_by_id("main") {
@@ -2015,7 +1999,6 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
                 app,
                 &shortcut_status,
                 &system_status,
-                area_only_capture,
                 &queue_status,
                 &latency_report,
             )
@@ -2025,7 +2008,6 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
         tray.set_tooltip(Some(tray_tooltip(
             &shortcut_status,
             &system_status,
-            area_only_capture,
             &queue_status,
             &latency_report,
         )))
@@ -2051,6 +2033,124 @@ fn get_shortcut_settings(
         .lock()
         .map(|runtime| runtime.status())
         .map_err(|_| "Shortcut settings are temporarily unavailable".into())
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShortcutRecordingResult {
+    generation: u64,
+    active: bool,
+    status: shortcuts::ShortcutStatus,
+}
+
+fn shortcut_recording_result(runtime: &shortcuts::ShortcutRuntime) -> ShortcutRecordingResult {
+    ShortcutRecordingResult {
+        generation: runtime.recording_generation,
+        active: runtime.recording_suspended,
+        status: runtime.status(),
+    }
+}
+
+fn transition_shortcut_recording(
+    app: &AppHandle,
+    runtime: &mut shortcuts::ShortcutRuntime,
+    active: bool,
+    generation: Option<u64>,
+) -> Result<ShortcutRecordingResult, String> {
+    if active && runtime.recording_suspended {
+        runtime.renew_recording_session();
+        return Ok(shortcut_recording_result(runtime));
+    }
+    if !active && !runtime.recording_suspended {
+        return Ok(shortcut_recording_result(runtime));
+    }
+    if !active
+        && !generation.is_some_and(|generation| runtime.recording_session_matches(generation))
+    {
+        return Ok(shortcut_recording_result(runtime));
+    }
+
+    let registered_before = runtime.active_bindings.clone();
+    let restore_on_failure = runtime.desired_active_bindings();
+    let candidate = if active {
+        Vec::new()
+    } else {
+        runtime.suspended_bindings.clone()
+    };
+    let mut registry = TauriShortcutRegistry { app };
+    match shortcuts::replace_registered_shortcuts(
+        &mut registry,
+        &registered_before,
+        &restore_on_failure,
+        &candidate,
+        || Ok(()),
+    ) {
+        Ok(()) if active => {
+            runtime.begin_recording_session(registered_before);
+            Ok(shortcut_recording_result(runtime))
+        }
+        Ok(()) => {
+            runtime.finish_recording_resume_success(candidate);
+            Ok(shortcut_recording_result(runtime))
+        }
+        Err(error) if active => {
+            runtime.reconcile_failed_update(&error);
+            Err(error.message)
+        }
+        Err(error) => {
+            runtime.finish_recording_resume_failure(&error);
+            Ok(shortcut_recording_result(runtime))
+        }
+    }
+}
+
+#[tauri::command]
+fn set_shortcut_recording(
+    app: AppHandle,
+    state: State<'_, Mutex<shortcuts::ShortcutRuntime>>,
+    active: bool,
+    generation: Option<u64>,
+) -> Result<ShortcutRecordingResult, String> {
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "Shortcut settings are temporarily unavailable".to_string())?;
+    let result = transition_shortcut_recording(&app, &mut runtime, active, generation);
+    drop(runtime);
+    if !active || result.is_err() {
+        if let Err(error) = refresh_tray_status(&app) {
+            eprintln!("Could not refresh the tray after shortcut recording: {error}");
+        }
+    }
+    result
+}
+
+fn restore_shortcuts_after_recording(app: &AppHandle) {
+    let state = app.state::<Mutex<shortcuts::ShortcutRuntime>>();
+    let mut runtime = match state.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            eprintln!("Could not restore capture shortcuts because their state is unavailable");
+            return;
+        }
+    };
+    if !runtime.recording_suspended {
+        return;
+    }
+    let generation = runtime.recording_generation;
+    let result = transition_shortcut_recording(app, &mut runtime, false, Some(generation));
+    drop(runtime);
+
+    if let Err(error) = refresh_tray_status(app) {
+        eprintln!("Could not refresh the tray after recorder focus changed: {error}");
+    }
+    match result {
+        Ok(status) => {
+            let _ = app.emit("shortcut-recording-ended", status);
+        }
+        Err(error) => {
+            eprintln!("Could not restore capture shortcuts after recorder focus changed: {error}");
+        }
+    }
 }
 
 #[tauri::command]
@@ -2158,30 +2258,13 @@ fn request_screen_recording_permission(
 }
 
 #[tauri::command]
-fn set_area_only_capture_preference(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<system::SystemStatus, String> {
-    let path = capture_access_preference_path(&app)?;
-    system::store_area_only_preference(&path, enabled)?;
-    let status = app
-        .state::<Mutex<system::PermissionRuntime>>()
-        .lock()
-        .map(|mut runtime| {
-            runtime.set_area_only_capture(enabled);
-            runtime.status()
-        })
-        .map_err(|_| "System settings are temporarily unavailable".to_string())?;
-    let _ = app.emit("system-status-changed", status);
-    if let Err(error) = refresh_tray_status(&app) {
-        eprintln!("Could not refresh the Capso tray after capture access changed: {error}");
-    }
-    Ok(status)
+fn open_screen_recording_settings() -> Result<(), String> {
+    system::open_screen_recording_settings()
 }
 
 #[tauri::command]
-fn open_screen_recording_settings() -> Result<(), String> {
-    system::open_screen_recording_settings()
+fn restart_capso(app: AppHandle) {
+    app.request_restart();
 }
 
 #[tauri::command]
@@ -2269,6 +2352,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             capture::capture_screen,
             get_shortcut_settings,
+            set_shortcut_recording,
             update_shortcut_settings,
             export_portable_settings,
             import_portable_settings,
@@ -2301,8 +2385,8 @@ pub fn run() {
             retry_annotation_project_sync,
             keep_local_annotation_project,
             request_screen_recording_permission,
-            set_area_only_capture_preference,
             open_screen_recording_settings,
+            restart_capso,
             set_launch_at_login_enabled,
             open_login_item_settings,
             get_capture_timer_status,
@@ -2451,18 +2535,12 @@ pub fn run() {
                 runtime.status()
             };
 
-            let area_only_capture = area_only_capture_preference(app.handle());
-            app.state::<Mutex<system::PermissionRuntime>>()
-                .lock()
-                .map_err(|_| "Could not initialize system settings")?
-                .set_area_only_capture(area_only_capture);
             let system_status = current_system_status(app.handle())
                 .map_err(|error| format!("Could not initialize system status: {error}"))?;
             let menu = build_tray_menu(
                 app.handle(),
                 &status,
                 &system_status,
-                area_only_capture,
                 &queue_status,
                 &latency_report,
             )?;
@@ -2472,7 +2550,6 @@ pub fn run() {
                 .tooltip(tray_tooltip(
                     &status,
                     &system_status,
-                    area_only_capture,
                     &queue_status,
                     &latency_report,
                 ))
@@ -2554,7 +2631,7 @@ pub fn run() {
             // silent would look like a failed launch, so Settings opens to be granted.
             // Re-launching an already-running copy reveals it via single-instance and
             // Reopen, so an already-configured Mac boots straight to the menu bar.
-            if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
+            if screen_recording_guidance_needed(system_status.screen_recording) {
                 open_settings_window(app.handle());
             }
 
@@ -2570,6 +2647,9 @@ pub fn run() {
             pin::record_window_geometry(window.app_handle(), window.label(), event);
             // Closing the popover hides it — the app lives in the menu bar.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    restore_shortcuts_after_recording(window.app_handle());
+                }
                 if window.label() == self_timer::TIMER_LABEL {
                     api.prevent_close();
                     cancel_capture_timer_from_window(window.app_handle());
@@ -2605,6 +2685,10 @@ pub fn run() {
                     }
                 } else {
                     let _ = window.hide();
+                }
+            } else if let tauri::WindowEvent::Focused(false) = event {
+                if window.label() == "main" {
+                    restore_shortcuts_after_recording(window.app_handle());
                 }
             } else if let tauri::WindowEvent::Focused(true) = event {
                 let app = window.app_handle();
@@ -2715,20 +2799,14 @@ mod tests {
     }
 
     #[test]
-    fn only_an_unsettled_permission_choice_opens_guidance_at_launch() {
+    fn missing_effective_permission_opens_guidance_at_launch() {
         use crate::system::ScreenRecordingStatus;
 
         assert!(super::screen_recording_guidance_needed(
-            ScreenRecordingStatus::Required,
-            false,
+            ScreenRecordingStatus::Required
         ));
         assert!(!super::screen_recording_guidance_needed(
-            ScreenRecordingStatus::Required,
-            true,
-        ));
-        assert!(!super::screen_recording_guidance_needed(
-            ScreenRecordingStatus::Granted,
-            false,
+            ScreenRecordingStatus::Granted
         ));
     }
 

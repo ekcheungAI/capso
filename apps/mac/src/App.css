@@ -8,6 +8,18 @@
   text-rendering: optimizeLegibility;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -5454,6 +5466,18 @@ html[data-surface="area-selector"] #root {
   line-height: 1.35;
 }
 
+.system-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.system-actions .compact-button {
+  min-height: 2.25rem;
+}
+
 /* Diagnostics are evidence, not prose - the numbers get the mono treatment the
    shortcut recorders already use. */
 .diagnostic-metric {
@@ -5677,6 +5701,10 @@ html[data-surface="area-selector"] #root {
 
 .system-notice[data-error="true"] {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.system-notice[data-attention="true"] {
+  background: color-mix(in srgb, var(--intent-reference) 10%, transparent);
 }
 
 .quick-access-settings .section-heading > div {

@@ -24,6 +24,10 @@ import {
   syncPresentation,
   type SyncRuntimeStatus,
 } from "./setup";
+import {
+  screenRecordingPresentation,
+  type ScreenRecordingAccess,
+} from "./screen-recording-ux";
 
 type ShortcutSettings = {
   region: string;
@@ -46,17 +50,19 @@ type ShortcutStatus = {
   storageWarning: string | null;
 };
 
-type ScreenRecordingStatus = "granted" | "required";
+type ShortcutRecordingResult = {
+  generation: number;
+  active: boolean;
+  status: ShortcutStatus;
+};
+
 type LoginItemStatus =
   | "disabled"
   | "enabled"
   | "requiresApproval"
   | "unavailable";
 
-type SystemStatus = {
-  screenRecording: ScreenRecordingStatus;
-  screenRecordingRequestAttempted: boolean;
-  areaOnlyCapture: boolean;
+type SystemStatus = ScreenRecordingAccess & {
   launchAtLogin: LoginItemStatus;
 };
 
@@ -127,7 +133,7 @@ type DeviceInfo = {
 
 type SettingsTransferAction = "export" | "import" | "reset";
 type AuthAction = "email" | "reconnect" | "sign_out";
-type SystemAction = "permission" | "area_only" | "login" | "login_settings";
+type SystemAction = "permission" | "restart" | "login" | "login_settings";
 
 type SettingsExportResult = {
   fileName: string;
@@ -154,7 +160,7 @@ const DEFAULT_SHORTCUTS: ShortcutSettings = {
 const PREVIEW_SYSTEM_STATUS: SystemStatus = {
   screenRecording: "required",
   screenRecordingRequestAttempted: false,
-  areaOnlyCapture: false,
+  screenRecordingIdentity: "buildSpecific",
   launchAtLogin: "disabled",
 };
 
@@ -306,6 +312,11 @@ function App() {
   const [savedSettings, setSavedSettings] = useState(DEFAULT_SHORTCUTS);
   const [conflicts, setConflicts] = useState<ShortcutConflict[]>([]);
   const [recording, setRecording] = useState<CaptureAction | null>(null);
+  const [shortcutRecordingBusy, setShortcutRecordingBusy] = useState(false);
+  const shortcutRecordingTarget = useRef<CaptureAction | null>(null);
+  const shortcutRecordingGeneration = useRef<number | null>(null);
+  const shortcutRecordingRequestInFlight = useRef(false);
+  const shortcutRecordingCancelMessage = useRef("Shortcut unchanged.");
   const [notice, setNotice] = useState(() =>
     isTauriRuntime()
       ? "Loading shortcuts…"
@@ -319,11 +330,9 @@ function App() {
   const [systemNotice, setSystemNotice] = useState(() =>
     isTauriRuntime()
       ? "Checking macOS access…"
-      : "Preview mode - system controls activate in the installed app.",
+      : screenRecordingPresentation(PREVIEW_SYSTEM_STATUS).notice,
   );
-  const [systemNoticeIsError, setSystemNoticeIsError] = useState(
-    () => !isTauriRuntime(),
-  );
+  const [systemNoticeIsError, setSystemNoticeIsError] = useState(false);
   const [systemAction, setSystemAction] = useState<SystemAction | null>(null);
   const systemActionInFlight = useRef<SystemAction | null>(null);
   const [overlaySettings, setOverlaySettings] = useState(PREVIEW_OVERLAY_SETTINGS);
@@ -377,6 +386,24 @@ function App() {
   const [settingsTransferNoticeIsError, setSettingsTransferNoticeIsError] =
     useState(false);
   const nativeRuntime = useMemo(isTauriRuntime, []);
+  useEffect(
+    () => () => {
+      const generation = shortcutRecordingGeneration.current;
+      if (!nativeRuntime || generation === null) return;
+      void invoke<ShortcutRecordingResult>("set_shortcut_recording", {
+        active: false,
+        generation,
+      }).then((result) => {
+        if (
+          shortcutRecordingGeneration.current === generation &&
+          (!result.active || result.generation !== generation)
+        ) {
+          shortcutRecordingGeneration.current = null;
+        }
+      });
+    },
+    [nativeRuntime],
+  );
   const accountPresentation = useMemo(
     () => cloudAccountPresentation(authConfigured, authStatus.status),
     [authConfigured, authStatus.status],
@@ -387,6 +414,10 @@ function App() {
   );
   const isDirty = !sameSettings(settings, savedSettings);
   const screenRecordingGranted = systemStatus.screenRecording === "granted";
+  const screenRecordingView = useMemo(
+    () => screenRecordingPresentation(systemStatus),
+    [systemStatus],
+  );
   const launchAtLoginEnabled =
     systemStatus.launchAtLogin === "enabled" ||
     systemStatus.launchAtLogin === "requiresApproval";
@@ -441,27 +472,10 @@ function App() {
     if (!nativeRuntime) return;
 
     try {
-      let status = await invoke<SystemStatus>("get_system_status");
-      if (status.screenRecording === "granted" && status.areaOnlyCapture) {
-        status = await invoke<SystemStatus>("set_area_only_capture_preference", {
-          enabled: false,
-        });
-      }
+      const status = await invoke<SystemStatus>("get_system_status");
       setSystemStatus(status);
-      if (status.screenRecording === "granted") {
-        setSystemNotice("Screen capture access is ready.");
-        setSystemNoticeIsError(false);
-      } else if (status.areaOnlyCapture) {
-        setSystemNotice(
-          "Area-only mode is ready. Window and Full Screen can be enabled later.",
-        );
-        setSystemNoticeIsError(false);
-      } else {
-        setSystemNotice(
-          "Area capture still works. Window and full-screen capture need access.",
-        );
-        setSystemNoticeIsError(true);
-      }
+      setSystemNotice(screenRecordingPresentation(status).notice);
+      setSystemNoticeIsError(false);
     } catch (error) {
       setSystemNotice(`Could not check macOS access: ${String(error)}`);
       setSystemNoticeIsError(true);
@@ -796,6 +810,35 @@ function App() {
 
   useEffect(() => {
     if (!nativeRuntime) return;
+    let active = true;
+    const endedListener = listen<ShortcutRecordingResult>(
+      "shortcut-recording-ended",
+      ({ payload }) => {
+        if (!active || payload.active) return;
+        const ownedGeneration = shortcutRecordingGeneration.current;
+        if (
+          ownedGeneration !== null &&
+          ownedGeneration !== payload.generation
+        ) {
+          return;
+        }
+        shortcutRecordingGeneration.current = null;
+        shortcutRecordingTarget.current = null;
+        setRecording(null);
+        installShortcutRecordingStatus(
+          payload,
+          "Shortcut recorder closed. Capture shortcuts are active.",
+        );
+      },
+    );
+    return () => {
+      active = false;
+      void endedListener.then((unlisten) => unlisten());
+    };
+  }, [nativeRuntime]);
+
+  useEffect(() => {
+    if (!nativeRuntime) return;
     void invoke<DeviceInfo>("get_device_info")
       .then(setDeviceInfo)
       .catch(() => setDeviceInfo(PREVIEW_DEVICE_INFO));
@@ -1043,9 +1086,7 @@ function App() {
     try {
       if (systemStatus.screenRecordingRequestAttempted) {
         await invoke("open_screen_recording_settings");
-        setSystemNotice(
-          "System Settings opened. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
-        );
+        setSystemNotice(screenRecordingView.notice);
       } else {
         setSystemNotice("Waiting for your macOS permission choice…");
         const status = await invoke<SystemStatus>(
@@ -1053,17 +1094,11 @@ function App() {
         );
         setSystemStatus(status);
         if (status.screenRecording === "granted") {
-          const updated = await invoke<SystemStatus>("set_area_only_capture_preference", {
-            enabled: false,
-          });
-          setSystemStatus(updated);
-          setSystemNotice("Screen Recording granted. All capture modes are ready.");
+          setSystemNotice(screenRecordingPresentation(status).notice);
           setSystemNoticeIsError(false);
         } else {
-          setSystemNotice(
-            "Access is still off. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
-          );
-          setSystemNoticeIsError(true);
+          setSystemNotice(screenRecordingPresentation(status).notice);
+          setSystemNoticeIsError(false);
         }
       }
     } catch (error) {
@@ -1074,23 +1109,16 @@ function App() {
     }
   }
 
-  async function handleAreaOnlyCapture() {
-    const action = "area_only";
-    if (!nativeRuntime || screenRecordingGranted || !beginSystemAction(action)) return;
+  async function restartCapso() {
+    const action = "restart";
+    if (!nativeRuntime || !beginSystemAction(action)) return;
+    setSystemNotice("Restarting Capso…");
     setSystemNoticeIsError(false);
-
     try {
-      const status = await invoke<SystemStatus>("set_area_only_capture_preference", {
-        enabled: true,
-      });
-      setSystemStatus(status);
-      setSystemNotice(
-        "Area-only mode saved. ⌘⇧4 works now; Window and Full Screen can be enabled later.",
-      );
+      await invoke("restart_capso");
     } catch (error) {
-      setSystemNotice(String(error));
+      setSystemNotice(`Could not restart Capso: ${String(error)}`);
       setSystemNoticeIsError(true);
-    } finally {
       endSystemAction(action);
     }
   }
@@ -1160,6 +1188,142 @@ function App() {
     }
   }
 
+  function installShortcutRecordingStatus(
+    result: ShortcutRecordingResult,
+    successMessage: string,
+  ) {
+    setConflicts(result.status.conflicts);
+    const warning =
+      result.status.storageWarning ??
+      (result.status.conflicts.length > 0
+        ? "Some capture shortcuts could not be restored. Retry or restart Capso."
+        : null);
+    if (warning) {
+      setNotice(warning);
+      setNoticeIsError(true);
+      setNeedsRetry(true);
+    } else {
+      setNotice(successMessage);
+      setNoticeIsError(false);
+    }
+  }
+
+  async function restoreShortcutRecording(message: string) {
+    const generation = shortcutRecordingGeneration.current;
+    if (!nativeRuntime || generation === null) {
+      setNotice(message);
+      setNoticeIsError(false);
+      return;
+    }
+
+    try {
+      const result = await invoke<ShortcutRecordingResult>(
+        "set_shortcut_recording",
+        {
+          active: false,
+          generation,
+        },
+      );
+      if (
+        shortcutRecordingGeneration.current === generation &&
+        (!result.active || result.generation !== generation)
+      ) {
+        shortcutRecordingGeneration.current = null;
+      }
+      installShortcutRecordingStatus(result, message);
+    } catch (error) {
+      setNotice(`Could not restore capture shortcuts: ${String(error)}`);
+      setNoticeIsError(true);
+      setNeedsRetry(true);
+    }
+  }
+
+  async function startShortcutRecording(
+    action: CaptureAction,
+    button: HTMLButtonElement,
+  ) {
+    if (
+      shortcutRecordingRequestInFlight.current ||
+      shortcutRecordingTarget.current !== null ||
+      recording !== null
+    ) {
+      return;
+    }
+    shortcutRecordingRequestInFlight.current = true;
+    shortcutRecordingTarget.current = action;
+    setShortcutRecordingBusy(true);
+    setNotice("Preparing shortcut recorder…");
+    setNoticeIsError(false);
+    try {
+      if (nativeRuntime) {
+        const result = await invoke<ShortcutRecordingResult>(
+          "set_shortcut_recording",
+          {
+            active: true,
+            generation: null,
+          },
+        );
+        shortcutRecordingGeneration.current = result.generation;
+      }
+      if (shortcutRecordingTarget.current !== action) {
+        await restoreShortcutRecording(shortcutRecordingCancelMessage.current);
+        return;
+      }
+      button.focus();
+      setRecording(action);
+      setNotice("Press your new shortcut. Escape cancels.");
+    } catch (error) {
+      shortcutRecordingTarget.current = null;
+      let recovery = "";
+      if (nativeRuntime) {
+        try {
+          const status = await invoke<ShortcutStatus>("get_shortcut_settings");
+          setConflicts(status.conflicts);
+          setNeedsRetry(
+            status.storageWarning !== null || status.conflicts.length > 0,
+          );
+          recovery = status.storageWarning ? ` ${status.storageWarning}` : "";
+        } catch {
+          setNeedsRetry(true);
+        }
+      }
+      setNotice(
+        `Could not start shortcut recording: ${String(error)}${recovery}`,
+      );
+      setNoticeIsError(true);
+    } finally {
+      shortcutRecordingRequestInFlight.current = false;
+      setShortcutRecordingBusy(false);
+    }
+  }
+
+  async function stopShortcutRecording(message: string) {
+    shortcutRecordingCancelMessage.current = message;
+    shortcutRecordingTarget.current = null;
+    setRecording(null);
+    if (
+      shortcutRecordingRequestInFlight.current &&
+      shortcutRecordingGeneration.current === null
+    ) {
+      return;
+    }
+    if (shortcutRecordingRequestInFlight.current) return;
+    if (!nativeRuntime || shortcutRecordingGeneration.current === null) {
+      setNotice(message);
+      setNoticeIsError(false);
+      return;
+    }
+
+    shortcutRecordingRequestInFlight.current = true;
+    setShortcutRecordingBusy(true);
+    try {
+      await restoreShortcutRecording(message);
+    } finally {
+      shortcutRecordingRequestInFlight.current = false;
+      setShortcutRecordingBusy(false);
+    }
+  }
+
   function recordShortcut(
     action: CaptureAction,
     event: KeyboardEvent<HTMLButtonElement>,
@@ -1168,9 +1332,7 @@ function App() {
     event.stopPropagation();
 
     if (event.code === "Escape") {
-      setRecording(null);
-      setNotice("Shortcut unchanged.");
-      setNoticeIsError(false);
+      void stopShortcutRecording("Shortcut unchanged.");
       return;
     }
     if (MODIFIER_CODES.has(event.code)) return;
@@ -1178,9 +1340,7 @@ function App() {
     try {
       const shortcut = shortcutFromEvent(event);
       setSettings((current) => ({ ...current, [action]: shortcut }));
-      setRecording(null);
-      setNotice("Shortcut ready to save.");
-      setNoticeIsError(false);
+      void stopShortcutRecording("Shortcut ready to save.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
       setNoticeIsError(true);
@@ -1287,7 +1447,7 @@ function App() {
           </p>
         </div>
         <span className="status-pill" data-ready={screenRecordingGranted}>
-          {screenRecordingGranted ? "All modes ready" : "Area ready"}
+          {screenRecordingView.stateLabel}
         </span>
       </header>
 
@@ -1302,8 +1462,8 @@ function App() {
         <div id="shortcuts-panel" role="tabpanel" aria-labelledby="shortcuts-tab" className="settings-panel">
           {!screenRecordingGranted && (
             <button type="button" className="permission-bridge" onClick={openSystemPermissions}>
-              <strong>Area works now.</strong>
-              <span>Enable Window &amp; Full Screen</span>
+              <strong>Screen Recording required</strong>
+              <span>Screen Recording is required for every screenshot mode</span>
             </button>
           )}
 
@@ -1326,15 +1486,22 @@ function App() {
                 type="button"
                 className="shortcut-recorder"
                 data-recording={recording === action}
-                aria-pressed={recording === action}
                 aria-label={`Change ${label} shortcut`}
+                disabled={isSaving}
                 onClick={(event) => {
                   event.currentTarget.focus();
-                  setRecording(action);
-                  setNotice("Press your new shortcut. Escape cancels.");
-                  setNoticeIsError(false);
+                  void startShortcutRecording(action, event.currentTarget);
                 }}
-                onBlur={() => setRecording(null)}
+                onBlur={() => {
+                  if (
+                    shortcutRecordingTarget.current === action &&
+                    (shortcutRecordingRequestInFlight.current ||
+                      shortcutRecordingGeneration.current !== null ||
+                      !nativeRuntime)
+                  ) {
+                    void stopShortcutRecording("Shortcut unchanged.");
+                  }
+                }}
                 onKeyDown={(event) => {
                   if (recording === action) {
                     recordShortcut(action, event);
@@ -1380,7 +1547,7 @@ function App() {
             type="button"
             className="secondary-button"
             onClick={restoreDefaults}
-            disabled={isSaving}
+            disabled={isSaving || shortcutRecordingBusy || recording !== null}
           >
             Restore defaults
           </button>
@@ -1388,7 +1555,13 @@ function App() {
             type="button"
             className="primary-button"
             onClick={save}
-            disabled={!nativeRuntime || (!isDirty && !needsRetry) || isSaving}
+            disabled={
+              !nativeRuntime ||
+              (!isDirty && !needsRetry) ||
+              isSaving ||
+              shortcutRecordingBusy ||
+              recording !== null
+            }
           >
             {isSaving
               ? "Saving…"
@@ -1407,56 +1580,45 @@ function App() {
         <div className="section-heading">
           <h2 id="system-heading">Capture permissions</h2>
           <span data-ready={screenRecordingGranted}>
-            {screenRecordingGranted ? "All modes ready" : "Area works now"}
+            {screenRecordingView.stateLabel}
           </span>
         </div>
 
-        {!screenRecordingGranted && (
-          <div className="system-row">
-            <div className="system-copy">
-              <strong>Area screenshots</strong>
-              <span>Use the live macOS area picker without Screen Recording access</span>
-            </div>
-            <button
-              type="button"
-              className="compact-button"
-              disabled={!nativeRuntime || systemAction !== null}
-              onClick={handleAreaOnlyCapture}
-            >
-              {systemAction === "area_only" ? "Saving…" : "Use Area only"}
-            </button>
-          </div>
-        )}
-
         <div className="system-row">
           <div className="system-copy">
-            <strong>Window &amp; full screen</strong>
-            <span>
-              {screenRecordingGranted
-                ? "Screen Recording access is enabled"
-                : "Allow Screen Recording to unlock these modes"}
-            </span>
+            <strong>Area, window &amp; full screen</strong>
+            <span>{screenRecordingView.captureDetail}</span>
           </div>
-          <button
-            ref={screenRecordingButtonRef}
-            type="button"
-            className="compact-button"
-            data-granted={screenRecordingGranted}
-            disabled={
-              !nativeRuntime ||
-              screenRecordingGranted ||
-              systemAction !== null
-            }
-            onClick={handleScreenRecording}
-          >
-            {screenRecordingGranted
-              ? "Granted"
-              : systemAction === "permission"
-                ? "Checking…"
-                : systemStatus.screenRecordingRequestAttempted
-                  ? "Open settings"
-                  : "Grant access"}
-          </button>
+          <div className="system-actions">
+            <button
+              ref={screenRecordingButtonRef}
+              type="button"
+              className="compact-button"
+              data-granted={screenRecordingGranted}
+              disabled={
+                !nativeRuntime ||
+                screenRecordingGranted ||
+                systemAction !== null
+              }
+              onClick={handleScreenRecording}
+            >
+              {screenRecordingGranted
+                ? "Granted"
+                : systemAction === "permission"
+                  ? "Checking…"
+                  : screenRecordingView.primaryLabel}
+            </button>
+            {screenRecordingView.showRestart && (
+              <button
+                type="button"
+                className="compact-button"
+                disabled={!nativeRuntime || systemAction !== null}
+                onClick={() => void restartCapso()}
+              >
+                {systemAction === "restart" ? "Restarting…" : "Restart Capso"}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="system-row">
@@ -1468,7 +1630,9 @@ function App() {
                 : systemStatus.launchAtLogin === "enabled"
                   ? "Starts automatically after login"
                   : systemStatus.launchAtLogin === "unavailable"
-                    ? "Unavailable outside the installed Mac app"
+                    ? systemStatus.screenRecordingIdentity === "buildSpecific"
+                      ? "Unavailable in this development build"
+                      : "Unavailable until Capso is installed in Applications"
                     : "Optional - off until you enable it"}
             </span>
           </div>
@@ -1503,6 +1667,7 @@ function App() {
         <div
           className="system-notice"
           data-error={systemNoticeIsError}
+          data-attention={!screenRecordingGranted && !systemNoticeIsError}
           aria-live="polite"
         >
           {systemNotice}

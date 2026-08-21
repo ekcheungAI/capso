@@ -571,6 +571,9 @@ pub(crate) async fn recognize_screen_selection_text(
     app: AppHandle,
 ) -> Result<Option<SelectedOcrResult>, String> {
     let _capture_lease = crate::capture::acquire_capture_lease().map_err(|error| error.message)?;
+    if !crate::system::screen_recording_granted() {
+        return Err("Screen Recording is required for OCR screen selection.".into());
+    }
     let capture_id = uuid::Uuid::new_v4().to_string();
     let ticket = begin_session(&app, &capture_id)?;
     let cache_root = match app
@@ -634,11 +637,18 @@ pub(crate) async fn recognize_screen_selection_text(
             return Err("The macOS OCR area selector stopped unexpectedly.".into());
         }
     };
-    if !status.success() {
+    if !output.exists() {
         fail_session(&app, &ticket);
-        if !output.exists() {
+        if !crate::system::screen_recording_granted() {
+            return Err("Screen Recording is required for OCR screen selection.".into());
+        }
+        if !status.success() {
             return Ok(None);
         }
+        return Err("macOS finished OCR area selection without creating an image.".into());
+    }
+    if !status.success() {
+        fail_session(&app, &ticket);
         return Err("macOS could not finish the selected OCR area.".into());
     }
     let (_, source_bytes) = match validate_selected_png(&output) {

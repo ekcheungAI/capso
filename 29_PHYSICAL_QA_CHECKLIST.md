@@ -12,7 +12,10 @@
 
 - Build a debug bundle: `pnpm --filter mac tauri build --debug --bundles app`, or run
   `pnpm --filter mac tauri dev`.
-- Grant **Screen Recording** when prompted (needed for Window and Fullscreen). System
+- Before install, run `pnpm --filter mac verify:screen-recording-identity /path/to/Capso.app`.
+  Do not run permission QA with an ad-hoc/CDHash-only bundle: each rebuild is a new
+  macOS privacy identity even though System Settings still displays the name Capso.
+- Grant **Screen Recording** when prompted (needed for every screenshot mode). System
   Settings → Privacy & Security → Screen Recording.
 - Default shortcuts: **Region ⌘⇧4**, **Window ⌃⇧W**, **Fullscreen ⌃⇧F**.
 - If macOS still owns **⌘⇧4**, disable its selected-area shortcut under System Settings
@@ -39,30 +42,35 @@ Result: ______  Note: __________________________________________
 - [ ] Fresh launch does **not** enable launch-at-login; the login item is opt-in only.
 - [ ] Toggle launch-at-login on, reboot, confirm it starts; toggle off, reboot, confirm it does not.
 - [ ] Screen Recording permission flow appears when needed and links to the right pane.
-- [ ] With Screen Recording off, choose **Continue with Area only**, quit, and relaunch:
-      Area capture still works and Capso does not reopen permission guidance or show a
-      global Screen Recording alert; Window and Full Screen remain clearly locked.
+- [ ] With Screen Recording unavailable, every capture mode is clearly locked before a
+      picker opens; no UI claims that Area can still save pixels.
 - [ ] On a fresh permission attempt, the first action says **Grant access**. Approve the
       macOS prompt and confirm Capso stays in its own window instead of opening System
       Settings; Window and Full Screen become ready.
-- [ ] Stale-state recovery: when Capso says access is off although its System Settings
-      toggle looks on, turn it off and on again, approve Touch ID, reopen Capso, and
-      confirm the status changes to granted.
+- [ ] Stale-state recovery: when this installed build is not authorized although System
+      Settings shows Capso on, confirm the signing-identity gate passes, turn Capso off
+      and on again, approve Touch ID, choose **Restart Capso**, and confirm the status
+      changes to granted.
 - [ ] Quit and relaunch from the menu bar; the popover reopens cleanly.
 
 Result: ______  Note: __________________________________________
 
 ## CAP-01 — capture modes from any app
 
-- [ ] With Screen Recording **off**, press **⌘⇧4**: the live desktop is immediately
-      selectable with no white Capso frame or magnifier; releasing the mouse commits
-      one PNG and shows Quick Access at bottom-right in under 1 second.
+- [ ] With Screen Recording **on for the verified installed build**, press **⌘⇧4**: the
+      live desktop is immediately selectable with no white Capso frame or magnifier;
+      releasing the mouse commits one PNG and shows Quick Access at bottom-right in
+      under 1 second.
+- [ ] Revoke Screen Recording and press **⌘⇧4**: Capso opens permission recovery before
+      the picker, creates no empty file, and never treats denial as a silent cancel.
 - [ ] From three different foreground apps, **⌘⇧4** starts region capture.
 - [ ] **⌃⇧W** captures a window; **⌃⇧F** captures fullscreen.
 - [ ] **Escape** cancels a capture silently (no error, no empty file, no overlay).
 - [ ] Tray **Capture Region / Capture Window / Capture Fullscreen** work as fallbacks.
 - [ ] Bind a conflicting shortcut and confirm the conflict message appears and the
       Capture menu still works ("shortcut conflict; Capture menu remains available").
+- [ ] Click the Area shortcut recorder, press **⌘⇧4** together, and confirm the recorder
+      receives the keys without launching a capture; cancel/save restores global capture.
 
 Result: ______  Note: __________________________________________
 

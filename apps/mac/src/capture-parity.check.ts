@@ -334,7 +334,7 @@ test("settings separate general, shortcuts, account, and advanced decisions", as
   assert.match(app, /aria-labelledby=/);
   assert.match(app, /ArrowRight/);
   assert.match(app, /ArrowLeft/);
-  assert.match(app, /Enable Window &amp; Full Screen/);
+  assert.match(app, /Screen Recording is required for every screenshot mode/);
 });
 
 test("the parity features are discoverable from the tray menu, not a settings table", async () => {
@@ -682,20 +682,21 @@ test("clicking a shortcut recorder gives its key handler focus", async () => {
 
   assert.match(
     app,
-    /onClick=\{\(event\) => \{\s*event\.currentTarget\.focus\(\);\s*setRecording\(action\)/,
+    /onClick=\{\(event\) => \{\s*event\.currentTarget\.focus\(\);\s*void startShortcutRecording\(action, event\.currentTarget\)/,
   );
+  assert.match(app, /set_shortcut_recording[\s\S]*?active: true,[\s\S]*?generation: null/);
+  assert.doesNotMatch(app, /aria-pressed=/);
   assert.match(app, /Saved\. Switch to another app to use your shortcuts\./);
   assert.match(app, /region: "Command\+Shift\+Digit4"/);
   assert.match(app, /macOS may still own ⌘⇧4/);
-  assert.match(app, /turn it off and on again/);
   assert.match(onboarding, /⌘⇧4 by default/);
-  assert.match(firstRun, /Use Area only/);
-  assert.match(firstRun, /turn it off and on again/);
+  assert.doesNotMatch(firstRun, /Use Area only/);
+  assert.match(firstRun, /screenRecordingPresentation/);
   assert.match(config, /"label": "main"[\s\S]*?"titleBarStyle": "Visible"/);
   assert.match(config, /"label": "main"[\s\S]*?"hiddenTitle": false/);
 });
 
-test("Area-only permission choice is durable and a successful grant does not open Settings", async () => {
+test("capture permission requires effective authorization and explains build identity", async () => {
   const [app, firstRun, native, system] = await Promise.all([
     readFile(new URL("./App.tsx", import.meta.url), "utf8"),
     readFile(new URL("./FirstRun.tsx", import.meta.url), "utf8"),
@@ -709,11 +710,11 @@ test("Area-only permission choice is durable and a successful grant does not ope
   );
   assert.match(
     firstRun,
-    /if \(screenRecordingRequestAttempted\) \{[\s\S]*?open_screen_recording_settings[\s\S]*?\} else \{[\s\S]*?request_screen_recording_permission/,
+    /permissionView\.primaryAction === "settings"[\s\S]*?open_screen_recording_settings[\s\S]*?\} else \{[\s\S]*?request_screen_recording_permission/,
   );
   assert.match(
     firstRun,
-    /const label =[\s\S]*?screenRecordingRequestAttempted[\s\S]*?"Open System Settings"[\s\S]*?"Grant access"/,
+    /const label =[\s\S]*?permissionView\.primaryAction === "settings"[\s\S]*?"Open System Settings"[\s\S]*?permissionView\.primaryLabel/,
   );
   const requestBranch = firstRun.slice(
     firstRun.indexOf(
@@ -722,37 +723,14 @@ test("Area-only permission choice is durable and a successful grant does not ope
     firstRun.indexOf('} else if (current.id === "hotkey")'),
   );
   assert.doesNotMatch(requestBranch, /open_screen_recording_settings/);
-  assert.match(
-    requestBranch,
-    /if \(status\.screenRecording === "granted"\) \{[\s\S]*?Screen Recording is ready[\s\S]*?\} else \{[\s\S]*?Access is still off/,
-  );
-  assert.match(
-    firstRun,
-    /screenRecordingSkipped:[\s\S]*?system\.screenRecording === "required" && system\.areaOnlyCapture/,
-  );
-  assert.match(
-    firstRun,
-    /skipWalkthrough[\s\S]*?screenRecording === "required"[\s\S]*?set_area_only_capture_preference", \{ enabled: true \}[\s\S]*?localStorage\.setItem\(DISMISSED, "1"\)/,
-  );
-  assert.match(
-    firstRun,
-    /system\.screenRecording === "granted" && system\.areaOnlyCapture[\s\S]*?set_area_only_capture_preference[\s\S]*?enabled: false/,
-  );
-  assert.match(native, /set_area_only_capture_preference/);
-  assert.match(native, /screen_recording_guidance_needed\(system_status\.screen_recording, area_only_capture\)/);
-  assert.match(system, /store_area_only_preference/);
-  assert.match(system, /area_only_capture: self\.area_only_capture/);
-  assert.match(system, /file\.write_all\(&bytes\)\.and_then\(\|_\| file\.sync_all\(\)\)/);
-  assert.match(app, /Area screenshots/);
-  assert.match(app, /"Use Area only"/);
-  assert.match(
-    app,
-    /status\.screenRecording === "granted" && status\.areaOnlyCapture[\s\S]*?set_area_only_capture_preference[\s\S]*?enabled: false/,
-  );
-  assert.match(
-    app,
-    /handleAreaOnlyCapture[\s\S]*?invoke<SystemStatus>\("set_area_only_capture_preference", \{\s*enabled: true,/,
-  );
+  assert.match(requestBranch, /setNote\(screenRecordingPresentation\(status\)\.notice\)/);
+  assert.doesNotMatch(firstRun, /screenRecordingSkipped|areaOnlyCapture|Area-only/);
+  assert.doesNotMatch(native, /set_area_only_capture_preference/);
+  assert.match(native, /fn restart_capso\(app: AppHandle\)/);
+  assert.match(system, /enum ScreenRecordingIdentity/);
+  assert.match(system, /Signature=adhoc/);
+  assert.doesNotMatch(app, /Area capture still works|Use Area only|handleAreaOnlyCapture/);
+  assert.match(app, /screenRecordingPresentation/);
 });
 
 test("capture delays have a visible cancellable surface for every mode", async () => {

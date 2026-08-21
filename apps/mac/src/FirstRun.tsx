@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { createLatestRequestGate } from "./async-control";
 import { CapsoGlyph, CapsoGlyphDefs } from "./glyphs.generated";
 import { firstRunComplete, firstRunSteps, type FirstRunInput } from "./onboarding";
+import {
+  screenRecordingPresentation,
+  type ScreenRecordingAccess,
+} from "./screen-recording-ux";
 import { formatShortcut, isMacOsAreaShortcut } from "./setup";
 
 /**
@@ -23,19 +27,17 @@ import { formatShortcut, isMacOsAreaShortcut } from "./setup";
  *    restart (see `latency.rs`, and the test named
  *    `latest_twenty_privacy_safe_samples_survive_restart`). That is a durable
  *    "has captured at least once" signal with no new bookkeeping.
- *  - Dismissal remains a localStorage latch in the webview. The separate Area-only
- *    choice is persisted natively because Rust must honor it before building the
- *    startup tray or deciding whether permission guidance should open.
+ *  - Dismissal remains a localStorage latch in the webview. Effective Screen
+ *    Recording authorization stays native because capture must gate on the same
+ *    macOS preflight that the tray and Settings use.
  */
 
 const DISMISSED = "capso.mac.firstRun";
 const HOTKEY_SEEN = "capso.mac.hotkeySeen";
 const LIBRARY_CHOICE = "capso.mac.libraryChoice";
+const LOGIN_ITEM_DECLINED = "capso.mac.loginItemDeclined";
 
-type SystemStatus = {
-  screenRecording: "granted" | "required";
-  areaOnlyCapture: boolean;
-  screenRecordingRequestAttempted: boolean;
+type SystemStatus = ScreenRecordingAccess & {
   launchAtLogin: string;
 };
 
@@ -62,11 +64,16 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const [showConnectForm, setShowConnectForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [screenRecordingRequestAttempted, setScreenRecordingRequestAttempted] =
-    useState(false);
+  const [screenRecordingAccess, setScreenRecordingAccess] =
+    useState<ScreenRecordingAccess>({
+      screenRecording: "required",
+      screenRecordingRequestAttempted: false,
+      screenRecordingIdentity: "unknown",
+    });
   const actionInFlight = useRef(false);
   const refreshGate = useRef(createLatestRequestGate());
   const mounted = useRef(true);
+  const currentStepRef = useRef<HTMLLIElement>(null);
 
   function beginFirstRunAction() {
     if (actionInFlight.current) return false;
@@ -84,19 +91,14 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const refresh = useCallback(async () => {
     const isLatest = refreshGate.current.begin();
     try {
-      let [system, diagnostics, keys, auth] = await Promise.all([
+      const [system, diagnostics, keys, auth] = await Promise.all([
         invoke<SystemStatus>("get_system_status"),
         invoke<Diagnostics>("get_diagnostics"),
         invoke<ShortcutStatus>("get_shortcut_settings"),
         invoke<AuthUiSnapshot>("get_auth_status"),
       ]);
-      if (system.screenRecording === "granted" && system.areaOnlyCapture) {
-        system = await invoke<SystemStatus>("set_area_only_capture_preference", {
-          enabled: false,
-        });
-      }
       if (!isLatest()) return;
-      setScreenRecordingRequestAttempted(system.screenRecordingRequestAttempted);
+      setScreenRecordingAccess(system);
       setShortcutSettings(keys.settings);
       setShortcut(formatShortcut(keys.settings.region));
       setShortcutConflict(
@@ -105,9 +107,9 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
       const rememberedLibraryChoice = localStorage.getItem(LIBRARY_CHOICE);
       setInput({
         screenRecording: system.screenRecording,
-        screenRecordingSkipped:
-          system.screenRecording === "required" && system.areaOnlyCapture,
         launchAtLogin: system.launchAtLogin,
+        loginItemDeclined:
+          localStorage.getItem(LOGIN_ITEM_DECLINED) === "1",
         hotkeyConfirmed: localStorage.getItem(HOTKEY_SEEN) === "1",
         cloudConfigured: auth.configured,
         libraryChoice:
@@ -144,6 +146,15 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     }
   }, [input, onDone]);
 
+  const currentStepId =
+    input === null
+      ? null
+      : firstRunSteps(input).find((step) => step.state === "current")?.id ?? null;
+
+  useEffect(() => {
+    if (currentStepId) currentStepRef.current?.focus();
+  }, [currentStepId]);
+
   if (!input) {
     return (
       <main className="first-run">
@@ -154,33 +165,22 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
 
   const steps = firstRunSteps(input);
   const current = steps.find((s) => s.state === "current");
+  const permissionView = screenRecordingPresentation(screenRecordingAccess);
 
   const act = async () => {
     if (!current || !beginFirstRunAction()) return;
     setNote(null);
     try {
       if (current.id === "permission") {
-        if (screenRecordingRequestAttempted) {
+        if (permissionView.primaryAction === "settings") {
           await invoke("open_screen_recording_settings");
           if (!mounted.current) return;
-          setNote(
-            "System Settings opened. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
-          );
+          setNote(permissionView.notice);
         } else {
           const status = await invoke<SystemStatus>("request_screen_recording_permission");
           if (!mounted.current) return;
-          setScreenRecordingRequestAttempted(status.screenRecordingRequestAttempted);
-          if (status.screenRecording === "granted") {
-            await invoke<SystemStatus>("set_area_only_capture_preference", {
-              enabled: false,
-            });
-            if (!mounted.current) return;
-            setNote("Screen Recording is ready for Window and Full Screen capture.");
-          } else {
-            setNote(
-              "Access is still off. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
-            );
-          }
+          setScreenRecordingAccess(status);
+          setNote(screenRecordingPresentation(status).notice);
         }
       } else if (current.id === "hotkey") {
         if (!shortcutSettings) {
@@ -207,6 +207,7 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
         }
         localStorage.setItem(HOTKEY_SEEN, "1");
       } else if (current.id === "login") {
+        localStorage.removeItem(LOGIN_ITEM_DECLINED);
         await invoke("set_launch_at_login_enabled", { enabled: true });
       }
       await refresh();
@@ -220,17 +221,25 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const decline = async () => {
     if (!current || !beginFirstRunAction()) return;
     try {
-      if (current.id === "permission") {
-        await invoke<SystemStatus>("set_area_only_capture_preference", { enabled: true });
-        if (!mounted.current) return;
-        setNote("Area-only setup selected. You can grant the other modes later in Settings.");
-      } else if (current.id === "login") {
+      if (current.id === "login") {
         await invoke("set_launch_at_login_enabled", { enabled: false });
+        localStorage.setItem(LOGIN_ITEM_DECLINED, "1");
       }
       await refresh();
     } catch (error) {
       if (mounted.current) setNote(String(error));
     } finally {
+      endFirstRunAction();
+    }
+  };
+
+  const restartCapso = async () => {
+    if (!beginFirstRunAction()) return;
+    setNote("Restarting Capso…");
+    try {
+      await invoke("restart_capso");
+    } catch (error) {
+      if (mounted.current) setNote(`Could not restart Capso: ${String(error)}`);
       endFirstRunAction();
     }
   };
@@ -268,9 +277,6 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     if (!beginFirstRunAction()) return;
     setNote(null);
     try {
-      if (input.screenRecording === "required" && !input.screenRecordingSkipped) {
-        await invoke<SystemStatus>("set_area_only_capture_preference", { enabled: true });
-      }
       if (!mounted.current) return;
       localStorage.setItem(DISMISSED, "1");
       onDone();
@@ -283,9 +289,9 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
 
   const label =
     current?.id === "permission"
-      ? screenRecordingRequestAttempted
+      ? permissionView.primaryAction === "settings"
         ? "Open System Settings"
-        : "Grant access"
+        : permissionView.primaryLabel
       : current?.id === "hotkey"
         ? `${shortcutConflict ? "Retry" : "Use"} ${shortcut}`
         : current?.id === "login"
@@ -302,16 +308,33 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
 
       <ol className="first-run__steps">
         {steps.map((step) => (
-          <li key={step.id} className="first-run__step" data-state={step.state}>
+          <li
+            key={step.id}
+            ref={step.state === "current" ? currentStepRef : undefined}
+            className="first-run__step"
+            data-state={step.state}
+            tabIndex={step.state === "current" ? -1 : undefined}
+            aria-current={step.state === "current" ? "step" : undefined}
+          >
             <span className="first-run__bullet" aria-hidden="true">
-              {step.state === "done" ? "✓" : ""}
+              {step.state === "done" ? "✓" : step.state === "skipped" ? "—" : ""}
             </span>
+            {(step.state === "done" || step.state === "skipped") && (
+              <span className="sr-only">
+                {step.state === "done" ? "Completed: " : "Skipped: "}
+              </span>
+            )}
             <div className="first-run__body">
               <p className="first-run__step-title">
                 {step.title}
                 {step.optional && <span className="first-run__optional"> · optional</span>}
               </p>
               <p className="first-run__detail">{step.detail}</p>
+              {step.id === "permission" && step.state === "current" && (
+                <p className="first-run__detail" role="note">
+                  {permissionView.notice}
+                </p>
+              )}
               {step.id === "hotkey" && shortcutConflict && (
                 <p className="first-run__detail" role="note">
                   {isMacOsAreaShortcut(shortcutSettings?.region ?? "")
@@ -387,9 +410,19 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
                       {label}
                     </button>
                   ) : null}
+                  {step.id === "permission" && permissionView.showRestart && (
+                    <button
+                      type="button"
+                      className="first-run__secondary"
+                      disabled={busy}
+                      onClick={() => void restartCapso()}
+                    >
+                      Restart Capso
+                    </button>
+                  )}
                   {step.optional && (
                     <button type="button" className="first-run__secondary" disabled={busy} onClick={() => void decline()}>
-                      {step.id === "permission" ? "Use Area only" : "No thanks"}
+                      No thanks
                     </button>
                   )}
                   {step.id === "capture" && (
@@ -404,7 +437,11 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
         ))}
       </ol>
 
-      {note && <p className="first-run__note">{note}</p>}
+      {note && (
+        <p className="first-run__note" role="status" aria-live="polite">
+          {note}
+        </p>
+      )}
 
       {/* Nothing may block capture (doc 15, interaction principle 2). The way out
           is explicit rather than a hidden Escape, and it does not pretend the
@@ -415,9 +452,7 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
         disabled={busy}
         onClick={() => void skipWalkthrough()}
       >
-        {current?.id === "permission"
-          ? "Continue with Area only"
-          : "Skip — I'll do this in Settings"}
+        Skip — I'll do this in Settings
       </button>
     </main>
   );

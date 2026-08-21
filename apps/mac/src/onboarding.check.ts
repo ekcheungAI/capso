@@ -10,8 +10,8 @@ import {
 
 const at = (o: Partial<FirstRunInput> = {}): FirstRunInput => ({
   screenRecording: "required",
-  screenRecordingSkipped: false,
   launchAtLogin: "unknown",
+  loginItemDeclined: false,
   hotkeyConfirmed: false,
   cloudConfigured: true,
   libraryChoice: "undecided",
@@ -46,25 +46,13 @@ test("steps advance in order", () => {
   );
 });
 
-test("Area-only setup can continue without Screen Recording permission", () => {
-  const areaOnly = at({ screenRecordingSkipped: true });
-  const permission = firstRunSteps(areaOnly).find((step) => step.id === "permission")!;
+test("Screen Recording is required before onboarding advances to the shortcut", () => {
+  const permission = firstRunSteps(at()).find((step) => step.id === "permission")!;
 
-  assert.equal(permission.state, "done");
-  assert.equal(permission.optional, true);
-  assert.match(permission.detail, /Area only/i);
-  assert.match(permission.detail, /later/i);
-  assert.equal(firstRunAction(areaOnly), "hotkey");
-});
-
-test("a later Screen Recording grant replaces stale Area-only guidance", () => {
-  const permission = firstRunSteps(
-    at({ screenRecording: "granted", screenRecordingSkipped: true }),
-  ).find((step) => step.id === "permission")!;
-
-  assert.equal(permission.state, "done");
-  assert.doesNotMatch(permission.detail, /Area only/i);
-  assert.doesNotMatch(permission.detail, /later/i);
+  assert.equal(permission.state, "current");
+  assert.equal(permission.optional, false);
+  assert.match(permission.detail, /Area, Window, and Full Screen/i);
+  assert.equal(firstRunAction(at()), "permission");
 });
 
 test("library connection is an explicit decision before the first capture", () => {
@@ -72,6 +60,7 @@ test("library connection is an explicit decision before the first capture", () =
     screenRecording: "granted",
     hotkeyConfirmed: true,
     launchAtLogin: "disabled",
+    loginItemDeclined: true,
   });
 
   assert.equal(firstRunAction(readyForLibrary), "library");
@@ -89,6 +78,7 @@ test("connected and deliberate local-only choices both settle the library step",
       screenRecording: "granted",
       hotkeyConfirmed: true,
       launchAtLogin: "disabled",
+      loginItemDeclined: true,
       libraryChoice,
     });
     assert.equal(stateOf(input, "library"), "done");
@@ -109,12 +99,37 @@ test("an unconfigured build offers an honest local-only path", () => {
   assert.match(library.detail, /private on this Mac/i);
 });
 
-test("declining the login item settles it rather than leaving it unfinished", () => {
-  // The trap: treating "disabled" as todo leaves a permanent unticked row for a
-  // user who deliberately said no.
-  assert.equal(stateOf(at({ launchAtLogin: "disabled" }), "login"), "done");
+test("login-item onboarding distinguishes a fresh disabled state from a deliberate answer", () => {
+  assert.equal(stateOf(at({ launchAtLogin: "disabled" }), "login"), "todo");
+  assert.equal(
+    stateOf(at({ launchAtLogin: "disabled", loginItemDeclined: true }), "login"),
+    "skipped",
+  );
   assert.equal(stateOf(at({ launchAtLogin: "enabled" }), "login"), "done");
   assert.equal(stateOf(at({ launchAtLogin: "unknown" }), "login"), "todo");
+});
+
+test("an unavailable or approval-pending optional login item never traps first run", () => {
+  for (const launchAtLogin of ["unavailable", "requiresApproval"] as const) {
+    const input = at({
+      screenRecording: "granted",
+      hotkeyConfirmed: true,
+      launchAtLogin,
+    });
+    assert.equal(firstRunAction(input), "library");
+    assert.notEqual(stateOf(input, "login"), "current");
+  }
+  assert.equal(
+    stateOf(
+      at({
+        screenRecording: "granted",
+        hotkeyConfirmed: true,
+        launchAtLogin: "unavailable",
+      }),
+      "login",
+    ),
+    "skipped",
+  );
 });
 
 test("the optional step never blocks completion", () => {
@@ -124,11 +139,12 @@ test("the optional step never blocks completion", () => {
     libraryChoice: "local_only",
     hasCaptured: true,
     launchAtLogin: "unknown",
+    loginItemDeclined: false,
   });
   assert.equal(firstRunComplete(skippedLogin), true);
 });
 
-test("either a grant or an explicit Area-only choice settles capture access", () => {
+test("effective Screen Recording authorization is required to finish onboarding", () => {
   const all = at({
     screenRecording: "granted",
     hotkeyConfirmed: true,
@@ -138,28 +154,12 @@ test("either a grant or an explicit Area-only choice settles capture access", ()
   });
   assert.equal(firstRunComplete(all), true);
   assert.equal(
-    firstRunComplete({ ...all, screenRecording: "required", screenRecordingSkipped: true }),
-    true,
-  );
-  assert.equal(
-    firstRunComplete({ ...all, screenRecording: "required", screenRecordingSkipped: false }),
+    firstRunComplete({ ...all, screenRecording: "required" }),
     false,
   );
   assert.equal(firstRunComplete({ ...all, hotkeyConfirmed: false }), false);
   assert.equal(firstRunComplete({ ...all, libraryChoice: "undecided" }), false);
   assert.equal(firstRunComplete({ ...all, hasCaptured: false }), false);
-});
-
-test("a saved Area-only choice stays complete without Screen Recording", () => {
-  const back = at({
-    screenRecording: "required",
-    screenRecordingSkipped: true,
-    hotkeyConfirmed: true,
-    libraryChoice: "local_only",
-    hasCaptured: true,
-  });
-  assert.equal(firstRunAction(back), null);
-  assert.equal(firstRunComplete(back), true);
 });
 
 test("a completed run has no current step", () => {

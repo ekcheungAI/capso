@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "verify:screen-recording-identity": "node --experimental-strip-types scripts/verify-signing.ts",
     "test": "node --experimental-strip-types --test 'src/**/*.check.ts'",
     "typecheck": "tsc --noEmit"
   },
