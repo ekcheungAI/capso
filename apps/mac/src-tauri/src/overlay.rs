@@ -652,6 +652,38 @@ pub(crate) struct OverlayRuntime {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct OverlayPresentationIdentity {
+    path: String,
+    presentation_id: u64,
+}
+
+pub(crate) struct CaptureOverlayLease {
+    app: AppHandle,
+    hidden: Option<OverlayPresentationIdentity>,
+}
+
+impl CaptureOverlayLease {
+    pub(crate) fn begin(app: AppHandle) -> Result<Self, String> {
+        let hidden = hide_current_overlay_for_capture(&app)?;
+        Ok(Self { app, hidden })
+    }
+}
+
+impl Drop for CaptureOverlayLease {
+    fn drop(&mut self) {
+        if let Some(hidden) = self.hidden.as_ref() {
+            if let Err(error) = restore_temporarily_hidden_overlay_if_current(
+                &self.app,
+                &hidden.path,
+                hidden.presentation_id,
+            ) {
+                eprintln!("Could not restore Quick Access after capture: {error}");
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct OverlayDragIdentity {
     path: String,
     presentation_id: u64,
@@ -814,6 +846,7 @@ enum RevealTransition {
 #[derive(Debug, PartialEq)]
 enum DismissTransition {
     Stale,
+    Hidden,
     Dismissed,
     Failed(OverlayFailureRecord),
 }
@@ -821,12 +854,14 @@ enum DismissTransition {
 #[derive(Debug, PartialEq)]
 enum TemporaryHideTransition {
     Stale,
+    AlreadyHidden,
     Hidden,
     Failed(OverlayFailureRecord),
 }
 
 #[derive(Debug, PartialEq)]
 enum RestoreHiddenTransition {
+    Stale,
     NotHidden,
     Restored(OverlayCapture),
     Failed(OverlayFailureRecord),
@@ -1050,7 +1085,7 @@ fn temporary_hide_transition(
         return TemporaryHideTransition::Stale;
     }
     if runtime.temporarily_hidden {
-        return TemporaryHideTransition::Hidden;
+        return TemporaryHideTransition::AlreadyHidden;
     }
     match window.hide_overlay() {
         Ok(()) => {
@@ -1102,6 +1137,18 @@ fn restore_hidden_transition(
     }
 }
 
+fn restore_exact_hidden_transition(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+) -> RestoreHiddenTransition {
+    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
+        return RestoreHiddenTransition::Stale;
+    }
+    restore_hidden_transition(runtime, window)
+}
+
 fn fail_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
@@ -1117,14 +1164,28 @@ fn fail_transition(
     failure
 }
 
+#[cfg(test)]
 fn dismiss_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
     presentation_id: u64,
 ) -> DismissTransition {
+    dismiss_transition_for_reason(runtime, window, path, presentation_id, DismissReason::Close)
+}
+
+fn dismiss_transition_for_reason(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    reason: DismissReason,
+) -> DismissTransition {
     if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return DismissTransition::Stale;
+    }
+    if runtime.temporarily_hidden && matches!(reason, DismissReason::Timeout) {
+        return DismissTransition::Hidden;
     }
 
     match window.hide_overlay() {
@@ -1837,6 +1898,64 @@ pub(crate) fn has_temporarily_hidden_capture<R: Runtime>(app: &AppHandle<R>) -> 
         .unwrap_or(false)
 }
 
+fn hide_current_overlay_for_capture(
+    app: &AppHandle,
+) -> Result<Option<OverlayPresentationIdentity>, String> {
+    let (transition, identity) = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        let Some(capture) = runtime.current.clone() else {
+            return Ok(None);
+        };
+        let identity = OverlayPresentationIdentity {
+            path: capture.path.clone(),
+            presentation_id: capture.presentation_id,
+        };
+        let window = app
+            .get_webview_window(OVERLAY_LABEL)
+            .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+        let transition = temporary_hide_transition(
+            &mut runtime,
+            &window,
+            &capture.path,
+            capture.presentation_id,
+        );
+        (transition, identity)
+    };
+    match transition {
+        TemporaryHideTransition::Stale | TemporaryHideTransition::AlreadyHidden => Ok(None),
+        TemporaryHideTransition::Hidden => {
+            if let Err(error) = app.emit_to(
+                OVERLAY_LABEL,
+                "overlay-hidden",
+                OverlayRestored {
+                    path: &identity.path,
+                    presentation_id: identity.presentation_id,
+                },
+            ) {
+                let rollback = restore_temporarily_hidden_overlay_if_current(
+                    app,
+                    &identity.path,
+                    identity.presentation_id,
+                )
+                .err()
+                .map(|restore_error| format!(" Restore also failed: {restore_error}"))
+                .unwrap_or_default();
+                return Err(format!(
+                    "Could not pause the Quick Access timer before capture: {error}.{rollback}"
+                ));
+            }
+            Ok(Some(identity))
+        }
+        TemporaryHideTransition::Failed(failure) => {
+            report_overlay_failure(app, &failure);
+            Err(failure.message)
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn overlay_hide_temporarily(
     app: AppHandle,
@@ -1855,7 +1974,7 @@ pub(crate) fn overlay_hide_temporarily(
     };
     match transition {
         TemporaryHideTransition::Stale => Ok(false),
-        TemporaryHideTransition::Hidden => {
+        TemporaryHideTransition::AlreadyHidden | TemporaryHideTransition::Hidden => {
             crate::refresh_tray_status(&app)?;
             Ok(true)
         }
@@ -1877,8 +1996,36 @@ pub(crate) fn restore_temporarily_hidden_overlay(app: &AppHandle) -> Result<bool
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
         restore_hidden_transition(&mut runtime, &window)
     };
+    finish_restore_transition(app, transition)
+}
+
+fn restore_temporarily_hidden_overlay_if_current(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<bool, String> {
+    let transition = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
+            return Ok(false);
+        }
+        let window = app
+            .get_webview_window(OVERLAY_LABEL)
+            .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+        restore_exact_hidden_transition(&mut runtime, &window, path, presentation_id)
+    };
+    finish_restore_transition(app, transition)
+}
+
+fn finish_restore_transition(
+    app: &AppHandle,
+    transition: RestoreHiddenTransition,
+) -> Result<bool, String> {
     match transition {
-        RestoreHiddenTransition::NotHidden => Ok(false),
+        RestoreHiddenTransition::Stale | RestoreHiddenTransition::NotHidden => Ok(false),
         RestoreHiddenTransition::Restored(capture) => {
             app.emit_to(
                 OVERLAY_LABEL,
@@ -2384,11 +2531,11 @@ pub(crate) fn overlay_dismiss(
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        dismiss_transition(&mut runtime, &window, &path, presentation_id)
+        dismiss_transition_for_reason(&mut runtime, &window, &path, presentation_id, reason)
     };
 
     match transition {
-        DismissTransition::Stale => Ok(false),
+        DismissTransition::Stale | DismissTransition::Hidden => Ok(false),
         DismissTransition::Dismissed => {
             release_quick_access_capture(&app, Path::new(&path));
             let _ = app.emit(
@@ -2413,16 +2560,17 @@ mod tests {
     use super::{
         annotation_refresh_payload, begin_drag_transition, bottom_right_position, capture_display,
         capture_matches, current_capture_path, current_capture_project_path, dismiss_transition,
-        display_at_cursor, display_profile_ids, export_capture, export_png_bytes, fail_transition,
-        load_stored_overlay_settings, prepare_transition, restore_hidden_transition,
-        reveal_transition, reveal_transition_with_clock, save_stored_overlay_settings,
-        settings_for_display, temporary_hide_transition, update_stored_preferences,
-        validate_save_as_preferences, CaptureExportFormat, DismissTransition, DisplayGeometry,
-        DragGestureState, OverlayAutoDismiss, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
-        OverlayPlacement, OverlayPreferences, OverlayQuickActions, OverlayRuntime,
-        OverlaySaveAsPreferences, OverlaySize, OverlaySource, OverlayWindowOps,
-        RestoreHiddenTransition, RevealTransition, ScreenPoint, ScreenRect, StoredOverlaySettings,
-        TemporaryHideTransition, OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        dismiss_transition_for_reason, display_at_cursor, display_profile_ids, export_capture,
+        export_png_bytes, fail_transition, load_stored_overlay_settings, prepare_transition,
+        restore_exact_hidden_transition, restore_hidden_transition, reveal_transition,
+        reveal_transition_with_clock, save_stored_overlay_settings, settings_for_display,
+        temporary_hide_transition, update_stored_preferences, validate_save_as_preferences,
+        CaptureExportFormat, DismissReason, DismissTransition, DisplayGeometry, DragGestureState,
+        OverlayAutoDismiss, OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayPlacement,
+        OverlayPreferences, OverlayQuickActions, OverlayRuntime, OverlaySaveAsPreferences,
+        OverlaySize, OverlaySource, OverlayWindowOps, RestoreHiddenTransition, RevealTransition,
+        ScreenPoint, ScreenRect, StoredOverlaySettings, TemporaryHideTransition,
+        OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
@@ -2765,6 +2913,83 @@ mod tests {
         assert!(window.visible.get());
         assert!(!runtime.temporarily_hidden);
         assert_eq!(runtime.current, Some(capture(path)));
+    }
+
+    #[test]
+    fn repeated_temporary_hide_does_not_claim_restore_ownership() {
+        let path = "/tmp/capso/current.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, path, 1),
+            TemporaryHideTransition::Hidden
+        );
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, path, 1),
+            TemporaryHideTransition::AlreadyHidden
+        );
+        assert!(!window.visible.get());
+        assert!(runtime.temporarily_hidden);
+    }
+
+    #[test]
+    fn exact_restore_never_reveals_a_different_hidden_capture() {
+        let old_path = "/tmp/capso/old.png";
+        let new_path = "/tmp/capso/new.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(old_path));
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, old_path, 1),
+            TemporaryHideTransition::Hidden
+        );
+        runtime.replace(OverlayCapture {
+            path: new_path.into(),
+            presentation_id: 2,
+            ..capture(new_path)
+        });
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, new_path, 2),
+            TemporaryHideTransition::Hidden
+        );
+
+        assert_eq!(
+            restore_exact_hidden_transition(&mut runtime, &window, old_path, 1),
+            RestoreHiddenTransition::Stale
+        );
+        assert!(!window.visible.get());
+        assert!(runtime.temporarily_hidden);
+        assert_eq!(
+            runtime
+                .current
+                .as_ref()
+                .map(|capture| capture.path.as_str()),
+            Some(new_path)
+        );
+    }
+
+    #[test]
+    fn hidden_capture_ignores_a_racing_timeout_dismiss() {
+        let path = "/tmp/capso/current.png";
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+        assert_eq!(
+            temporary_hide_transition(&mut runtime, &window, path, 1),
+            TemporaryHideTransition::Hidden
+        );
+
+        assert_eq!(
+            dismiss_transition_for_reason(&mut runtime, &window, path, 1, DismissReason::Timeout,),
+            DismissTransition::Hidden
+        );
+        assert!(runtime.current.is_some());
+        assert!(runtime.temporarily_hidden);
     }
 
     #[test]

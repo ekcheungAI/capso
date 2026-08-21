@@ -239,6 +239,7 @@ export default function CaptureOverlay() {
     let receivedLiveCapture = false;
     let unlisten: UnlistenFn | undefined;
     let unlistenDrag: UnlistenFn | undefined;
+    let unlistenHidden: UnlistenFn | undefined;
     let unlistenRestore: UnlistenFn | undefined;
 
     void (async () => {
@@ -283,6 +284,19 @@ export default function CaptureOverlay() {
         setNoticeIsWarning(false);
         setNotice(event.payload.outcome === "dropped" ? "Shared a copy" : null);
       });
+      unlistenHidden = await listen<OverlayRestored>("overlay-hidden", (event) => {
+        if (disposed) return;
+        setCapture((current) => {
+          if (
+            current?.path === event.payload.path &&
+            current.presentationId === event.payload.presentationId
+          ) {
+            autoDismiss.current?.pause();
+            setTemporarilyHidden(true);
+          }
+          return current;
+        });
+      });
       unlistenRestore = await listen<OverlayRestored>("overlay-restored", (event) => {
         if (disposed) return;
         setCapture((current) => {
@@ -290,6 +304,9 @@ export default function CaptureOverlay() {
             current?.path === event.payload.path &&
             current.presentationId === event.payload.presentationId
           ) {
+            if (autoDismiss.current?.remainingMs() === 0) {
+              autoDismiss.current.reset();
+            }
             setTemporarilyHidden(false);
             setNotice("Quick Access restored");
             setNoticeIsWarning(false);
@@ -300,6 +317,7 @@ export default function CaptureOverlay() {
       if (disposed) {
         unlisten?.();
         unlistenDrag?.();
+        unlistenHidden?.();
         unlistenRestore?.();
         return;
       }
@@ -316,6 +334,7 @@ export default function CaptureOverlay() {
       disposed = true;
       unlisten?.();
       unlistenDrag?.();
+      unlistenHidden?.();
       unlistenRestore?.();
     };
   }, [nativeRuntime]);

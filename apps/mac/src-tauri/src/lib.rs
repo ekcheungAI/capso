@@ -1501,6 +1501,10 @@ fn open_settings_window(app: &AppHandle) {
     }
 }
 
+fn should_ignore_global_shortcut(annotation_active: bool) -> bool {
+    annotation_active
+}
+
 fn should_reveal_main_on_reopen(has_visible_windows: bool) -> bool {
     !has_visible_windows
 }
@@ -2331,11 +2335,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let settings_are_focused = app
-                        .get_webview_window("main")
-                        .and_then(|window| window.is_focused().ok())
-                        .unwrap_or(false);
-                    if settings_are_focused || annotation::is_active(app) {
+                    if should_ignore_global_shortcut(annotation::is_active(app)) {
                         return;
                     }
                     let action = app
@@ -2729,6 +2729,12 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    #[test]
+    fn only_an_active_annotation_blocks_global_capture_shortcuts() {
+        assert!(!super::should_ignore_global_shortcut(false));
+        assert!(super::should_ignore_global_shortcut(true));
+    }
 
     fn latency_report(
         sample_count: usize,

@@ -839,6 +839,13 @@ pub(crate) async fn capture_screen(
     prepare_capture_output(&app_data, &capture_id)?;
     let settings = crate::capture_hud::load_settings(&app_data).settings;
     let window_style = settings.window_style;
+    let _overlay_capture_lease =
+        crate::overlay::CaptureOverlayLease::begin(app.clone()).map_err(|message| {
+            CaptureFailure {
+                code: "overlay_hide_failed",
+                message,
+            }
+        })?;
     let mut desktop_clutter =
         crate::recording::DesktopClutterLease::begin(app.clone(), settings.hide_desktop_icons)
             .map_err(|message| CaptureFailure {

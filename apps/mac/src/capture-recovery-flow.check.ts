@@ -9,6 +9,14 @@ const capture = readFileSync(
 );
 const lib = readFileSync(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8");
 const ocr = readFileSync(new URL("../src-tauri/src/ocr.rs", import.meta.url), "utf8");
+const overlay = readFileSync(
+  new URL("../src-tauri/src/overlay.rs", import.meta.url),
+  "utf8",
+);
+const captureOverlay = readFileSync(
+  new URL("./CaptureOverlay.tsx", import.meta.url),
+  "utf8",
+);
 
 test("a no-output picker result is rechecked for revoked Screen Recording access", () => {
   const captureScreen = capture.slice(
@@ -90,6 +98,52 @@ test("hiding or unfocusing the settings window restores suspended shortcuts", ()
   assert.match(
     lib,
     /WindowEvent::Focused\(false\)[\s\S]*?window\.label\(\) == "main"[\s\S]*?restore_shortcuts_after_recording/,
+  );
+});
+
+test("global capture shortcuts remain active while Settings is focused", () => {
+  const handlerStart = lib.indexOf("tauri_plugin_global_shortcut::Builder::new()");
+  const handler = lib.slice(
+    handlerStart,
+    lib.indexOf(".build(),", handlerStart),
+  );
+  assert.doesNotMatch(handler, /settings_are_focused|is_focused\(\)/);
+  assert.match(
+    handler,
+    /should_ignore_global_shortcut\(annotation::is_active\(app\)\)/,
+  );
+});
+
+test("a consecutive capture hides the previous Quick Access preview until completion", () => {
+  const captureScreen = capture.slice(
+    capture.indexOf("pub(crate) async fn capture_screen"),
+    capture.indexOf("pub(crate) async fn capture_previous_area"),
+  );
+  assert.match(
+    captureScreen,
+    /CaptureOverlayLease::begin\(app\.clone\(\)\)[\s\S]*?spawn_blocking/,
+  );
+  assert.match(overlay, /pub\(crate\) struct CaptureOverlayLease/);
+  assert.match(
+    overlay,
+    /impl Drop for CaptureOverlayLease[\s\S]*?restore_temporarily_hidden_overlay/,
+  );
+  assert.match(overlay, /emit_to\([\s\S]*?"overlay-hidden"/);
+  assert.match(
+    captureOverlay,
+    /listen<OverlayRestored>\("overlay-hidden"[\s\S]*?setTemporarilyHidden\(true\)/,
+  );
+  assert.match(
+    captureOverlay,
+    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?remainingMs\(\) === 0[\s\S]*?reset\(\)/,
+  );
+  const hideHelper = overlay.slice(
+    overlay.indexOf("fn hide_current_overlay_for_capture"),
+    overlay.indexOf("#[tauri::command]", overlay.indexOf("fn hide_current_overlay_for_capture")),
+  );
+  assert.match(
+    hideHelper,
+    /let Some\(capture\)[\s\S]*?get_webview_window\(OVERLAY_LABEL\)/,
   );
 });
 
