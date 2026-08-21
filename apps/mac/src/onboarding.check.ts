@@ -10,6 +10,7 @@ import {
 
 const at = (o: Partial<FirstRunInput> = {}): FirstRunInput => ({
   screenRecording: "required",
+  screenRecordingSkipped: false,
   launchAtLogin: "unknown",
   hotkeyConfirmed: false,
   cloudConfigured: true,
@@ -43,6 +44,27 @@ test("steps advance in order", () => {
     firstRunAction(at({ screenRecording: "granted", hotkeyConfirmed: true })),
     "login",
   );
+});
+
+test("Area-only setup can continue without Screen Recording permission", () => {
+  const areaOnly = at({ screenRecordingSkipped: true });
+  const permission = firstRunSteps(areaOnly).find((step) => step.id === "permission")!;
+
+  assert.equal(permission.state, "done");
+  assert.equal(permission.optional, true);
+  assert.match(permission.detail, /Area only/i);
+  assert.match(permission.detail, /later/i);
+  assert.equal(firstRunAction(areaOnly), "hotkey");
+});
+
+test("a later Screen Recording grant replaces stale Area-only guidance", () => {
+  const permission = firstRunSteps(
+    at({ screenRecording: "granted", screenRecordingSkipped: true }),
+  ).find((step) => step.id === "permission")!;
+
+  assert.equal(permission.state, "done");
+  assert.doesNotMatch(permission.detail, /Area only/i);
+  assert.doesNotMatch(permission.detail, /later/i);
 });
 
 test("library connection is an explicit decision before the first capture", () => {
@@ -106,7 +128,7 @@ test("the optional step never blocks completion", () => {
   assert.equal(firstRunComplete(skippedLogin), true);
 });
 
-test("first run is not complete without permission, hotkey or a capture", () => {
+test("either a grant or an explicit Area-only choice settles capture access", () => {
   const all = at({
     screenRecording: "granted",
     hotkeyConfirmed: true,
@@ -115,23 +137,29 @@ test("first run is not complete without permission, hotkey or a capture", () => 
     launchAtLogin: "enabled",
   });
   assert.equal(firstRunComplete(all), true);
-  assert.equal(firstRunComplete({ ...all, screenRecording: "required" }), false);
+  assert.equal(
+    firstRunComplete({ ...all, screenRecording: "required", screenRecordingSkipped: true }),
+    true,
+  );
+  assert.equal(
+    firstRunComplete({ ...all, screenRecording: "required", screenRecordingSkipped: false }),
+    false,
+  );
   assert.equal(firstRunComplete({ ...all, hotkeyConfirmed: false }), false);
   assert.equal(firstRunComplete({ ...all, libraryChoice: "undecided" }), false);
   assert.equal(firstRunComplete({ ...all, hasCaptured: false }), false);
 });
 
-test("revoking permission mid-run puts the user back on that step", () => {
-  // macOS can drop the grant between launches; the flow has to survive going
-  // backwards, not just forwards.
+test("a saved Area-only choice stays complete without Screen Recording", () => {
   const back = at({
     screenRecording: "required",
+    screenRecordingSkipped: true,
     hotkeyConfirmed: true,
     libraryChoice: "local_only",
     hasCaptured: true,
   });
-  assert.equal(firstRunAction(back), "permission");
-  assert.equal(firstRunComplete(back), false);
+  assert.equal(firstRunAction(back), null);
+  assert.equal(firstRunComplete(back), true);
 });
 
 test("a completed run has no current step", () => {

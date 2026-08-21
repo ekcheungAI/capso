@@ -1138,32 +1138,16 @@ fn launch_capture(app: AppHandle, action: shortcuts::CaptureAction) {
     }
 
     let _capture_task = tauri::async_runtime::spawn(async move {
-        let (result, exact_area) =
-            if action == shortcuts::CaptureAction::Region && system::screen_recording_granted() {
-                match capture::capture_selected_area(app.clone()).await {
-                    Ok((outcome, rect)) => (Ok(outcome), rect),
-                    Err(error) => (Err(error), None),
-                }
-            } else {
-                (
-                    capture::capture_screen(app.clone(), action.mode()).await,
-                    None,
-                )
-            };
+        // Keep ordinary Area capture on macOS's live interactive selector.
+        // Screen Recording permission must not switch users into the slower
+        // full-display precision preview: mouse-up should always commit.
+        let result = capture::capture_screen(app.clone(), action.mode()).await;
         let previous_area_warning = if action == shortcuts::CaptureAction::Region
             && matches!(result, Ok(capture::CaptureOutcome::Captured { .. }))
         {
             let record_app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                if let Some(area) = exact_area {
-                    capture_hud::record_previous_area_rect(
-                        &record_app,
-                        area.rect,
-                        area.pixel_dimensions,
-                    )
-                } else {
-                    capture_hud::record_system_previous_area(&record_app)
-                }
+                capture_hud::record_system_previous_area(&record_app)
             })
             .await
             .map_or_else(
@@ -1522,6 +1506,22 @@ fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Str
         .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
 }
 
+fn capture_access_preference_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("capture-access.json"))
+        .map_err(|error| format!("Could not locate the Capso settings directory: {error}"))
+}
+
+fn area_only_capture_preference<R: Runtime>(app: &AppHandle<R>) -> bool {
+    capture_access_preference_path(app)
+        .and_then(|path| system::load_area_only_preference(&path))
+        .unwrap_or_else(|error| {
+            eprintln!("Could not restore the capture access choice: {error}");
+            false
+        })
+}
+
 fn portable_settings_paths(app: &AppHandle) -> Result<settings_transfer::SettingsPaths, String> {
     let app_data = app
         .path()
@@ -1720,10 +1720,11 @@ fn reset_portable_settings(
 fn tray_tooltip(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
+    area_only_capture: bool,
     queue_status: &queue::QueueRuntimeStatus,
     latency_report: &latency::OverlayLatencyReport,
 ) -> &'static str {
-    if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+    if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
         "Capso — Screen Recording needed for Window and Fullscreen"
     } else if queue_status.warning.is_some() || queue_status.summary.failed > 0 {
         "Capso — uploads need attention; captures remain saved locally"
@@ -1827,10 +1828,18 @@ fn queue_menu_label(status: &queue::QueueRuntimeStatus) -> Option<String> {
 const RETRY_UPLOADS_MENU_ID: &str = "retry-uploads";
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 
+fn screen_recording_guidance_needed(
+    status: system::ScreenRecordingStatus,
+    area_only_capture: bool,
+) -> bool {
+    status == system::ScreenRecordingStatus::Required && !area_only_capture
+}
+
 fn build_tray_menu<R: Runtime>(
     app: &AppHandle<R>,
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
+    area_only_capture: bool,
     queue_status: &queue::QueueRuntimeStatus,
     _latency_report: &latency::OverlayLatencyReport,
 ) -> tauri::Result<Menu<R>> {
@@ -1941,7 +1950,7 @@ fn build_tray_menu<R: Runtime>(
         }
     }
 
-    if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+    if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
         let permission_warning = MenuItem::with_id(
             app,
             OPEN_SETTINGS_MENU_ID,
@@ -1997,6 +2006,7 @@ pub(crate) fn refresh_recording_tray_title(app: &AppHandle) {
 fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
     let shortcut_status = current_shortcut_status(app)?;
     let system_status = current_system_status(app)?;
+    let area_only_capture = system_status.area_only_capture;
     let queue_status = current_queue_status(app)?;
     let latency_report = latency::current_report(app)?;
     if let Some(tray) = app.tray_by_id("main") {
@@ -2005,6 +2015,7 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
                 app,
                 &shortcut_status,
                 &system_status,
+                area_only_capture,
                 &queue_status,
                 &latency_report,
             )
@@ -2014,6 +2025,7 @@ fn refresh_tray_status(app: &AppHandle) -> Result<(), String> {
         tray.set_tooltip(Some(tray_tooltip(
             &shortcut_status,
             &system_status,
+            area_only_capture,
             &queue_status,
             &latency_report,
         )))
@@ -2146,6 +2158,28 @@ fn request_screen_recording_permission(
 }
 
 #[tauri::command]
+fn set_area_only_capture_preference(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<system::SystemStatus, String> {
+    let path = capture_access_preference_path(&app)?;
+    system::store_area_only_preference(&path, enabled)?;
+    let status = app
+        .state::<Mutex<system::PermissionRuntime>>()
+        .lock()
+        .map(|mut runtime| {
+            runtime.set_area_only_capture(enabled);
+            runtime.status()
+        })
+        .map_err(|_| "System settings are temporarily unavailable".to_string())?;
+    let _ = app.emit("system-status-changed", status);
+    if let Err(error) = refresh_tray_status(&app) {
+        eprintln!("Could not refresh the Capso tray after capture access changed: {error}");
+    }
+    Ok(status)
+}
+
+#[tauri::command]
 fn open_screen_recording_settings() -> Result<(), String> {
     system::open_screen_recording_settings()
 }
@@ -2267,6 +2301,7 @@ pub fn run() {
             retry_annotation_project_sync,
             keep_local_annotation_project,
             request_screen_recording_permission,
+            set_area_only_capture_preference,
             open_screen_recording_settings,
             set_launch_at_login_enabled,
             open_login_item_settings,
@@ -2416,12 +2451,18 @@ pub fn run() {
                 runtime.status()
             };
 
+            let area_only_capture = area_only_capture_preference(app.handle());
+            app.state::<Mutex<system::PermissionRuntime>>()
+                .lock()
+                .map_err(|_| "Could not initialize system settings")?
+                .set_area_only_capture(area_only_capture);
             let system_status = current_system_status(app.handle())
                 .map_err(|error| format!("Could not initialize system status: {error}"))?;
             let menu = build_tray_menu(
                 app.handle(),
                 &status,
                 &system_status,
+                area_only_capture,
                 &queue_status,
                 &latency_report,
             )?;
@@ -2431,6 +2472,7 @@ pub fn run() {
                 .tooltip(tray_tooltip(
                     &status,
                     &system_status,
+                    area_only_capture,
                     &queue_status,
                     &latency_report,
                 ))
@@ -2512,7 +2554,7 @@ pub fn run() {
             // silent would look like a failed launch, so Settings opens to be granted.
             // Re-launching an already-running copy reveals it via single-instance and
             // Reopen, so an already-configured Mac boots straight to the menu bar.
-            if system_status.screen_recording == system::ScreenRecordingStatus::Required {
+            if screen_recording_guidance_needed(system_status.screen_recording, area_only_capture) {
                 open_settings_window(app.handle());
             }
 
@@ -2670,6 +2712,24 @@ mod tests {
     fn reopening_a_running_menu_bar_app_reveals_its_hidden_control_surface() {
         assert!(super::should_reveal_main_on_reopen(false));
         assert!(!super::should_reveal_main_on_reopen(true));
+    }
+
+    #[test]
+    fn only_an_unsettled_permission_choice_opens_guidance_at_launch() {
+        use crate::system::ScreenRecordingStatus;
+
+        assert!(super::screen_recording_guidance_needed(
+            ScreenRecordingStatus::Required,
+            false,
+        ));
+        assert!(!super::screen_recording_guidance_needed(
+            ScreenRecordingStatus::Required,
+            true,
+        ));
+        assert!(!super::screen_recording_guidance_needed(
+            ScreenRecordingStatus::Granted,
+            false,
+        ));
     }
 
     #[test]

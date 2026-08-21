@@ -39,12 +39,24 @@ Result: ______  Note: __________________________________________
 - [ ] Fresh launch does **not** enable launch-at-login; the login item is opt-in only.
 - [ ] Toggle launch-at-login on, reboot, confirm it starts; toggle off, reboot, confirm it does not.
 - [ ] Screen Recording permission flow appears when needed and links to the right pane.
+- [ ] With Screen Recording off, choose **Continue with Area only**, quit, and relaunch:
+      Area capture still works and Capso does not reopen permission guidance or show a
+      global Screen Recording alert; Window and Full Screen remain clearly locked.
+- [ ] On a fresh permission attempt, the first action says **Grant access**. Approve the
+      macOS prompt and confirm Capso stays in its own window instead of opening System
+      Settings; Window and Full Screen become ready.
+- [ ] Stale-state recovery: when Capso says access is off although its System Settings
+      toggle looks on, turn it off and on again, approve Touch ID, reopen Capso, and
+      confirm the status changes to granted.
 - [ ] Quit and relaunch from the menu bar; the popover reopens cleanly.
 
 Result: ______  Note: __________________________________________
 
 ## CAP-01 — capture modes from any app
 
+- [ ] With Screen Recording **off**, press **⌘⇧4**: the live desktop is immediately
+      selectable with no white Capso frame or magnifier; releasing the mouse commits
+      one PNG and shows Quick Access at bottom-right in under 1 second.
 - [ ] From three different foreground apps, **⌘⇧4** starts region capture.
 - [ ] **⌃⇧W** captures a window; **⌃⇧F** captures fullscreen.
 - [ ] **Escape** cancels a capture silently (no error, no empty file, no overlay).
@@ -60,10 +72,15 @@ Result: ______  Note: __________________________________________
 - [ ] Overlay **stays above** other windows and **never steals focus** (the app you were
       typing in keeps the cursor).
 - [ ] Copy, Save, Annotate, drag-out, and Close all work from the overlay.
+- [ ] Choose a fresh destination folder in Settings, take a capture, and click **Save**:
+      no file dialog appears and one PNG with the configured naming format lands in that
+      exact folder.
+- [ ] Take another capture and click **Discard screenshot**: the preview closes, the
+      capture is absent from Recent Captures, and previously saved files are untouched.
 - [ ] Drag the thumbnail **out to Finder**; a PNG lands and the original is untouched.
 - [ ] Mixed-scale test: capture on a Retina display and an external non-Retina display;
       the overlay is correctly sized on each.
-- [ ] Overlay auto-dismisses after ~8s; hovering pauses the dismissal.
+- [ ] With no action, the overlay disappears about 10 seconds after its image appears.
 - [ ] Restore a capture from **"Recent Captures"** in the tray.
 
 Result: ______  Note: __________________________________________

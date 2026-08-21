@@ -20,6 +20,6 @@ test("first run serializes mutations and ignores superseded or unmounted refresh
   assert.match(view, /const decline = async \(\) => \{[\s\S]*?!beginFirstRunAction\(\)[\s\S]*?finally \{\s*endFirstRunAction\(\)/);
   assert.match(view, /requestSignIn[\s\S]*?!beginFirstRunAction\(\)[\s\S]*?finally \{\s*endFirstRunAction\(\)/);
   assert.match(view, /const chooseLocalOnly = \(\) => \{\s*if \(actionInFlight\.current\) return/);
-  assert.match(view, /open_screen_recording_settings[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?Turn Capso on in System Settings/);
+  assert.match(view, /open_screen_recording_settings[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?System Settings opened/);
   assert.match(view, /request_sign_in_email[\s\S]*?if \(!mounted\.current\) return;[\s\S]*?Check your email/);
 });

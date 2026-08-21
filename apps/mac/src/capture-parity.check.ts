@@ -673,10 +673,11 @@ test("only one Capso process can own the global shortcuts", async () => {
 });
 
 test("clicking a shortcut recorder gives its key handler focus", async () => {
-  const [app, config, onboarding] = await Promise.all([
+  const [app, config, onboarding, firstRun] = await Promise.all([
     readFile(new URL("./App.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
     readFile(new URL("./onboarding.ts", import.meta.url), "utf8"),
+    readFile(new URL("./FirstRun.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(
@@ -686,9 +687,72 @@ test("clicking a shortcut recorder gives its key handler focus", async () => {
   assert.match(app, /Saved\. Switch to another app to use your shortcuts\./);
   assert.match(app, /region: "Command\+Shift\+Digit4"/);
   assert.match(app, /macOS may still own ⌘⇧4/);
+  assert.match(app, /turn it off and on again/);
   assert.match(onboarding, /⌘⇧4 by default/);
+  assert.match(firstRun, /Use Area only/);
+  assert.match(firstRun, /turn it off and on again/);
   assert.match(config, /"label": "main"[\s\S]*?"titleBarStyle": "Visible"/);
   assert.match(config, /"label": "main"[\s\S]*?"hiddenTitle": false/);
+});
+
+test("Area-only permission choice is durable and a successful grant does not open Settings", async () => {
+  const [app, firstRun, native, system] = await Promise.all([
+    readFile(new URL("./App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("./FirstRun.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/src/system.rs", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    firstRun,
+    /const status = await invoke<SystemStatus>\("request_screen_recording_permission"\)/,
+  );
+  assert.match(
+    firstRun,
+    /if \(screenRecordingRequestAttempted\) \{[\s\S]*?open_screen_recording_settings[\s\S]*?\} else \{[\s\S]*?request_screen_recording_permission/,
+  );
+  assert.match(
+    firstRun,
+    /const label =[\s\S]*?screenRecordingRequestAttempted[\s\S]*?"Open System Settings"[\s\S]*?"Grant access"/,
+  );
+  const requestBranch = firstRun.slice(
+    firstRun.indexOf(
+      'const status = await invoke<SystemStatus>("request_screen_recording_permission")',
+    ),
+    firstRun.indexOf('} else if (current.id === "hotkey")'),
+  );
+  assert.doesNotMatch(requestBranch, /open_screen_recording_settings/);
+  assert.match(
+    requestBranch,
+    /if \(status\.screenRecording === "granted"\) \{[\s\S]*?Screen Recording is ready[\s\S]*?\} else \{[\s\S]*?Access is still off/,
+  );
+  assert.match(
+    firstRun,
+    /screenRecordingSkipped:[\s\S]*?system\.screenRecording === "required" && system\.areaOnlyCapture/,
+  );
+  assert.match(
+    firstRun,
+    /skipWalkthrough[\s\S]*?screenRecording === "required"[\s\S]*?set_area_only_capture_preference", \{ enabled: true \}[\s\S]*?localStorage\.setItem\(DISMISSED, "1"\)/,
+  );
+  assert.match(
+    firstRun,
+    /system\.screenRecording === "granted" && system\.areaOnlyCapture[\s\S]*?set_area_only_capture_preference[\s\S]*?enabled: false/,
+  );
+  assert.match(native, /set_area_only_capture_preference/);
+  assert.match(native, /screen_recording_guidance_needed\(system_status\.screen_recording, area_only_capture\)/);
+  assert.match(system, /store_area_only_preference/);
+  assert.match(system, /area_only_capture: self\.area_only_capture/);
+  assert.match(system, /file\.write_all\(&bytes\)\.and_then\(\|_\| file\.sync_all\(\)\)/);
+  assert.match(app, /Area screenshots/);
+  assert.match(app, /"Use Area only"/);
+  assert.match(
+    app,
+    /status\.screenRecording === "granted" && status\.areaOnlyCapture[\s\S]*?set_area_only_capture_preference[\s\S]*?enabled: false/,
+  );
+  assert.match(
+    app,
+    /handleAreaOnlyCapture[\s\S]*?invoke<SystemStatus>\("set_area_only_capture_preference", \{\s*enabled: true,/,
+  );
 });
 
 test("capture delays have a visible cancellable surface for every mode", async () => {
@@ -710,50 +774,27 @@ test("capture delays have a visible cancellable surface for every mode", async (
   assert.match(config, /"alwaysOnTop": true/);
 });
 
-test("Area capture has one native precision selector with exact dimensions and aspect lock", async () => {
-  const [entrypoint, selector, native, coordinator, capture, config, capability] = await Promise.all([
-    readFile(new URL("./main.tsx", import.meta.url), "utf8"),
-    readFile(new URL("./AreaSelector.tsx", import.meta.url), "utf8"),
+test("Area capture always uses the live native drag and commits on mouse-up", async () => {
+  const [native, capture] = await Promise.all([
     readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/src/area_selector.rs", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/capture.rs", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/capabilities/area-selector.json", import.meta.url), "utf8"),
   ]);
+  const launch = native.slice(
+    native.indexOf("fn launch_capture("),
+    native.indexOf("fn launch_previous_area_capture("),
+  );
+  const captureScreen = capture.slice(
+    capture.indexOf("pub(crate) async fn capture_screen("),
+    capture.indexOf("pub(crate) async fn capture_previous_area("),
+  );
 
-  assert.match(entrypoint, /surface === "area-selector"/);
-  assert.match(selector, /aria-label="Selection width in pixels"/);
-  assert.match(selector, /aria-label="Selection height in pixels"/);
-  assert.match(selector, /aria-label="Aspect ratio"/);
-  assert.match(selector, /selectionPixelSize/);
-  assert.match(selector, /convertFileSrc/);
-  assert.match(selector, /previewPath/);
-  assert.match(selector, /magnifierPosition/);
-  assert.match(selector, /area-selector__magnifier/);
-  assert.match(selector, /detectVisualRect/);
-  assert.match(selector, /getImageData/);
-  assert.match(selector, /visualCandidate/);
-  assert.match(selector, /browserPreviewSource/);
-  assert.match(selector, /area-selector__preview-fixture/);
-  assert.match(selector, /\{previewSource && \(\s*<img\s+className="area-selector__preview-fixture"/);
-  assert.doesNotMatch(selector, /\{!nativeRuntime && previewSource && \(\s*<img\s+className="area-selector__preview-fixture"/);
-  assert.match(selector, /Click to snap/);
-  assert.match(selector, /onPointerCancel=\{cancelPointer\}/);
-  assert.match(selector, /complete_area_selection/);
-  assert.match(selector, /const accepted = await invoke<boolean>\("complete_area_selection"/);
-  assert.match(selector, /if \(!accepted\) endAreaAction\(actionKey\)/);
-  assert.match(selector, /cancel_area_selection/);
-  assert.match(native, /area_selector::AreaSelectorCoordinator::default\(\)/);
-  assert.match(native, /complete_area_selection/);
-  assert.match(native, /cancel_area_selection/);
-  assert.match(coordinator, /wait_for_selection/);
-  assert.match(coordinator, /scale_factor/);
-  assert.match(coordinator, /preview_path/);
-  assert.match(capture, /capture_selected_area/);
-  assert.match(capture, /run_area_selector_frame/);
-  assert.match(config, /"label": "area-selector"/);
-  assert.match(config, /"transparent": true/);
-  assert.match(capability, /"windows": \["area-selector"\]/);
+  assert.match(launch, /capture::capture_screen\(app\.clone\(\), action\.mode\(\)\)\.await/);
+  assert.doesNotMatch(launch, /screen_recording_granted\(\)[\s\S]*capture_selected_area/);
+  assert.doesNotMatch(launch, /capture::capture_selected_area/);
+  assert.match(launch, /capture_hud::record_system_previous_area\(&record_app\)/);
+  assert.match(capture, /CaptureMode::Region => &\["-i", "-s", "-x", "-t", "png"\]/);
+  assert.match(captureScreen, /run_capture\(&app_data, mode, &capture_id, &SystemCaptureRunner\)/);
+  assert.match(captureScreen, /publish_stored_capture\(&app, mode, stored\)\.await/);
 });
 
 test("the pinned capture can be dismissed with Escape", async () => {

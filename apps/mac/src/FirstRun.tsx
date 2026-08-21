@@ -16,16 +16,16 @@ import { formatShortcut, isMacOsAreaShortcut } from "./setup";
  * is how the palette ended up hand-copied into six places before gen-tokens.mjs
  * existed, and it would drift the same way.
  *
- * Two deliberate simplifications against the plan, both to avoid Rust changes that
- * could not be verified from here:
+ * Two deliberate implementation choices keep this flow attached to existing state:
  *
  *  - `hasCaptured` is derived from `get_diagnostics().latency_statistics`, which is
  *    `None` until a capture produces a timing sample and whose samples survive
  *    restart (see `latency.rs`, and the test named
  *    `latest_twenty_privacy_safe_samples_survive_restart`). That is a durable
  *    "has captured at least once" signal with no new bookkeeping.
- *  - Dismissal is a localStorage latch in the webview, not `onboarding.json` via
- *    two new Tauri commands. Nothing on the Rust side needs to read it.
+ *  - Dismissal remains a localStorage latch in the webview. The separate Area-only
+ *    choice is persisted natively because Rust must honor it before building the
+ *    startup tray or deciding whether permission guidance should open.
  */
 
 const DISMISSED = "capso.mac.firstRun";
@@ -34,6 +34,8 @@ const LIBRARY_CHOICE = "capso.mac.libraryChoice";
 
 type SystemStatus = {
   screenRecording: "granted" | "required";
+  areaOnlyCapture: boolean;
+  screenRecordingRequestAttempted: boolean;
   launchAtLogin: string;
 };
 
@@ -60,6 +62,8 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const [showConnectForm, setShowConnectForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [screenRecordingRequestAttempted, setScreenRecordingRequestAttempted] =
+    useState(false);
   const actionInFlight = useRef(false);
   const refreshGate = useRef(createLatestRequestGate());
   const mounted = useRef(true);
@@ -80,13 +84,19 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const refresh = useCallback(async () => {
     const isLatest = refreshGate.current.begin();
     try {
-      const [system, diagnostics, keys, auth] = await Promise.all([
+      let [system, diagnostics, keys, auth] = await Promise.all([
         invoke<SystemStatus>("get_system_status"),
         invoke<Diagnostics>("get_diagnostics"),
         invoke<ShortcutStatus>("get_shortcut_settings"),
         invoke<AuthUiSnapshot>("get_auth_status"),
       ]);
+      if (system.screenRecording === "granted" && system.areaOnlyCapture) {
+        system = await invoke<SystemStatus>("set_area_only_capture_preference", {
+          enabled: false,
+        });
+      }
       if (!isLatest()) return;
+      setScreenRecordingRequestAttempted(system.screenRecordingRequestAttempted);
       setShortcutSettings(keys.settings);
       setShortcut(formatShortcut(keys.settings.region));
       setShortcutConflict(
@@ -95,6 +105,8 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
       const rememberedLibraryChoice = localStorage.getItem(LIBRARY_CHOICE);
       setInput({
         screenRecording: system.screenRecording,
+        screenRecordingSkipped:
+          system.screenRecording === "required" && system.areaOnlyCapture,
         launchAtLogin: system.launchAtLogin,
         hotkeyConfirmed: localStorage.getItem(HOTKEY_SEEN) === "1",
         cloudConfigured: auth.configured,
@@ -148,13 +160,28 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     setNote(null);
     try {
       if (current.id === "permission") {
-        // Ask first; the system prompt only ever appears once, so fall back to
-        // opening System Settings for anyone who already dismissed it.
-        await invoke("request_screen_recording_permission").catch(() => undefined);
-        if (!mounted.current) return;
-        await invoke("open_screen_recording_settings");
-        if (!mounted.current) return;
-        setNote("Turn Capso on in System Settings, then come back — this updates on its own.");
+        if (screenRecordingRequestAttempted) {
+          await invoke("open_screen_recording_settings");
+          if (!mounted.current) return;
+          setNote(
+            "System Settings opened. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
+          );
+        } else {
+          const status = await invoke<SystemStatus>("request_screen_recording_permission");
+          if (!mounted.current) return;
+          setScreenRecordingRequestAttempted(status.screenRecordingRequestAttempted);
+          if (status.screenRecording === "granted") {
+            await invoke<SystemStatus>("set_area_only_capture_preference", {
+              enabled: false,
+            });
+            if (!mounted.current) return;
+            setNote("Screen Recording is ready for Window and Full Screen capture.");
+          } else {
+            setNote(
+              "Access is still off. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
+            );
+          }
+        }
       } else if (current.id === "hotkey") {
         if (!shortcutSettings) {
           setNote("Capso is still checking your shortcut. Try again in a moment.");
@@ -193,7 +220,13 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
   const decline = async () => {
     if (!current || !beginFirstRunAction()) return;
     try {
-      if (current.id === "login") await invoke("set_launch_at_login_enabled", { enabled: false });
+      if (current.id === "permission") {
+        await invoke<SystemStatus>("set_area_only_capture_preference", { enabled: true });
+        if (!mounted.current) return;
+        setNote("Area-only setup selected. You can grant the other modes later in Settings.");
+      } else if (current.id === "login") {
+        await invoke("set_launch_at_login_enabled", { enabled: false });
+      }
       await refresh();
     } catch (error) {
       if (mounted.current) setNote(String(error));
@@ -231,9 +264,28 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     }
   };
 
+  const skipWalkthrough = async () => {
+    if (!beginFirstRunAction()) return;
+    setNote(null);
+    try {
+      if (input.screenRecording === "required" && !input.screenRecordingSkipped) {
+        await invoke<SystemStatus>("set_area_only_capture_preference", { enabled: true });
+      }
+      if (!mounted.current) return;
+      localStorage.setItem(DISMISSED, "1");
+      onDone();
+    } catch (error) {
+      if (mounted.current) setNote(String(error));
+    } finally {
+      endFirstRunAction();
+    }
+  };
+
   const label =
     current?.id === "permission"
-      ? "Open System Settings"
+      ? screenRecordingRequestAttempted
+        ? "Open System Settings"
+        : "Grant access"
       : current?.id === "hotkey"
         ? `${shortcutConflict ? "Retry" : "Use"} ${shortcut}`
         : current?.id === "login"
@@ -337,7 +389,7 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
                   ) : null}
                   {step.optional && (
                     <button type="button" className="first-run__secondary" disabled={busy} onClick={() => void decline()}>
-                      No thanks
+                      {step.id === "permission" ? "Use Area only" : "No thanks"}
                     </button>
                   )}
                   {step.id === "capture" && (
@@ -360,12 +412,12 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
       <button
         type="button"
         className="first-run__skip"
-        onClick={() => {
-          localStorage.setItem(DISMISSED, "1");
-          onDone();
-        }}
+        disabled={busy}
+        onClick={() => void skipWalkthrough()}
       >
-        Skip — I'll do this in Settings
+        {current?.id === "permission"
+          ? "Continue with Area only"
+          : "Skip — I'll do this in Settings"}
       </button>
     </main>
   );

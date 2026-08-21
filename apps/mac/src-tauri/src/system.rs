@@ -1,5 +1,65 @@
 use crate::capture::CaptureMode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::Path,
+};
+
+const MAX_CAPTURE_ACCESS_PREFERENCE_BYTES: usize = 1_024;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CaptureAccessPreference {
+    area_only: bool,
+}
+
+pub(crate) fn load_area_only_preference(path: &Path) -> Result<bool, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("Could not read the capture access choice: {error}")),
+    };
+    if bytes.len() > MAX_CAPTURE_ACCESS_PREFERENCE_BYTES {
+        return Err("The saved capture access choice is too large to trust.".into());
+    }
+    serde_json::from_slice::<CaptureAccessPreference>(&bytes)
+        .map(|preference| preference.area_only)
+        .map_err(|error| format!("The saved capture access choice is invalid: {error}"))
+}
+
+pub(crate) fn store_area_only_preference(path: &Path, area_only: bool) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "The capture access choice has no settings directory.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create Capso's settings directory: {error}"))?;
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&CaptureAccessPreference { area_only })
+        .map_err(|error| format!("Could not encode the capture access choice: {error}"))?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|error| format!("Could not write the capture access choice: {error}"))?;
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "Could not durably write the capture access choice: {error}"
+        ));
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "Could not activate the capture access choice: {error}"
+        ));
+    }
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("Could not durably activate the capture access choice: {error}"))
+}
 
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
@@ -27,6 +87,7 @@ pub(crate) enum LoginItemStatus {
 pub(crate) struct SystemStatus {
     pub(crate) screen_recording: ScreenRecordingStatus,
     pub(crate) screen_recording_request_attempted: bool,
+    pub(crate) area_only_capture: bool,
     pub(crate) launch_at_login: LoginItemStatus,
 }
 
@@ -39,6 +100,7 @@ pub(crate) enum CapturePermission {
 #[derive(Debug, Default)]
 pub(crate) struct PermissionRuntime {
     request_attempted: bool,
+    area_only_capture: bool,
 }
 
 impl PermissionRuntime {
@@ -53,6 +115,10 @@ impl PermissionRuntime {
         true
     }
 
+    pub(crate) fn set_area_only_capture(&mut self, enabled: bool) {
+        self.area_only_capture = enabled;
+    }
+
     pub(crate) fn status(&self) -> SystemStatus {
         SystemStatus {
             screen_recording: if screen_recording_granted() {
@@ -61,6 +127,7 @@ impl PermissionRuntime {
                 ScreenRecordingStatus::Required
             },
             screen_recording_request_attempted: self.request_attempted,
+            area_only_capture: self.area_only_capture,
             launch_at_login: launch_at_login_status(),
         }
     }
@@ -179,8 +246,8 @@ pub(crate) fn open_login_item_settings() {}
 #[cfg(test)]
 mod tests {
     use super::{
-        login_item_status_from_raw, permission_for_capture, CapturePermission, LoginItemStatus,
-        PermissionRuntime,
+        load_area_only_preference, login_item_status_from_raw, permission_for_capture,
+        store_area_only_preference, CapturePermission, LoginItemStatus, PermissionRuntime,
     };
     use crate::capture::CaptureMode;
 
@@ -223,6 +290,39 @@ mod tests {
         assert!(runtime.should_request(false));
         assert!(!runtime.should_request(false));
         assert!(!runtime.should_request(true));
+    }
+
+    #[test]
+    fn system_status_uses_the_native_area_only_choice_as_its_single_source_of_truth() {
+        let mut runtime = PermissionRuntime::default();
+
+        assert!(!runtime.status().area_only_capture);
+        runtime.set_area_only_capture(true);
+        assert!(runtime.status().area_only_capture);
+        runtime.set_area_only_capture(false);
+        assert!(!runtime.status().area_only_capture);
+    }
+
+    #[test]
+    fn area_only_choice_survives_restart_and_can_be_cleared() {
+        let root = tempfile::tempdir().expect("temporary settings directory");
+        let path = root.path().join("capture-access.json");
+
+        assert!(!load_area_only_preference(&path).expect("missing choice uses default"));
+        store_area_only_preference(&path, true).expect("persist Area-only choice");
+        assert!(load_area_only_preference(&path).expect("reload Area-only choice"));
+        store_area_only_preference(&path, false).expect("clear Area-only choice");
+        assert!(!load_area_only_preference(&path).expect("reload cleared choice"));
+        assert!(!root.path().join("capture-access.json.tmp").exists());
+    }
+
+    #[test]
+    fn corrupt_area_only_choice_fails_closed_to_permission_guidance() {
+        let root = tempfile::tempdir().expect("temporary settings directory");
+        let path = root.path().join("capture-access.json");
+        std::fs::write(&path, b"not json").expect("corrupt fixture");
+
+        assert!(load_area_only_preference(&path).is_err());
     }
 
     #[test]

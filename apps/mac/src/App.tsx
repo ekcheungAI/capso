@@ -56,6 +56,7 @@ type LoginItemStatus =
 type SystemStatus = {
   screenRecording: ScreenRecordingStatus;
   screenRecordingRequestAttempted: boolean;
+  areaOnlyCapture: boolean;
   launchAtLogin: LoginItemStatus;
 };
 
@@ -126,7 +127,7 @@ type DeviceInfo = {
 
 type SettingsTransferAction = "export" | "import" | "reset";
 type AuthAction = "email" | "reconnect" | "sign_out";
-type SystemAction = "permission" | "login" | "login_settings";
+type SystemAction = "permission" | "area_only" | "login" | "login_settings";
 
 type SettingsExportResult = {
   fileName: string;
@@ -153,6 +154,7 @@ const DEFAULT_SHORTCUTS: ShortcutSettings = {
 const PREVIEW_SYSTEM_STATUS: SystemStatus = {
   screenRecording: "required",
   screenRecordingRequestAttempted: false,
+  areaOnlyCapture: false,
   launchAtLogin: "disabled",
 };
 
@@ -439,10 +441,20 @@ function App() {
     if (!nativeRuntime) return;
 
     try {
-      const status = await invoke<SystemStatus>("get_system_status");
+      let status = await invoke<SystemStatus>("get_system_status");
+      if (status.screenRecording === "granted" && status.areaOnlyCapture) {
+        status = await invoke<SystemStatus>("set_area_only_capture_preference", {
+          enabled: false,
+        });
+      }
       setSystemStatus(status);
       if (status.screenRecording === "granted") {
         setSystemNotice("Screen capture access is ready.");
+        setSystemNoticeIsError(false);
+      } else if (status.areaOnlyCapture) {
+        setSystemNotice(
+          "Area-only mode is ready. Window and Full Screen can be enabled later.",
+        );
         setSystemNoticeIsError(false);
       } else {
         setSystemNotice(
@@ -1032,7 +1044,7 @@ function App() {
       if (systemStatus.screenRecordingRequestAttempted) {
         await invoke("open_screen_recording_settings");
         setSystemNotice(
-          "System Settings opened. Enable Capso, then return here to recheck.",
+          "System Settings opened. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
         );
       } else {
         setSystemNotice("Waiting for your macOS permission choice…");
@@ -1041,15 +1053,40 @@ function App() {
         );
         setSystemStatus(status);
         if (status.screenRecording === "granted") {
+          const updated = await invoke<SystemStatus>("set_area_only_capture_preference", {
+            enabled: false,
+          });
+          setSystemStatus(updated);
           setSystemNotice("Screen Recording granted. All capture modes are ready.");
           setSystemNoticeIsError(false);
         } else {
           setSystemNotice(
-            "Access is still off. Open System Settings to enable Capso.",
+            "Access is still off. If Capso is already enabled, turn it off and on again, approve Touch ID, then reopen Capso.",
           );
           setSystemNoticeIsError(true);
         }
       }
+    } catch (error) {
+      setSystemNotice(String(error));
+      setSystemNoticeIsError(true);
+    } finally {
+      endSystemAction(action);
+    }
+  }
+
+  async function handleAreaOnlyCapture() {
+    const action = "area_only";
+    if (!nativeRuntime || screenRecordingGranted || !beginSystemAction(action)) return;
+    setSystemNoticeIsError(false);
+
+    try {
+      const status = await invoke<SystemStatus>("set_area_only_capture_preference", {
+        enabled: true,
+      });
+      setSystemStatus(status);
+      setSystemNotice(
+        "Area-only mode saved. ⌘⇧4 works now; Window and Full Screen can be enabled later.",
+      );
     } catch (error) {
       setSystemNotice(String(error));
       setSystemNoticeIsError(true);
@@ -1373,6 +1410,23 @@ function App() {
             {screenRecordingGranted ? "All modes ready" : "Area works now"}
           </span>
         </div>
+
+        {!screenRecordingGranted && (
+          <div className="system-row">
+            <div className="system-copy">
+              <strong>Area screenshots</strong>
+              <span>Use the live macOS area picker without Screen Recording access</span>
+            </div>
+            <button
+              type="button"
+              className="compact-button"
+              disabled={!nativeRuntime || systemAction !== null}
+              onClick={handleAreaOnlyCapture}
+            >
+              {systemAction === "area_only" ? "Saving…" : "Use Area only"}
+            </button>
+          </div>
+        )}
 
         <div className="system-row">
           <div className="system-copy">

@@ -30,6 +30,8 @@ export type Step = {
 
 export type FirstRunInput = {
   screenRecording: "granted" | "required";
+  /** Area capture can use macOS's explicit interactive picker without this grant. */
+  screenRecordingSkipped: boolean;
   /** `disabled` is a real answer, not an unfinished one — see `optional`. */
   launchAtLogin: "enabled" | "disabled" | string;
   /** A hotkey always has a default, so this is "has the user seen it", not "is it set". */
@@ -45,8 +47,8 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
   {
     id: "permission",
     title: "Allow screen recording",
-    detail: "macOS needs this before Capso can take a screenshot.",
-    optional: false,
+    detail: "Optional for Window and Full Screen. Area capture works without it.",
+    optional: true,
   },
   {
     id: "hotkey",
@@ -77,7 +79,7 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
 function isSatisfied(id: StepId, input: FirstRunInput): boolean {
   switch (id) {
     case "permission":
-      return input.screenRecording === "granted";
+      return input.screenRecording === "granted" || input.screenRecordingSkipped;
     case "hotkey":
       return input.hotkeyConfirmed;
     case "login":
@@ -92,6 +94,13 @@ function isSatisfied(id: StepId, input: FirstRunInput): boolean {
 }
 
 function detailFor(step: (typeof ORDER)[number], input: FirstRunInput) {
+  if (
+    step.id === "permission" &&
+    input.screenRecording === "required" &&
+    input.screenRecordingSkipped
+  ) {
+    return "Area only. Grant Screen Recording later to add Window and Full Screen.";
+  }
   if (step.id !== "library") return step.detail;
   if (input.libraryChoice === "connected") {
     return "Connected. New captures can sync to your private Capso library.";
@@ -127,11 +136,16 @@ export function firstRunSteps(input: FirstRunInput): Step[] {
 }
 
 /**
- * First run is over when every REQUIRED step is satisfied. `login` is excluded on
- * purpose: an optional step that can block completion is not optional.
+ * First run is over when every required step is satisfied and capture access has an
+ * explicit answer. The permission itself stays optional because Area-only is valid.
  */
 export function firstRunComplete(input: FirstRunInput): boolean {
-  return ORDER.filter((s) => !s.optional).every((s) => isSatisfied(s.id, input));
+  // Screen Recording is optional, but the user must explicitly choose either the
+  // grant or Area-only before the native startup layer can stop asking. Login has
+  // an OS status from the start, so it remains a genuinely non-blocking offer.
+  return ORDER.filter((step) => !step.optional || step.id === "permission").every((step) =>
+    isSatisfied(step.id, input),
+  );
 }
 
 /**
@@ -140,5 +154,6 @@ export function firstRunComplete(input: FirstRunInput): boolean {
  * where App.tsx's versions already live.
  */
 export function firstRunAction(input: FirstRunInput): StepId | null {
+  if (firstRunComplete(input)) return null;
   return firstRunSteps(input).find((s) => s.state === "current")?.id ?? null;
 }
