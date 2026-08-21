@@ -14,7 +14,9 @@
   `pnpm --filter mac tauri dev`.
 - Grant **Screen Recording** when prompted (needed for Window and Fullscreen). System
   Settings → Privacy & Security → Screen Recording.
-- Default shortcuts: **Region ⌃⇧C**, **Window ⌃⇧W**, **Fullscreen ⌃⇧F**.
+- Default shortcuts: **Region ⌘⇧4**, **Window ⌃⇧W**, **Fullscreen ⌃⇧F**.
+- If macOS still owns **⌘⇧4**, disable its selected-area shortcut under System Settings
+  → Keyboard → Keyboard Shortcuts → Screenshots before confirming the Capso binding.
 - Run label: __________  Date: __________  macOS version: __________  Displays: __________
 
 ---
@@ -43,7 +45,7 @@ Result: ______  Note: __________________________________________
 
 ## CAP-01 — capture modes from any app
 
-- [ ] From three different foreground apps, **⌃⇧C** starts region capture.
+- [ ] From three different foreground apps, **⌘⇧4** starts region capture.
 - [ ] **⌃⇧W** captures a window; **⌃⇧F** captures fullscreen.
 - [ ] **Escape** cancels a capture silently (no error, no empty file, no overlay).
 - [ ] Tray **Capture Region / Capture Window / Capture Fullscreen** work as fallbacks.

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cloudAccountPresentation,
+  formatShortcut,
+  isMacOsAreaShortcut,
+  shortcutFromKeyEvent,
   shortcutRecorderLabel,
   syncPresentation,
   type SyncRuntimeStatus,
@@ -35,6 +38,26 @@ function syncStatus(
     reconnectRequired: false,
   };
 }
+
+test("the area recorder keeps Command, Shift, and 4 in one shortcut", () => {
+  const shortcut = shortcutFromKeyEvent({
+    metaKey: true,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: true,
+    code: "Digit4",
+  });
+
+  assert.equal(shortcut, "Command+Shift+Digit4");
+  assert.equal(formatShortcut(shortcut), "⌘⇧4");
+});
+
+test("macOS area-shortcut guidance recognizes equivalent token order only", () => {
+  assert.equal(isMacOsAreaShortcut("Command+Shift+Digit4"), true);
+  assert.equal(isMacOsAreaShortcut("Shift+Super+4"), true);
+  assert.equal(isMacOsAreaShortcut("Command+Shift+KeyR"), false);
+  assert.equal(isMacOsAreaShortcut("Control+Command+Shift+Digit4"), false);
+});
 
 test("an unconfigured test build never asks for an email", () => {
   const presentation = cloudAccountPresentation(false, "signed_out");

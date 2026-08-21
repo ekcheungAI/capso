@@ -168,7 +168,7 @@ test("History opens every safe capture in Annotate and keeps double-click distin
   assert.match(project, /symlink_metadata/);
 });
 
-test("Quick Access Save As writes real PNG or white-backed JPEG without changing the original", async () => {
+test("Quick Access Save writes directly to the Settings folder without a save dialog", async () => {
   const [overlay, filename, native, app, cargo, settings] = await Promise.all([
     readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
     readFile(new URL("./overlay-drag.ts", import.meta.url), "utf8"),
@@ -180,7 +180,8 @@ test("Quick Access Save As writes real PNG or white-backed JPEG without changing
 
   assert.match(overlay, /aria-label="Save capture as PNG or JPEG"/);
   assert.match(overlay, /"get_save_as_preferences"/);
-  assert.match(overlay, /saveAsFilters\(saveAsPreferences\.format\)/);
+  assert.doesNotMatch(overlay, /plugin-dialog/);
+  assert.match(overlay, /filename: suggestedCaptureFilename/);
   assert.match(overlay, /format: "png" \| "jpeg"/);
   assert.match(overlay, /transparency uses white/);
   assert.match(filename, /\{ name: "PNG image", extensions: \["png"\] \}/);
@@ -188,10 +189,14 @@ test("Quick Access Save As writes real PNG or white-backed JPEG without changing
   assert.match(filename, /filenameTemplate/);
   assert.match(filename, /"\{date\}"/);
   assert.match(filename, /"\{time\}"/);
-  assert.match(settings, /aria-label="Default Save As format"/);
+  assert.match(settings, /aria-label="Capture save folder"/);
+  assert.match(settings, /"choose_capture_save_directory"/);
+  assert.match(settings, /aria-label="Default save format"/);
   assert.match(settings, /aria-label="Save As filename template"/);
   assert.match(native, /enum CaptureExportFormat/);
   assert.match(native, /struct OverlaySaveAsPreferences/);
+  assert.match(native, /default_save_directory/);
+  assert.match(native, /preferences\.directory/);
   assert.match(native, /JpegEncoder::new_with_quality/);
   assert.match(native, /255_u16 \* inverse/);
   assert.match(native, /validate_exported_image/);
@@ -668,13 +673,22 @@ test("only one Capso process can own the global shortcuts", async () => {
 });
 
 test("clicking a shortcut recorder gives its key handler focus", async () => {
-  const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
+  const [app, config, onboarding] = await Promise.all([
+    readFile(new URL("./App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFile(new URL("./onboarding.ts", import.meta.url), "utf8"),
+  ]);
 
   assert.match(
     app,
     /onClick=\{\(event\) => \{\s*event\.currentTarget\.focus\(\);\s*setRecording\(action\)/,
   );
   assert.match(app, /Saved\. Switch to another app to use your shortcuts\./);
+  assert.match(app, /region: "Command\+Shift\+Digit4"/);
+  assert.match(app, /macOS may still own ⌘⇧4/);
+  assert.match(onboarding, /⌘⇧4 by default/);
+  assert.match(config, /"label": "main"[\s\S]*?"titleBarStyle": "Visible"/);
+  assert.match(config, /"label": "main"[\s\S]*?"hiddenTitle": false/);
 });
 
 test("capture delays have a visible cancellable surface for every mode", async () => {
@@ -721,6 +735,8 @@ test("Area capture has one native precision selector with exact dimensions and a
   assert.match(selector, /visualCandidate/);
   assert.match(selector, /browserPreviewSource/);
   assert.match(selector, /area-selector__preview-fixture/);
+  assert.match(selector, /\{previewSource && \(\s*<img\s+className="area-selector__preview-fixture"/);
+  assert.doesNotMatch(selector, /\{!nativeRuntime && previewSource && \(\s*<img\s+className="area-selector__preview-fixture"/);
   assert.match(selector, /Click to snap/);
   assert.match(selector, /onPointerCancel=\{cancelPointer\}/);
   assert.match(selector, /complete_area_selection/);

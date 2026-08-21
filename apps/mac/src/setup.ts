@@ -233,3 +233,58 @@ export function shortcutRecorderLabel(
 ) {
   return recording ? "Press keys…" : `Change ${shortcut}`;
 }
+
+export function formatShortcut(shortcut: string) {
+  return shortcut
+    .split("+")
+    .map((part) => {
+      const token = part.trim();
+      const normalized = token.toLowerCase();
+      if (normalized === "command" || normalized === "super") return "⌘";
+      if (normalized === "control" || normalized === "ctrl") return "⌃";
+      if (normalized === "alt" || normalized === "option") return "⌥";
+      if (normalized === "shift") return "⇧";
+      if (/^key[a-z]$/i.test(token)) return token.slice(3).toUpperCase();
+      if (/^digit[0-9]$/i.test(token)) return token.slice(5);
+      return token.replace(/^Arrow/i, "");
+    })
+    .join("");
+}
+
+export function isMacOsAreaShortcut(shortcut: string) {
+  const tokens = new Set(
+    shortcut
+      .split("+")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const hasCommand = tokens.delete("command") || tokens.delete("super");
+  const hasShift = tokens.delete("shift");
+  const hasFour = tokens.delete("digit4") || tokens.delete("4");
+  return hasCommand && hasShift && hasFour && tokens.size === 0;
+}
+
+type ShortcutKeyEvent = {
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  code: string;
+};
+
+export function shortcutFromKeyEvent(event: ShortcutKeyEvent) {
+  const modifiers: string[] = [];
+  if (event.metaKey) modifiers.push("Command");
+  if (event.ctrlKey) modifiers.push("Control");
+  if (event.altKey) modifiers.push("Alt");
+  if (event.shiftKey) modifiers.push("Shift");
+
+  if (modifiers.length === 0) {
+    throw new Error("Include ⌘, ⌃, ⌥, or ⇧ in the shortcut.");
+  }
+  if (!event.code || event.code === "Unidentified") {
+    throw new Error("That key cannot be used as a global shortcut.");
+  }
+
+  return [...modifiers, event.code].join("+");
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { createLatestRequestGate } from "./async-control";
 import { CapsoGlyph, CapsoGlyphDefs } from "./glyphs.generated";
 import { firstRunComplete, firstRunSteps, type FirstRunInput } from "./onboarding";
+import { formatShortcut, isMacOsAreaShortcut } from "./setup";
 
 /**
  * The first-run walkthrough `12_MAC_APP_PLAN.md` specified and nobody built.
@@ -37,8 +38,12 @@ type SystemStatus = {
 };
 
 type Diagnostics = { latency_statistics: string | null };
-type ShortcutSettings = { shortcut?: string };
-type ShortcutStatus = { settings: ShortcutSettings };
+type ShortcutSettings = { region: string; window: string; fullscreen: string };
+type ShortcutStatus = {
+  settings: ShortcutSettings;
+  conflicts: Array<{ action: keyof ShortcutSettings; display: string; error: string }>;
+  storageWarning: string | null;
+};
 type AuthUiSnapshot = {
   configured: boolean;
   account: {
@@ -48,7 +53,9 @@ type AuthUiSnapshot = {
 
 export function FirstRun({ onDone }: { onDone: () => void }) {
   const [input, setInput] = useState<FirstRunInput | null>(null);
-  const [shortcut, setShortcut] = useState("⌃⇧C");
+  const [shortcut, setShortcut] = useState("⌘⇧4");
+  const [shortcutSettings, setShortcutSettings] = useState<ShortcutSettings | null>(null);
+  const [shortcutConflict, setShortcutConflict] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [showConnectForm, setShowConnectForm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -80,7 +87,11 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
         invoke<AuthUiSnapshot>("get_auth_status"),
       ]);
       if (!isLatest()) return;
-      if (keys.settings.shortcut) setShortcut(keys.settings.shortcut);
+      setShortcutSettings(keys.settings);
+      setShortcut(formatShortcut(keys.settings.region));
+      setShortcutConflict(
+        keys.conflicts.find((conflict) => conflict.action === "region")?.error ?? null,
+      );
       const rememberedLibraryChoice = localStorage.getItem(LIBRARY_CHOICE);
       setInput({
         screenRecording: system.screenRecording,
@@ -145,6 +156,28 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
         if (!mounted.current) return;
         setNote("Turn Capso on in System Settings, then come back — this updates on its own.");
       } else if (current.id === "hotkey") {
+        if (!shortcutSettings) {
+          setNote("Capso is still checking your shortcut. Try again in a moment.");
+          return;
+        }
+        const status = await invoke<ShortcutStatus>("update_shortcut_settings", {
+          settings: shortcutSettings,
+        });
+        if (!mounted.current) return;
+        setShortcutSettings(status.settings);
+        setShortcut(formatShortcut(status.settings.region));
+        const regionConflict = status.conflicts.find(
+          (conflict) => conflict.action === "region",
+        );
+        setShortcutConflict(regionConflict?.error ?? null);
+        if (regionConflict) {
+          setNote(
+            isMacOsAreaShortcut(status.settings.region)
+              ? "macOS still owns ⌘⇧4. Turn off its selected-area shortcut in System Settings → Keyboard → Keyboard Shortcuts → Screenshots, then retry."
+              : `Area shortcut is unavailable: ${regionConflict.error}`,
+          );
+          return;
+        }
         localStorage.setItem(HOTKEY_SEEN, "1");
       } else if (current.id === "login") {
         await invoke("set_launch_at_login_enabled", { enabled: true });
@@ -202,7 +235,7 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
     current?.id === "permission"
       ? "Open System Settings"
       : current?.id === "hotkey"
-        ? `Use ${shortcut}`
+        ? `${shortcutConflict ? "Retry" : "Use"} ${shortcut}`
         : current?.id === "login"
           ? "Start at login"
           : null;
@@ -227,6 +260,13 @@ export function FirstRun({ onDone }: { onDone: () => void }) {
                 {step.optional && <span className="first-run__optional"> · optional</span>}
               </p>
               <p className="first-run__detail">{step.detail}</p>
+              {step.id === "hotkey" && shortcutConflict && (
+                <p className="first-run__detail" role="note">
+                  {isMacOsAreaShortcut(shortcutSettings?.region ?? "")
+                    ? "macOS still owns ⌘⇧4. Disable its selected-area shortcut, then retry here."
+                    : `Area shortcut unavailable: ${shortcutConflict}`}
+                </p>
+              )}
 
               {step.state === "current" && (
                 <div className="first-run__actions">

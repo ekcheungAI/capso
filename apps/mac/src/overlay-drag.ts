@@ -31,11 +31,13 @@ export class OverlayDragGesture {
 export type OverlaySaveAsPreferences = {
   format: "png" | "jpeg";
   filenameTemplate: string;
+  directory: string;
 };
 
 const DEFAULT_SAVE_AS_PREFERENCES: OverlaySaveAsPreferences = {
   format: "png",
   filenameTemplate: "Capso {date} at {time}",
+  directory: "",
 };
 
 export function saveAsTemplateError(template: string) {

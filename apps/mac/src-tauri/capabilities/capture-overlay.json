@@ -3,5 +3,5 @@
   "identifier": "capture-overlay",
   "description": "Scoped interaction access for the non-activating capture overlay",
   "windows": ["capture-overlay"],
-  "permissions": ["core:event:default", "dialog:allow-save"]
+  "permissions": ["core:event:default"]
 }

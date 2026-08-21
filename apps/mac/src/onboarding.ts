@@ -51,7 +51,7 @@ const ORDER: Array<{ id: StepId; title: string; detail: string; optional: boolea
   {
     id: "hotkey",
     title: "Confirm your capture shortcut",
-    detail: "⌃⇧C by default. Change it if something else already uses it.",
+    detail: "⌘⇧4 by default. Disable macOS Screenshot for this shortcut if it is still reserved.",
     optional: false,
   },
   {

@@ -47,13 +47,13 @@ test("Never creates no auto-dismiss timer while a timed preference keeps its exa
   assert.equal(scheduler.timers.size, 0);
 
   const timer = createOverlayAutoDismissTimer(
-    15_000,
+    10_000,
     () => dismissals++,
     scheduler,
   );
   assert.ok(timer);
   timer.start();
-  scheduler.advance(14_999);
+  scheduler.advance(9_999);
   assert.equal(dismissals, 0);
   scheduler.advance(1);
   assert.equal(dismissals, 1);
@@ -62,18 +62,18 @@ test("Never creates no auto-dismiss timer while a timed preference keeps its exa
 test("hover pause preserves the exact remaining auto-dismiss duration", () => {
   const scheduler = new FakeScheduler();
   let dismissals = 0;
-  const timer = new PausableOverlayTimer(8_000, () => dismissals++, scheduler);
+  const timer = new PausableOverlayTimer(10_000, () => dismissals++, scheduler);
 
   timer.start();
   scheduler.advance(3_000);
   timer.pause();
-  assert.equal(timer.remainingMs(), 5_000);
+  assert.equal(timer.remainingMs(), 7_000);
 
   scheduler.advance(20_000);
   assert.equal(dismissals, 0);
 
   timer.start();
-  scheduler.advance(4_999);
+  scheduler.advance(6_999);
   assert.equal(dismissals, 0);
   scheduler.advance(1);
   assert.equal(dismissals, 1);
@@ -82,25 +82,25 @@ test("hover pause preserves the exact remaining auto-dismiss duration", () => {
 test("a new capture resets and invalidates the older capture timer", () => {
   const scheduler = new FakeScheduler();
   let dismissals = 0;
-  const timer = new PausableOverlayTimer(8_000, () => dismissals++, scheduler);
+  const timer = new PausableOverlayTimer(10_000, () => dismissals++, scheduler);
 
   timer.start();
-  scheduler.advance(7_000);
+  scheduler.advance(9_000);
   timer.reset();
   timer.start();
   scheduler.advance(1_001);
   assert.equal(dismissals, 0);
-  scheduler.advance(6_999);
+  scheduler.advance(8_999);
   assert.equal(dismissals, 1);
 });
 
 test("an expired timeout remains one-shot until a new capture resets it", () => {
   const scheduler = new FakeScheduler();
   let dismissals = 0;
-  const timer = new PausableOverlayTimer(8_000, () => dismissals++, scheduler);
+  const timer = new PausableOverlayTimer(10_000, () => dismissals++, scheduler);
 
   timer.start();
-  scheduler.advance(8_000);
+  scheduler.advance(10_000);
   assert.equal(dismissals, 1);
 
   timer.start();
@@ -109,6 +109,6 @@ test("an expired timeout remains one-shot until a new capture resets it", () => 
 
   timer.reset();
   timer.start();
-  scheduler.advance(8_000);
+  scheduler.advance(10_000);
   assert.equal(dismissals, 2);
 });

@@ -48,6 +48,7 @@ test("Save As renders the validated template and preferred extension in one loca
     suggestedCaptureFilename(localTime, {
       filenameTemplate: "Client review {date} — {time}",
       format: "jpeg",
+      directory: "",
     }),
     "Client review 2026-01-02 — 03.04.05.jpg",
   );
@@ -55,6 +56,7 @@ test("Save As renders the validated template and preferred extension in one loca
     suggestedCaptureFilename(localTime, {
       filenameTemplate: "{date} {time}",
       format: "png",
+      directory: "",
     }),
     "2026-01-02 03.04.05.png",
   );

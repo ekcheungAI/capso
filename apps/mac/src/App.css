@@ -6100,6 +6100,13 @@ html[data-surface="area-selector"] #root {
   font-size: 0.75rem;
 }
 
+.shortcut-system-hint {
+  margin: -0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
 .actions {
   padding: 0;
   display: flex;

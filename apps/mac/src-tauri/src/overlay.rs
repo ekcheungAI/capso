@@ -65,14 +65,14 @@ impl OverlaySize {
 pub(crate) enum OverlayAutoDismiss {
     EightSeconds,
     FifteenSeconds,
+    TenSeconds,
     Never,
 }
 
 impl OverlayAutoDismiss {
     fn milliseconds(self) -> Option<u64> {
         match self {
-            Self::EightSeconds => Some(8_000),
-            Self::FifteenSeconds => Some(15_000),
+            Self::EightSeconds | Self::FifteenSeconds | Self::TenSeconds => Some(10_000),
             Self::Never => None,
         }
     }
@@ -119,7 +119,7 @@ impl Default for OverlayPreferences {
         Self {
             placement: OverlayPlacement::BottomRight,
             size: OverlaySize::Compact,
-            auto_dismiss: OverlayAutoDismiss::EightSeconds,
+            auto_dismiss: OverlayAutoDismiss::TenSeconds,
             quick_actions: OverlayQuickActions::default(),
         }
     }
@@ -207,6 +207,8 @@ impl OverlayPreferences {
 pub(crate) struct OverlaySaveAsPreferences {
     pub(crate) format: CaptureExportFormat,
     pub(crate) filename_template: String,
+    #[serde(default)]
+    pub(crate) directory: String,
 }
 
 impl Default for OverlaySaveAsPreferences {
@@ -214,6 +216,7 @@ impl Default for OverlaySaveAsPreferences {
         Self {
             format: CaptureExportFormat::Png,
             filename_template: "Capso {date} at {time}".into(),
+            directory: String::new(),
         }
     }
 }
@@ -234,6 +237,17 @@ fn validate_save_as_preferences(preferences: &OverlaySaveAsPreferences) -> Resul
     let remainder = template.replace("{date}", "").replace("{time}", "");
     if remainder.contains('{') || remainder.contains('}') {
         return Err("Save As names support only the {date} and {time} tokens.".into());
+    }
+    if !preferences.directory.is_empty() {
+        let directory = Path::new(&preferences.directory);
+        if !directory.is_absolute() {
+            return Err("The Save folder must be an absolute local folder.".into());
+        }
+        let metadata = fs::symlink_metadata(directory)
+            .map_err(|error| format!("Could not use the selected Save folder: {error}"))?;
+        if !metadata.file_type().is_dir() {
+            return Err("The Save folder must be a direct local folder.".into());
+        }
     }
     Ok(())
 }
@@ -295,9 +309,17 @@ fn load_stored_overlay_settings(path: &Path) -> Result<StoredOverlaySettings, St
     }
     let bytes =
         fs::read(path).map_err(|error| format!("Could not read Quick Access settings: {error}"))?;
-    let stored: StoredOverlaySettings = serde_json::from_slice(&bytes).map_err(|_| {
+    let mut stored: StoredOverlaySettings = serde_json::from_slice(&bytes).map_err(|_| {
         "Quick Access settings are damaged. The existing file was preserved.".to_string()
     })?;
+    for preferences in stored.profiles.values_mut() {
+        if matches!(
+            preferences.auto_dismiss,
+            OverlayAutoDismiss::EightSeconds | OverlayAutoDismiss::FifteenSeconds
+        ) {
+            preferences.auto_dismiss = OverlayAutoDismiss::TenSeconds;
+        }
+    }
     validate_stored_overlay_settings(&stored)?;
     Ok(stored)
 }
@@ -574,6 +596,13 @@ pub(crate) fn get_save_as_preferences(app: &AppHandle) -> Result<OverlaySaveAsPr
     stored_overlay_settings(app).map(|stored| stored.save_as)
 }
 
+pub(crate) fn default_save_directory(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .picture_dir()
+        .map(|directory| directory.join("Capso"))
+        .map_err(|error| format!("Could not locate the Pictures folder: {error}"))
+}
+
 pub(crate) fn update_overlay_settings(
     app: &AppHandle,
     display_id: &str,
@@ -670,7 +699,7 @@ impl OverlayRuntime {
             presentation_id: self.presentation_generation,
             clipboard,
             source,
-            auto_dismiss_ms: OverlayAutoDismiss::EightSeconds.milliseconds(),
+            auto_dismiss_ms: OverlayAutoDismiss::TenSeconds.milliseconds(),
             quick_actions: OverlayQuickActions::default(),
             temporarily_hidden: false,
         }
@@ -2077,26 +2106,69 @@ pub(crate) async fn overlay_copy_capture(
 
 #[tauri::command]
 pub(crate) async fn overlay_save_capture(
+    app: AppHandle,
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
-    destination: String,
+    filename: String,
 ) -> Result<OverlaySaveResult, String> {
-    if destination.trim().is_empty() {
-        return Err("Choose a destination for the saved capture.".into());
-    }
-
     let source = {
         let runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
         current_capture_path(&runtime, &path, presentation_id)?
     };
-    let destination_path = PathBuf::from(&destination);
+    let preferences = get_save_as_preferences(&app)?;
+    let filename_path = Path::new(&filename);
+    if filename.trim().is_empty()
+        || filename_path.file_name().and_then(|name| name.to_str()) != Some(filename.as_str())
+        || filename.chars().any(char::is_control)
+    {
+        return Err("The generated Save filename is invalid.".into());
+    }
+    let expected_extension = match preferences.format {
+        CaptureExportFormat::Png => "png",
+        CaptureExportFormat::Jpeg => "jpg",
+    };
+    if filename_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some(expected_extension)
+    {
+        return Err("The generated Save filename does not match the selected format.".into());
+    }
+    let directory = if preferences.directory.is_empty() {
+        let directory = default_save_directory(&app)?;
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("Could not create the Save folder: {error}"))?;
+        directory
+    } else {
+        PathBuf::from(&preferences.directory)
+    };
+    let metadata = fs::symlink_metadata(&directory)
+        .map_err(|error| format!("Could not use the Save folder: {error}"))?;
+    if !metadata.file_type().is_dir() {
+        return Err("The configured Save folder is not a direct local folder.".into());
+    }
+    let stem = filename_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| "The generated Save filename is invalid.".to_string())?;
+    let mut destination_path = directory.join(&filename);
+    for suffix in 2..=1_000 {
+        if !destination_path.exists() {
+            break;
+        }
+        destination_path = directory.join(format!("{stem} ({suffix}).{expected_extension}"));
+    }
+    if destination_path.exists() {
+        return Err("The Save folder contains too many captures with the same name.".into());
+    }
     if source == destination_path {
         return Err("Choose a different location for the saved copy.".into());
     }
 
+    let destination = destination_path.to_string_lossy().into_owned();
     let exported =
         tauri::async_runtime::spawn_blocking(move || export_capture(&source, &destination_path))
             .await
@@ -2638,6 +2710,7 @@ mod tests {
         let valid = OverlaySaveAsPreferences {
             format: CaptureExportFormat::Jpeg,
             filename_template: "Client review {date} — {time}".into(),
+            directory: String::new(),
         };
         validate_save_as_preferences(&valid).expect("safe template");
 
@@ -2652,6 +2725,7 @@ mod tests {
             assert!(validate_save_as_preferences(&OverlaySaveAsPreferences {
                 format: CaptureExportFormat::Png,
                 filename_template: filename_template.into(),
+                directory: String::new(),
             })
             .is_err());
         }
@@ -3632,7 +3706,7 @@ mod tests {
             .any(|window| window == OVERLAY_LABEL));
         assert_eq!(
             capability["permissions"],
-            serde_json::json!(["core:event:default", "dialog:allow-save"])
+            serde_json::json!(["core:event:default"])
         );
     }
 }

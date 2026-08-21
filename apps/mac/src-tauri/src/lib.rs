@@ -38,8 +38,8 @@ use std::{
 };
 use tauri::{
     menu::{IconMenuItemBuilder, Menu, MenuBuilder, MenuItem, SubmenuBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime, State, WebviewWindow,
+    tray::TrayIconBuilder,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -356,6 +356,34 @@ fn get_overlay_settings(app: AppHandle) -> Result<overlay::OverlaySettingsSnapsh
 #[tauri::command]
 fn get_save_as_preferences(app: AppHandle) -> Result<overlay::OverlaySaveAsPreferences, String> {
     overlay::get_save_as_preferences(&app)
+}
+
+#[tauri::command]
+fn choose_capture_save_directory(
+    app: AppHandle,
+    current: String,
+) -> Result<Option<String>, String> {
+    let starting_directory = if current.is_empty() {
+        overlay::default_save_directory(&app)?
+            .parent()
+            .map(PathBuf::from)
+            .ok_or_else(|| "Could not locate a starting Save folder.".to_string())?
+    } else {
+        PathBuf::from(current)
+    };
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Choose Capso Save folder")
+        .set_directory(starting_directory)
+        .blocking_pick_folder();
+    selected
+        .map(|path| {
+            path.into_path()
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|_| "Choose a readable local Save folder.".to_string())
+        })
+        .transpose()
 }
 
 #[tauri::command]
@@ -1473,16 +1501,6 @@ fn show_permission_guidance(app: &AppHandle) {
     }
 }
 
-/// Show the popover and give it focus; hide it if it is already visible.
-fn toggle_popover(window: &WebviewWindow) -> tauri::Result<()> {
-    if window.is_visible()? {
-        window.hide()
-    } else {
-        window.show()?;
-        window.set_focus()
-    }
-}
-
 /// Settings is a destination, not a toggle: an already-open window is raised and
 /// focused rather than hidden, so choosing "Settings…" always shows settings.
 fn open_settings_window(app: &AppHandle) {
@@ -1814,7 +1832,7 @@ fn build_tray_menu<R: Runtime>(
     shortcut_status: &shortcuts::ShortcutStatus,
     system_status: &system::SystemStatus,
     queue_status: &queue::QueueRuntimeStatus,
-    latency_report: &latency::OverlayLatencyReport,
+    _latency_report: &latency::OverlayLatencyReport,
 ) -> tauri::Result<Menu<R>> {
     let mut menu_builder =
         MenuBuilder::new(app).text(capture_hud::OPEN_CAPTURE_HUD_MENU_ID, "Capture…");
@@ -2235,6 +2253,7 @@ pub fn run() {
             restore_history_captures,
             get_overlay_settings,
             get_save_as_preferences,
+            choose_capture_save_directory,
             update_overlay_settings,
             restore_history_capture,
             recognize_history_capture_text,
@@ -2629,7 +2648,8 @@ mod tests {
         assert_eq!(main["skipTaskbar"], true);
         // A standard titlebar keeps the window movable and closable without the app
         // having to supply its own drag region.
-        assert!(main.get("titleBarStyle").is_none());
+        assert_eq!(main["titleBarStyle"], "Visible");
+        assert_eq!(main["hiddenTitle"], false);
 
         // Reachability is what the old always-visible window really guaranteed, and it
         // is asserted against this file from `capture-parity.check.ts`. Scanning this

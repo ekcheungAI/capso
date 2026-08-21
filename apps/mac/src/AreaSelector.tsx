@@ -390,7 +390,7 @@ export default function AreaSelector() {
       onPointerUp={end}
       onPointerCancel={cancelPointer}
     >
-      {!nativeRuntime && previewSource && (
+      {previewSource && (
         <img
           className="area-selector__preview-fixture"
           src={previewSource}

@@ -18,6 +18,8 @@
         "height": 540,
         "visible": false,
         "resizable": false,
+        "titleBarStyle": "Visible",
+        "hiddenTitle": false,
         "skipTaskbar": true
       },
       {

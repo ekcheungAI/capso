@@ -134,11 +134,22 @@ fn validate_json_shape(value: &Value) -> Result<(), String> {
         }
     }
     if let Some(save_as) = quick_access.get("saveAs") {
-        exact_keys(
-            object(save_as, "Save As preferences")?,
-            &["format", "filenameTemplate"],
-            "Save As preference",
-        )?;
+        let save_as = object(save_as, "Save preferences")?;
+        if let Some(key) = save_as
+            .keys()
+            .find(|key| !["format", "filenameTemplate", "directory"].contains(&key.as_str()))
+        {
+            return Err(format!(
+                "Capso settings contain an unknown Save preference field: {key}"
+            ));
+        }
+        for required in ["format", "filenameTemplate"] {
+            if !save_as.contains_key(required) {
+                return Err(format!(
+                    "Capso settings are missing the Save preference field: {required}"
+                ));
+            }
+        }
     }
     let profiles = object(&quick_access["profiles"], "Quick Access profiles")?;
     for (display_id, preferences) in profiles {
@@ -464,7 +475,7 @@ mod tests {
 
         assert!(decode_document(
             valid
-                .replace("Control+Shift+W", "Control+Shift+C")
+                .replace("Control+Shift+W", "Control+Shift+F")
                 .as_bytes()
         )
         .is_err());

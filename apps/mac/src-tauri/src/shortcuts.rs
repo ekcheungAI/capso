@@ -55,6 +55,8 @@ const CAPTURE_SHORTCUTS: [CaptureShortcut; 3] = [
 ];
 
 pub(crate) const CAPTURE_REGION_TIMER_MENU_ID: &str = "capture-region-timer";
+const LEGACY_DEFAULT_SHORTCUTS: (&str, &str, &str) =
+    ("Control+Shift+C", "Control+Shift+W", "Control+Shift+F");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,7 +69,7 @@ pub(crate) struct ShortcutSettings {
 impl Default for ShortcutSettings {
     fn default() -> Self {
         Self {
-            region: "Control+Shift+C".into(),
+            region: "Command+Shift+Digit4".into(),
             window: "Control+Shift+W".into(),
             fullscreen: "Control+Shift+F".into(),
         }
@@ -266,6 +268,21 @@ pub(crate) fn validate_shortcut_settings(
     })
 }
 
+fn migrate_legacy_defaults(settings: ShortcutSettings) -> ShortcutSettings {
+    if (
+        settings.region.as_str(),
+        settings.window.as_str(),
+        settings.fullscreen.as_str(),
+    ) == LEGACY_DEFAULT_SHORTCUTS
+    {
+        return ShortcutSettings {
+            region: "Command+Shift+Digit4".into(),
+            ..settings
+        };
+    }
+    settings
+}
+
 pub(crate) fn register_capture_shortcuts<F>(
     bindings: &[CaptureBinding],
     mut register: F,
@@ -351,6 +368,7 @@ pub(crate) fn load_shortcut_settings(path: &Path) -> LoadedShortcutSettings {
 
     let parsed = serde_json::from_str::<ShortcutSettings>(&contents)
         .map_err(|error| format!("Shortcut settings JSON is invalid: {error}"))
+        .map(migrate_legacy_defaults)
         .and_then(validate_shortcut_settings);
 
     match parsed {
@@ -551,6 +569,7 @@ mod tests {
     use std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
+        fs,
         rc::Rc,
     };
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
@@ -572,9 +591,43 @@ mod tests {
         assert_eq!(definitions.len(), 3);
         assert_eq!(ids.len(), definitions.len());
         assert_eq!(shortcut_ids.len(), definitions.len());
-        assert_eq!(defaults.settings.region, "Control+Shift+C");
+        assert_eq!(defaults.settings.region, "Command+Shift+Digit4");
         assert_eq!(defaults.settings.window, "Control+Shift+W");
         assert_eq!(defaults.settings.fullscreen, "Control+Shift+F");
+    }
+
+    #[test]
+    fn untouched_legacy_defaults_migrate_area_to_command_shift_four() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shortcut-settings.json");
+        fs::write(
+            &path,
+            r#"{"region":"Control+Shift+C","window":"Control+Shift+W","fullscreen":"Control+Shift+F"}"#,
+        )
+        .unwrap();
+
+        let loaded = load_shortcut_settings(&path);
+        assert_eq!(loaded.settings.region, "Command+Shift+Digit4");
+        assert_eq!(loaded.settings.window, "Control+Shift+W");
+        assert_eq!(loaded.settings.fullscreen, "Control+Shift+F");
+        assert!(loaded.warning.is_none());
+    }
+
+    #[test]
+    fn customized_legacy_settings_do_not_migrate() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shortcut-settings.json");
+        fs::write(
+            &path,
+            r#"{"region":"Command+Digit1","window":"Control+Shift+W","fullscreen":"Control+Shift+F"}"#,
+        )
+        .unwrap();
+
+        let loaded = load_shortcut_settings(&path);
+        assert_eq!(loaded.settings.region, "Command+Digit1");
+        assert_eq!(loaded.settings.window, "Control+Shift+W");
+        assert_eq!(loaded.settings.fullscreen, "Control+Shift+F");
+        assert!(loaded.warning.is_none());
     }
 
     #[test]
@@ -607,9 +660,9 @@ mod tests {
     #[test]
     fn only_known_pressed_shortcuts_launch_capture_actions() {
         let bindings = validate_shortcut_settings(ShortcutSettings::default()).unwrap();
-        let control_shift = Modifiers::CONTROL | Modifiers::SHIFT;
-        let region = Shortcut::new(Some(control_shift), Code::KeyC);
-        let unrelated = Shortcut::new(Some(control_shift), Code::KeyP);
+        let command_shift = Modifiers::META | Modifiers::SHIFT;
+        let region = Shortcut::new(Some(command_shift), Code::Digit4);
+        let unrelated = Shortcut::new(Some(command_shift), Code::KeyP);
 
         assert_eq!(
             action_for_event(&region, ShortcutState::Pressed, &bindings.bindings),

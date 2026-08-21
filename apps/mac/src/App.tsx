@@ -17,6 +17,9 @@ import {
 } from "./overlay-drag";
 import {
   cloudAccountPresentation,
+  formatShortcut,
+  isMacOsAreaShortcut,
+  shortcutFromKeyEvent,
   shortcutRecorderLabel,
   syncPresentation,
   type SyncRuntimeStatus,
@@ -58,7 +61,7 @@ type SystemStatus = {
 
 type OverlayPlacement = "top_left" | "top_right" | "bottom_left" | "bottom_right";
 type OverlaySize = "compact" | "regular" | "large";
-type OverlayAutoDismiss = "eight_seconds" | "fifteen_seconds" | "never";
+type OverlayAutoDismiss = "ten_seconds" | "never";
 type OverlayQuickActions = {
   pin: boolean;
   annotate: boolean;
@@ -142,7 +145,7 @@ const PREVIEW_RECONNECT = PREVIEW_CONNECTED && PREVIEW_MODE === "reconnect";
 const PREVIEW_DEVICE_REVOKED = PREVIEW_CONNECTED && PREVIEW_MODE === "device-revoked";
 
 const DEFAULT_SHORTCUTS: ShortcutSettings = {
-  region: "Control+Shift+C",
+  region: "Command+Shift+Digit4",
   window: "Control+Shift+W",
   fullscreen: "Control+Shift+F",
 };
@@ -156,13 +159,14 @@ const PREVIEW_SYSTEM_STATUS: SystemStatus = {
 const DEFAULT_OVERLAY_PREFERENCES: OverlayPreferences = {
   placement: "bottom_right",
   size: "compact",
-  autoDismiss: "eight_seconds",
+  autoDismiss: "ten_seconds",
   quickActions: { pin: true, annotate: true, copy: true, save: true },
 };
 
 const DEFAULT_SAVE_AS_PREFERENCES: OverlaySaveAsPreferences = {
   format: "png",
   filenameTemplate: "Capso {date} at {time}",
+  directory: "",
 };
 
 const PREVIEW_OVERLAY_SETTINGS: OverlaySettingsSnapshot = {
@@ -274,38 +278,8 @@ function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
 }
 
-function formatShortcut(shortcut: string) {
-  return shortcut
-    .split("+")
-    .map((part) => {
-      const token = part.trim();
-      const normalized = token.toLowerCase();
-      if (normalized === "command" || normalized === "super") return "⌘";
-      if (normalized === "control" || normalized === "ctrl") return "⌃";
-      if (normalized === "alt" || normalized === "option") return "⌥";
-      if (normalized === "shift") return "⇧";
-      if (/^key[a-z]$/i.test(token)) return token.slice(3).toUpperCase();
-      if (/^digit[0-9]$/i.test(token)) return token.slice(5);
-      return token.replace(/^Arrow/i, "");
-    })
-    .join("");
-}
-
 function shortcutFromEvent(event: KeyboardEvent<HTMLButtonElement>) {
-  const modifiers: string[] = [];
-  if (event.metaKey) modifiers.push("Command");
-  if (event.ctrlKey) modifiers.push("Control");
-  if (event.altKey) modifiers.push("Alt");
-  if (event.shiftKey) modifiers.push("Shift");
-
-  if (modifiers.length === 0) {
-    throw new Error("Include ⌘, ⌃, ⌥, or ⇧ in the shortcut.");
-  }
-  if (!event.code || event.code === "Unidentified") {
-    throw new Error("That key cannot be used as a global shortcut.");
-  }
-
-  return [...modifiers, event.code].join("+");
+  return shortcutFromKeyEvent(event);
 }
 
 function sameSettings(left: ShortcutSettings, right: ShortcutSettings) {
@@ -697,6 +671,26 @@ function App() {
     } finally {
       overlaySaveInFlight.current = false;
       setOverlaySaving(false);
+    }
+  }
+
+  async function chooseSaveDirectory() {
+    if (!nativeRuntime || overlaySaving) return;
+    setOverlayNotice("Choosing the folder used by the Save button…");
+    setOverlayNoticeIsError(false);
+    try {
+      const directory = await invoke<string | null>("choose_capture_save_directory", {
+        current: saveAsDraft.directory,
+      });
+      if (directory) {
+        setSaveAsDraft({ ...saveAsDraft, directory });
+        setOverlayNotice("Save folder is ready. Save changes to activate it.");
+      } else {
+        setOverlayNotice("Folder selection cancelled. Nothing changed.");
+      }
+    } catch (error) {
+      setOverlayNotice(String(error));
+      setOverlayNoticeIsError(true);
     }
   }
 
@@ -1325,13 +1319,23 @@ function App() {
         </div>
 
         {conflicts.length > 0 && (
-          <ul className="conflict-list" aria-label="Shortcut conflicts">
-            {conflicts.map((conflict) => (
-              <li key={conflict.action}>
-                {formatShortcut(conflict.display)} - {conflict.error}
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="conflict-list" aria-label="Shortcut conflicts">
+              {conflicts.map((conflict) => (
+                <li key={conflict.action}>
+                  {formatShortcut(conflict.display)} - {conflict.error}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {isMacOsAreaShortcut(settings.region) && (
+          <p className="shortcut-system-hint" role="note">
+            macOS may still own ⌘⇧4. If Save reports it unavailable, open System
+            Settings → Keyboard → Keyboard Shortcuts → Screenshots, turn off “Save
+            picture of selected area as a file”, then save again.
+          </p>
         )}
 
         <footer className="actions">
@@ -1520,8 +1524,7 @@ function App() {
                     autoDismiss: event.currentTarget.value as OverlayAutoDismiss,
                   })}
                 >
-                  <option value="eight_seconds">After 8 seconds</option>
-                  <option value="fifteen_seconds">After 15 seconds</option>
+                  <option value="ten_seconds">After 10 seconds</option>
                   <option value="never">Never</option>
                 </select>
               </label>
@@ -1552,12 +1555,27 @@ function App() {
             </fieldset>
 
             <fieldset className="quick-access-settings__save-as">
-              <legend>Save As defaults <span>Every display</span></legend>
+              <legend>Save defaults <span>Every display</span></legend>
               <div>
+                <label className="quick-access-settings__template">
+                  <span>Folder</span>
+                  <input
+                    type="text"
+                    aria-label="Capture save folder"
+                    readOnly
+                    value={saveAsDraft.directory || "Pictures/Capso"}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={overlaySaving || !nativeRuntime}
+                  onClick={() => void chooseSaveDirectory()}
+                >Choose folder…</button>
                 <label>
                   <span>Format</span>
                   <select
-                    aria-label="Default Save As format"
+                    aria-label="Default save format"
                     value={saveAsDraft.format}
                     disabled={overlaySaving}
                     onChange={(event) => {

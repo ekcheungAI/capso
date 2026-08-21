@@ -100,7 +100,7 @@ Capso registers the three capture shortcuts from Rust at startup:
 
 | Capture | Default | Tray fallback |
 |---|---|---|
-| Region | ⌃⇧C | Capture Region |
+| Region | ⌘⇧4 | Capture Region |
 | Window | ⌃⇧W | Capture Window |
 | Main-display fullscreen | ⌃⇧F | Capture Fullscreen |
 

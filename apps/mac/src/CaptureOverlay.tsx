@@ -1,6 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   OverlayActionCoordinator,
@@ -9,7 +8,6 @@ import {
 } from "./overlay-actions";
 import {
   OverlayDragGesture,
-  saveAsFilters,
   suggestedCaptureFilename,
   type OverlaySaveAsPreferences,
 } from "./overlay-drag";
@@ -94,7 +92,7 @@ const PREVIEW_CAPTURE: PresentedCapture = {
     ? { status: "unchanged" }
     : { status: "copied", bytes: 248_320 },
   source: PREVIEW_IS_HISTORY ? "history" : "capture",
-  autoDismissMs: 8_000,
+  autoDismissMs: 10_000,
   quickActions: PREVIEW_MINIMAL_ACTIONS
     ? { pin: true, annotate: false, copy: false, save: false }
     : { pin: true, annotate: true, copy: true, save: true },
@@ -583,18 +581,10 @@ export default function CaptureOverlay() {
       const saveAsPreferences = await invoke<OverlaySaveAsPreferences>(
         "get_save_as_preferences",
       );
-      const destination = await save({
-        title: "Save Capso Capture",
-        defaultPath: suggestedCaptureFilename(new Date(), saveAsPreferences),
-        filters: saveAsFilters(saveAsPreferences.format),
-        canCreateDirectories: true,
-      });
-      if (!destination) return;
-
       const result = await invoke<OverlaySaveResult>("overlay_save_capture", {
         path,
         presentationId,
-        destination,
+        filename: suggestedCaptureFilename(new Date(), saveAsPreferences),
       });
       if (actionCoordinator.current?.isCurrent(action)) {
         setNotice(
@@ -1101,7 +1091,7 @@ export default function CaptureOverlay() {
                 type="button"
                 className="capture-overlay__action"
                 aria-label="Save capture as PNG or JPEG"
-            title="Save As…"
+            title="Save to the folder set in Settings"
             data-busy={busyAction === "save"}
             disabled={busyAction !== null || projectBusy || imageFailed}
             onClick={() => void saveCapture()}
