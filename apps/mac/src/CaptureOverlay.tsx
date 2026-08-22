@@ -21,7 +21,10 @@ import {
 import { OverlaySwipeGesture } from "./overlay-swipe";
 import {
   createOverlayAutoDismissTimer,
+  NativeOverlayAutoDismissBridge,
   PausableOverlayTimer,
+  rendererOwnsAutoDismissPause,
+  shouldRequestOverlayReveal,
 } from "./overlay-timing";
 
 type ClipboardStatus =
@@ -132,6 +135,7 @@ export default function CaptureOverlay() {
   const [revealedPresentation, setRevealedPresentation] = useState<number | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swipePhase, setSwipePhase] = useState<SwipePhase>("idle");
+  const [pointerInteraction, setPointerInteraction] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(() =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
@@ -155,6 +159,30 @@ export default function CaptureOverlay() {
   }
   const dismissRef = useRef<(reason: DismissReason) => void>(() => undefined);
   const autoDismiss = useRef<PausableOverlayTimer | null>(null);
+  const nativeAutoDismiss = useRef<NativeOverlayAutoDismissBridge | null>(null);
+  if (nativeAutoDismiss.current === null) {
+    nativeAutoDismiss.current = new NativeOverlayAutoDismissBridge(
+      ({ path, presentationId }, paused) =>
+        invoke<boolean>("overlay_set_auto_dismiss_paused", {
+          path,
+          presentationId,
+          paused,
+        }),
+    );
+  }
+
+  const setRendererAutoDismissPaused = useCallback(
+    (target: PresentedCapture, paused: boolean) => {
+      if (!nativeRuntime || !target.path || target.autoDismissMs === null) {
+        return Promise.resolve(false);
+      }
+      return nativeAutoDismiss.current!.setPaused(
+        { path: target.path, presentationId: target.presentationId },
+        paused,
+      );
+    },
+    [nativeRuntime],
+  );
 
   const clearSwipeTimers = useCallback(() => {
     for (const timer of [swipeQuietTimer, swipeSettleTimer, swipeExitTimer]) {
@@ -195,6 +223,7 @@ export default function CaptureOverlay() {
         resetSwipePresentation();
         dragGesture.current.reset();
         dragAction.current = null;
+        setPointerInteraction(false);
         const presentation = actionCoordinator.current!.activateCapture(event.payload.path);
         revealRequestedPresentation.current = null;
         setRevealedPresentation(null);
@@ -218,6 +247,7 @@ export default function CaptureOverlay() {
           return;
         }
         dragAction.current = null;
+        setPointerInteraction(false);
         setBusyAction(null);
         setNoticeIsWarning(false);
         setNotice(event.payload.outcome === "dropped" ? "Shared a copy" : null);
@@ -245,8 +275,7 @@ export default function CaptureOverlay() {
             if (autoDismiss.current?.remainingMs() === 0) {
               autoDismiss.current.reset();
             }
-            revealRequestedPresentation.current = current.presentation;
-            setRevealedPresentation(current.presentation);
+            revealRequestedPresentation.current = null;
             setTemporarilyHidden(false);
             setNotice("Quick Access restored");
             setNoticeIsWarning(false);
@@ -323,6 +352,30 @@ export default function CaptureOverlay() {
     if (!nativeRuntime && capture) void reveal();
   }, [capture, nativeRuntime, reveal]);
 
+  useEffect(() => {
+    if (
+      !nativeRuntime ||
+      !capture ||
+      !shouldRequestOverlayReveal(
+        imageReady,
+        imageFailed,
+        temporarilyHidden,
+        revealedPresentation === capture.presentation,
+      )
+    ) {
+      return;
+    }
+    void reveal();
+  }, [
+    capture,
+    imageFailed,
+    imageReady,
+    nativeRuntime,
+    reveal,
+    revealedPresentation,
+    temporarilyHidden,
+  ]);
+
   const dismiss = useCallback(
     async (reason: DismissReason): Promise<boolean> => {
       if (!capture) return false;
@@ -372,9 +425,18 @@ export default function CaptureOverlay() {
 
   useEffect(() => {
     autoDismiss.current?.cancel();
+    const timerPresentation = capture?.presentation ?? null;
     autoDismiss.current = createOverlayAutoDismissTimer(
       capture?.autoDismissMs ?? null,
-      () => dismissRef.current("timeout"),
+      () => {
+        if (
+          timerPresentation === null ||
+          actionCoordinator.current?.generation() !== timerPresentation
+        ) {
+          return;
+        }
+        dismissRef.current("timeout");
+      },
       {
         now: () => performance.now(),
         set: (callback, delayMs) => window.setTimeout(callback, delayMs),
@@ -388,18 +450,20 @@ export default function CaptureOverlay() {
     imageReady &&
     !imageFailed &&
     revealedPresentation === capture.presentation;
+  const shouldRunAutoDismiss =
+    nativeRuntime &&
+    Boolean(capture?.path) &&
+    capture?.autoDismissMs !== null &&
+    imageReady &&
+    !imageFailed &&
+    isRevealed &&
+    !temporarilyHidden &&
+    busyAction === null &&
+    !pointerInteraction &&
+    swipePhase === "idle";
+
   useEffect(() => {
-    const shouldRun =
-      nativeRuntime &&
-      Boolean(capture?.path) &&
-      capture?.autoDismissMs !== null &&
-      imageReady &&
-      !imageFailed &&
-      isRevealed &&
-      !temporarilyHidden &&
-      busyAction === null &&
-      swipePhase === "idle";
-    if (shouldRun) autoDismiss.current?.start();
+    if (shouldRunAutoDismiss) autoDismiss.current?.start();
     else autoDismiss.current?.pause();
   }, [
     busyAction,
@@ -409,8 +473,41 @@ export default function CaptureOverlay() {
     imageReady,
     isRevealed,
     nativeRuntime,
+    pointerInteraction,
     swipePhase,
     temporarilyHidden,
+  ]);
+
+  const rendererInteractionActive = rendererOwnsAutoDismissPause(
+    pointerInteraction,
+    swipePhase,
+    busyAction,
+  );
+
+  useEffect(() => {
+    if (!nativeRuntime || !capture?.path || capture.autoDismissMs === null) return;
+    void setRendererAutoDismissPaused(capture, rendererInteractionActive);
+  }, [
+    capture?.autoDismissMs,
+    capture?.path,
+    capture?.presentationId,
+    nativeRuntime,
+    rendererInteractionActive,
+    setRendererAutoDismissPaused,
+  ]);
+
+  useEffect(() => {
+    if (!nativeRuntime || !capture?.path || capture.autoDismissMs === null) return;
+    const activeCapture = capture;
+    return () => {
+      void setRendererAutoDismissPaused(activeCapture, false);
+    };
+  }, [
+    capture?.autoDismissMs,
+    capture?.path,
+    capture?.presentationId,
+    nativeRuntime,
+    setRendererAutoDismissPaused,
   ]);
 
   useEffect(() => () => {
@@ -432,6 +529,7 @@ export default function CaptureOverlay() {
     setBusyAction("copy");
     setNoticeIsWarning(false);
     try {
+      await setRendererAutoDismissPaused(capture, true);
       const status = await invoke<ClipboardStatus>("overlay_copy_capture", {
         path,
         presentationId,
@@ -475,6 +573,7 @@ export default function CaptureOverlay() {
     setBusyAction("save");
     setNoticeIsWarning(false);
     try {
+      await setRendererAutoDismissPaused(capture, true);
       const saveAsPreferences = await invoke<OverlaySaveAsPreferences>(
         "get_save_as_preferences",
       );
@@ -510,15 +609,18 @@ export default function CaptureOverlay() {
     setNotice("Drag into any app");
     setNoticeIsWarning(false);
     try {
+      await setRendererAutoDismissPaused(capture, true);
       await invoke<OverlayDragStarted>("overlay_start_drag", {
         path,
         presentationId,
         filename: suggestedCaptureFilename(),
       });
+      setPointerInteraction(false);
     } catch (error) {
       if (actionCoordinator.current?.finish(action)) {
         dragAction.current = null;
         setBusyAction(null);
+        setPointerInteraction(false);
         setNotice(`Drag failed: ${String(error)}`);
         setNoticeIsWarning(true);
       }
@@ -601,6 +703,7 @@ export default function CaptureOverlay() {
       }
 
       if (result.kind === "tracking") {
+        void setRendererAutoDismissPaused(capture, true);
         setSwipePhase("tracking");
         setSwipeOffset(result.offsetX);
         swipeQuietTimer.current = window.setTimeout(() => {
@@ -610,6 +713,7 @@ export default function CaptureOverlay() {
         return;
       }
 
+      void setRendererAutoDismissPaused(capture, true);
       setSwipePhase("exiting");
       setSwipeOffset(element.clientWidth + 24);
       swipeExitTimer.current = window.setTimeout(() => {
@@ -631,6 +735,7 @@ export default function CaptureOverlay() {
     isRevealed,
     reducedMotion,
     settleSwipe,
+    setRendererAutoDismissPaused,
     swipePhase,
     temporarilyHidden,
   ]);
@@ -678,7 +783,16 @@ export default function CaptureOverlay() {
             title="Drag screenshot to another app"
             draggable={false}
             onPointerDown={(event) => {
-              if (event.button !== 0 || !event.isPrimary || busyAction !== null) return;
+              if (
+                event.button !== 0 ||
+                !event.isPrimary ||
+                busyAction !== null ||
+                swipePhase !== "idle"
+              ) {
+                return;
+              }
+              setPointerInteraction(true);
+              void setRendererAutoDismissPaused(capture, true);
               dragGesture.current.begin(event.pointerId, event.clientX, event.clientY);
               event.currentTarget.setPointerCapture(event.pointerId);
             }}
@@ -689,8 +803,14 @@ export default function CaptureOverlay() {
               }
               void startDragCapture();
             }}
-            onPointerUp={(event) => dragGesture.current.end(event.pointerId)}
-            onPointerCancel={(event) => dragGesture.current.end(event.pointerId)}
+            onPointerUp={(event) => {
+              dragGesture.current.end(event.pointerId);
+              setPointerInteraction(false);
+            }}
+            onPointerCancel={(event) => {
+              dragGesture.current.end(event.pointerId);
+              setPointerInteraction(false);
+            }}
             onLoad={(event) => {
               const image = event.currentTarget;
               const loadedCapture = capture;

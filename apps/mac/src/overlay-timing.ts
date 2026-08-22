@@ -6,6 +6,59 @@ export type OverlayTimerScheduler = {
   clear: (handle: OverlayTimerHandle) => void;
 };
 
+export type OverlayAutoDismissIdentity = {
+  path: string;
+  presentationId: number;
+};
+
+type NativePauseWriter = (
+  identity: OverlayAutoDismissIdentity,
+  paused: boolean,
+) => Promise<boolean>;
+
+/**
+ * Preserves the order of renderer-owned pause changes across asynchronous IPC.
+ * Native validates the exact path/presentation, so queued work from a replaced
+ * capture is harmless and cannot mutate the replacement.
+ */
+export class NativeOverlayAutoDismissBridge {
+  private chain: Promise<unknown> = Promise.resolve();
+  private readonly write: NativePauseWriter;
+
+  constructor(write: NativePauseWriter) {
+    this.write = write;
+  }
+
+  setPaused(identity: OverlayAutoDismissIdentity, paused: boolean): Promise<boolean> {
+    const operation = this.chain
+      .catch(() => undefined)
+      .then(() => this.write(identity, paused));
+    this.chain = operation.catch(() => undefined);
+    return operation.catch(() => false);
+  }
+}
+
+export function rendererOwnsAutoDismissPause(
+  pointerInteraction: boolean,
+  swipePhase: string,
+  busyAction: string | null,
+) {
+  return (
+    pointerInteraction ||
+    swipePhase !== "idle" ||
+    (busyAction !== null && busyAction !== "drag")
+  );
+}
+
+export function shouldRequestOverlayReveal(
+  imageReady: boolean,
+  imageFailed: boolean,
+  temporarilyHidden: boolean,
+  isRevealed: boolean,
+) {
+  return imageReady && !imageFailed && !temporarilyHidden && !isRevealed;
+}
+
 export function createOverlayAutoDismissTimer(
   durationMs: number | null,
   callback: () => void,
@@ -16,8 +69,8 @@ export function createOverlayAutoDismissTimer(
 }
 
 /**
- * One-shot timeout whose remaining duration survives hover, dialogs, and
- * explicit actions. Resetting for a new capture invalidates the old timer.
+ * One-shot renderer mirror whose remaining duration survives explicit
+ * interactions. Resetting for a new capture invalidates the old timer.
  */
 export class PausableOverlayTimer {
   private handle: OverlayTimerHandle | null = null;

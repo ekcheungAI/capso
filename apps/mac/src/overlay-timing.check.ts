@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createOverlayAutoDismissTimer,
+  NativeOverlayAutoDismissBridge,
   PausableOverlayTimer,
+  rendererOwnsAutoDismissPause,
+  shouldRequestOverlayReveal,
+  type OverlayAutoDismissIdentity,
   type OverlayTimerHandle,
   type OverlayTimerScheduler,
 } from "./overlay-timing.ts";
@@ -59,7 +63,7 @@ test("Never creates no auto-dismiss timer while a timed preference keeps its exa
   assert.equal(dismissals, 1);
 });
 
-test("hover pause preserves the exact remaining auto-dismiss duration", () => {
+test("interaction pause preserves the exact remaining auto-dismiss duration", () => {
   const scheduler = new FakeScheduler();
   let dismissals = 0;
   const timer = new PausableOverlayTimer(10_000, () => dismissals++, scheduler);
@@ -111,4 +115,77 @@ test("an expired timeout remains one-shot until a new capture resets it", () => 
   timer.start();
   scheduler.advance(10_000);
   assert.equal(dismissals, 2);
+});
+
+test("native interaction pauses are serialized ahead of action work", async () => {
+  const identity: OverlayAutoDismissIdentity = {
+    path: "/tmp/capso/current.png",
+    presentationId: 7,
+  };
+  const calls: string[] = [];
+  let releasePause: (() => void) | undefined;
+  let markPauseStarted: (() => void) | undefined;
+  const pauseStarted = new Promise<void>((resolve) => {
+    markPauseStarted = resolve;
+  });
+  const bridge = new NativeOverlayAutoDismissBridge(async (target, paused) => {
+    calls.push(`${target.presentationId}:${paused ? "pause" : "resume"}`);
+    if (paused) {
+      markPauseStarted?.();
+      await new Promise<void>((resolve) => {
+        releasePause = resolve;
+      });
+    }
+    return true;
+  });
+
+  const pause = bridge.setPaused(identity, true);
+  const resume = bridge.setPaused(identity, false);
+  await pauseStarted;
+  assert.deepEqual(calls, ["7:pause"]);
+
+  releasePause?.();
+  assert.equal(await pause, true);
+  assert.equal(await resume, true);
+  assert.deepEqual(calls, ["7:pause", "7:resume"]);
+});
+
+test("native pause failures do not poison later exact-presentation updates", async () => {
+  const first: OverlayAutoDismissIdentity = {
+    path: "/tmp/capso/repeated.png",
+    presentationId: 1,
+  };
+  const replacement: OverlayAutoDismissIdentity = {
+    path: "/tmp/capso/repeated.png",
+    presentationId: 2,
+  };
+  const calls: string[] = [];
+  const bridge = new NativeOverlayAutoDismissBridge(async (target, paused) => {
+    calls.push(`${target.presentationId}:${paused ? "pause" : "resume"}`);
+    if (target.presentationId === 1) throw new Error("renderer disappeared");
+    return true;
+  });
+
+  assert.equal(await bridge.setPaused(first, true), false);
+  assert.equal(await bridge.setPaused(replacement, false), true);
+  assert.deepEqual(calls, ["1:pause", "2:resume"]);
+});
+
+test("renderer owns pointer, action, and swipe pauses but not native drag", () => {
+  assert.equal(rendererOwnsAutoDismissPause(false, "idle", null), false);
+  assert.equal(rendererOwnsAutoDismissPause(true, "idle", null), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "tracking", null), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "settling", null), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "idle", "copy"), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "idle", "save"), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "idle", "dismiss"), true);
+  assert.equal(rendererOwnsAutoDismissPause(false, "idle", "drag"), false);
+});
+
+test("a restored preview requests native reveal only after its pixels are ready", () => {
+  assert.equal(shouldRequestOverlayReveal(false, false, false, false), false);
+  assert.equal(shouldRequestOverlayReveal(true, true, false, false), false);
+  assert.equal(shouldRequestOverlayReveal(true, false, true, false), false);
+  assert.equal(shouldRequestOverlayReveal(true, false, false, true), false);
+  assert.equal(shouldRequestOverlayReveal(true, false, false, false), true);
 });

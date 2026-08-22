@@ -11,7 +11,7 @@ use std::{
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, State, WebviewWindow,
@@ -30,6 +30,8 @@ const MAX_SAVE_AS_EDGE: u32 = 32_768;
 const MAX_SAVE_AS_PIXELS: u64 = 100_000_000;
 const MAX_SAVE_AS_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const JPEG_SAVE_AS_QUALITY: u8 = 92;
+const OVERLAY_AUTO_DISMISS_DURATION: Duration = Duration::from_secs(10);
+const OVERLAY_AUTO_DISMISS_RETRY_DELAY: Duration = Duration::from_secs(1);
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const JPEG_SIGNATURE: &[u8; 3] = b"\xff\xd8\xff";
 
@@ -649,6 +651,8 @@ pub(crate) struct OverlayRuntime {
     current: Option<OverlayCapture>,
     last_failure: Option<OverlayFailureRecord>,
     presentation_generation: u64,
+    auto_dismiss_generation: u64,
+    auto_dismiss_clock: Option<OverlayAutoDismissClock>,
     active_drag: Option<OverlayDragIdentity>,
     pending_latency: Option<PendingOverlayLatency>,
     temporarily_hidden: bool,
@@ -658,6 +662,49 @@ pub(crate) struct OverlayRuntime {
 struct OverlayPresentationIdentity {
     path: String,
     presentation_id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OverlayAutoDismissSchedule {
+    identity: OverlayPresentationIdentity,
+    generation: u64,
+    after: Duration,
+    deadline: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct OverlayAutoDismissClock {
+    identity: OverlayPresentationIdentity,
+    generation: u64,
+    remaining: Duration,
+    deadline: Option<Instant>,
+    pause_reasons: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverlayAutoDismissPauseReason {
+    Renderer,
+    TemporarilyHidden,
+    ActiveDrag,
+}
+
+impl OverlayAutoDismissPauseReason {
+    fn bit(self) -> u8 {
+        match self {
+            Self::Renderer => 1 << 0,
+            Self::TemporarilyHidden => 1 << 1,
+            Self::ActiveDrag => 1 << 2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OverlayAutoDismissUpdate {
+    Stale,
+    Unarmed,
+    Unchanged,
+    Paused,
+    Resumed(OverlayAutoDismissSchedule),
 }
 
 pub(crate) struct CaptureOverlayLease {
@@ -686,6 +733,52 @@ impl Drop for CaptureOverlayLease {
     }
 }
 
+struct OverlayRendererPauseLease {
+    app: AppHandle,
+    identity: OverlayPresentationIdentity,
+}
+
+impl OverlayRendererPauseLease {
+    fn acquire(app: &AppHandle, path: &str, presentation_id: u64) -> Result<Self, String> {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let update = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?
+            .set_auto_dismiss_paused(path, presentation_id, true, Instant::now());
+        if matches!(update, OverlayAutoDismissUpdate::Stale) {
+            return Err("That capture is no longer active in the overlay.".into());
+        }
+        Ok(Self {
+            app: app.clone(),
+            identity: OverlayPresentationIdentity {
+                path: path.into(),
+                presentation_id,
+            },
+        })
+    }
+}
+
+impl Drop for OverlayRendererPauseLease {
+    fn drop(&mut self) {
+        let schedule = self
+            .app
+            .state::<Mutex<OverlayRuntime>>()
+            .lock()
+            .ok()
+            .and_then(|mut runtime| {
+                release_renderer_auto_dismiss_pause_with_clock(
+                    &mut runtime,
+                    &self.identity.path,
+                    self.identity.presentation_id,
+                    Instant::now(),
+                )
+            });
+        if let Some(schedule) = schedule {
+            spawn_overlay_auto_dismiss(&self.app, schedule);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OverlayDragIdentity {
     path: String,
@@ -706,6 +799,7 @@ struct DragGestureState {
 
 impl OverlayRuntime {
     fn reset(&mut self) {
+        self.invalidate_auto_dismiss_clock();
         self.current = None;
         self.last_failure = None;
         self.pending_latency = None;
@@ -713,6 +807,7 @@ impl OverlayRuntime {
     }
 
     fn replace(&mut self, capture: OverlayCapture) {
+        self.invalidate_auto_dismiss_clock();
         self.current = Some(capture);
         self.last_failure = None;
         self.pending_latency = None;
@@ -738,6 +833,193 @@ impl OverlayRuntime {
             quick_actions: OverlayQuickActions::default(),
             temporarily_hidden: false,
         }
+    }
+
+    fn invalidate_auto_dismiss_clock(&mut self) -> u64 {
+        self.auto_dismiss_generation = self
+            .auto_dismiss_generation
+            .checked_add(1)
+            .expect("overlay auto-dismiss generation cannot exhaust u64");
+        self.auto_dismiss_clock = None;
+        self.auto_dismiss_generation
+    }
+
+    fn arm_auto_dismiss(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        now: Instant,
+    ) -> Option<OverlayAutoDismissSchedule> {
+        let eligible = self.current.as_ref().is_some_and(|capture| {
+            capture.path == path
+                && capture.presentation_id == presentation_id
+                && !capture.temporarily_hidden
+                && !self.temporarily_hidden
+        });
+        if !eligible {
+            return None;
+        }
+        if self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
+            clock.identity.path == path && clock.identity.presentation_id == presentation_id
+        }) {
+            return None;
+        }
+        let after = OVERLAY_AUTO_DISMISS_DURATION;
+        let deadline = now + after;
+        let identity = OverlayPresentationIdentity {
+            path: path.into(),
+            presentation_id,
+        };
+        let generation = self.invalidate_auto_dismiss_clock();
+        self.auto_dismiss_clock = Some(OverlayAutoDismissClock {
+            identity: identity.clone(),
+            generation,
+            remaining: after,
+            deadline: Some(deadline),
+            pause_reasons: 0,
+        });
+        Some(OverlayAutoDismissSchedule {
+            identity,
+            generation,
+            after,
+            deadline,
+        })
+    }
+
+    fn set_auto_dismiss_paused(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        paused: bool,
+        now: Instant,
+    ) -> OverlayAutoDismissUpdate {
+        self.set_auto_dismiss_pause_reason(
+            path,
+            presentation_id,
+            OverlayAutoDismissPauseReason::Renderer,
+            paused,
+            now,
+        )
+    }
+
+    fn set_auto_dismiss_pause_reason(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        reason: OverlayAutoDismissPauseReason,
+        paused: bool,
+        now: Instant,
+    ) -> OverlayAutoDismissUpdate {
+        if !capture_matches(self.current.as_ref(), path, presentation_id) {
+            return OverlayAutoDismissUpdate::Stale;
+        }
+        let Some(clock) = self.auto_dismiss_clock.clone() else {
+            return OverlayAutoDismissUpdate::Unarmed;
+        };
+        if clock.identity.path != path || clock.identity.presentation_id != presentation_id {
+            return OverlayAutoDismissUpdate::Unarmed;
+        }
+
+        let reason = reason.bit();
+        let reason_was_paused = clock.pause_reasons & reason != 0;
+        if reason_was_paused == paused {
+            return OverlayAutoDismissUpdate::Unchanged;
+        }
+        let was_paused = clock.pause_reasons != 0;
+        let pause_reasons = if paused {
+            clock.pause_reasons | reason
+        } else {
+            clock.pause_reasons & !reason
+        };
+        let remains_paused = pause_reasons != 0;
+        let remaining = if !was_paused && remains_paused {
+            clock
+                .deadline
+                .map(|deadline| deadline.saturating_duration_since(now))
+                .unwrap_or(clock.remaining)
+        } else {
+            clock.remaining
+        };
+        let identity = clock.identity;
+        let generation = self.invalidate_auto_dismiss_clock();
+        self.auto_dismiss_clock = Some(OverlayAutoDismissClock {
+            identity: identity.clone(),
+            generation,
+            remaining,
+            deadline: (!remains_paused).then_some(now + remaining),
+            pause_reasons,
+        });
+        if was_paused && !remains_paused {
+            OverlayAutoDismissUpdate::Resumed(OverlayAutoDismissSchedule {
+                identity,
+                generation,
+                after: remaining,
+                deadline: now + remaining,
+            })
+        } else {
+            OverlayAutoDismissUpdate::Paused
+        }
+    }
+
+    fn claim_auto_dismiss_expiry(
+        &mut self,
+        schedule: &OverlayAutoDismissSchedule,
+        now: Instant,
+    ) -> bool {
+        if self.temporarily_hidden {
+            let _ = self.set_auto_dismiss_pause_reason(
+                &schedule.identity.path,
+                schedule.identity.presentation_id,
+                OverlayAutoDismissPauseReason::TemporarilyHidden,
+                true,
+                now,
+            );
+            return false;
+        }
+        if self.active_drag.as_ref().is_some_and(|drag| {
+            drag.path == schedule.identity.path
+                && drag.presentation_id == schedule.identity.presentation_id
+        }) {
+            let _ = self.set_auto_dismiss_pause_reason(
+                &schedule.identity.path,
+                schedule.identity.presentation_id,
+                OverlayAutoDismissPauseReason::ActiveDrag,
+                true,
+                now,
+            );
+            return false;
+        }
+        let is_due = self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
+            clock.identity == schedule.identity
+                && clock.generation == schedule.generation
+                && clock.pause_reasons == 0
+                && clock.deadline.is_some_and(|deadline| deadline <= now)
+                && capture_matches(
+                    self.current.as_ref(),
+                    &schedule.identity.path,
+                    schedule.identity.presentation_id,
+                )
+        });
+        is_due
+    }
+
+    fn should_retry_ignored_auto_dismiss(
+        &self,
+        schedule: &OverlayAutoDismissSchedule,
+        now: Instant,
+    ) -> bool {
+        self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
+            clock.identity == schedule.identity
+                && clock.generation == schedule.generation
+                && clock.pause_reasons == 0
+                && clock.deadline == Some(schedule.deadline)
+                && schedule.deadline <= now
+                && capture_matches(
+                    self.current.as_ref(),
+                    &schedule.identity.path,
+                    schedule.identity.presentation_id,
+                )
+        })
     }
 
     fn record_failure(
@@ -769,6 +1051,7 @@ impl OverlayRuntime {
         }
 
         self.current = None;
+        self.invalidate_auto_dismiss_clock();
         self.pending_latency = None;
         self.temporarily_hidden = false;
         Some(self.record_failure(path, presentation_id, code, message))
@@ -1027,6 +1310,7 @@ fn prepare_transition(
     Ok(())
 }
 
+#[cfg(test)]
 fn reveal_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
@@ -1057,9 +1341,10 @@ fn reveal_transition_with_clock(
 
     match window.show_overlay() {
         Ok(()) => {
+            let shown_at = now();
             runtime.temporarily_hidden = false;
             let sample = runtime.pending_latency.take().and_then(|pending| {
-                (pending.presentation_id == presentation_id).then(|| pending.start.finish(now()))
+                (pending.presentation_id == presentation_id).then(|| pending.start.finish(shown_at))
             });
             RevealTransition::Shown(sample)
         }
@@ -1078,11 +1363,42 @@ fn reveal_transition_with_clock(
     }
 }
 
+fn reveal_transition_and_arm_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    now: impl FnOnce() -> Instant,
+) -> (RevealTransition, Option<OverlayAutoDismissSchedule>) {
+    let mut shown_at = None;
+    let transition = reveal_transition_with_clock(runtime, window, path, presentation_id, || {
+        let instant = now();
+        shown_at = Some(instant);
+        instant
+    });
+    let schedule = matches!(transition, RevealTransition::Shown(_))
+        .then(|| {
+            shown_at.and_then(|instant| runtime.arm_auto_dismiss(path, presentation_id, instant))
+        })
+        .flatten();
+    (transition, schedule)
+}
+
 fn temporary_hide_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
     presentation_id: u64,
+) -> TemporaryHideTransition {
+    temporary_hide_transition_with_clock(runtime, window, path, presentation_id, Instant::now)
+}
+
+fn temporary_hide_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    now: impl FnOnce() -> Instant,
 ) -> TemporaryHideTransition {
     if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
         return TemporaryHideTransition::Stale;
@@ -1092,10 +1408,18 @@ fn temporary_hide_transition(
     }
     match window.hide_overlay() {
         Ok(()) => {
+            let hidden_at = now();
             runtime.temporarily_hidden = true;
             if let Some(capture) = runtime.current.as_mut() {
                 capture.temporarily_hidden = true;
             }
+            let _ = runtime.set_auto_dismiss_pause_reason(
+                path,
+                presentation_id,
+                OverlayAutoDismissPauseReason::TemporarilyHidden,
+                true,
+                hidden_at,
+            );
             TemporaryHideTransition::Hidden
         }
         Err(error) => TemporaryHideTransition::Failed(runtime.record_failure(
@@ -1140,6 +1464,45 @@ fn restore_hidden_transition(
     }
 }
 
+fn restore_hidden_transition_and_resume_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    now: impl FnOnce() -> Instant,
+) -> (RestoreHiddenTransition, Option<OverlayAutoDismissSchedule>) {
+    let transition = restore_hidden_transition(runtime, window);
+    let schedule = match &transition {
+        RestoreHiddenTransition::Restored(capture) => {
+            let shown_at = now();
+            match runtime.set_auto_dismiss_pause_reason(
+                &capture.path,
+                capture.presentation_id,
+                OverlayAutoDismissPauseReason::TemporarilyHidden,
+                false,
+                shown_at,
+            ) {
+                OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    (transition, schedule)
+}
+
+fn restore_exact_hidden_transition_and_resume_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    now: impl FnOnce() -> Instant,
+) -> (RestoreHiddenTransition, Option<OverlayAutoDismissSchedule>) {
+    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
+        return (RestoreHiddenTransition::Stale, None);
+    }
+    restore_hidden_transition_and_resume_with_clock(runtime, window, now)
+}
+
+#[cfg(test)]
 fn restore_exact_hidden_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
@@ -1203,6 +1566,24 @@ fn dismiss_transition_for_reason(
             format!("Could not dismiss the capture overlay: {error}"),
         )),
     }
+}
+
+fn dismiss_transition_for_auto_dismiss(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    schedule: &OverlayAutoDismissSchedule,
+    now: Instant,
+) -> DismissTransition {
+    if !runtime.claim_auto_dismiss_expiry(schedule, now) {
+        return DismissTransition::Stale;
+    }
+    dismiss_transition_for_reason(
+        runtime,
+        window,
+        &schedule.identity.path,
+        schedule.identity.presentation_id,
+        DismissReason::Timeout,
+    )
 }
 
 fn current_capture_path(
@@ -1356,6 +1737,24 @@ fn begin_drag_transition(
     initial_gesture: DragGestureState,
     current_gesture: DragGestureState,
 ) -> Result<OverlayDragIdentity, String> {
+    begin_drag_transition_with_clock(
+        runtime,
+        path,
+        presentation_id,
+        initial_gesture,
+        current_gesture,
+        Instant::now(),
+    )
+}
+
+fn begin_drag_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    initial_gesture: DragGestureState,
+    current_gesture: DragGestureState,
+    now: Instant,
+) -> Result<OverlayDragIdentity, String> {
     if !initial_gesture.left_button_is_down
         || !current_gesture.left_button_is_down
         || initial_gesture.left_mouse_down_counter != current_gesture.left_mouse_down_counter
@@ -1364,7 +1763,48 @@ fn begin_drag_transition(
             "The original pointer gesture ended before the capture drag could start.".into(),
         );
     }
-    runtime.begin_drag(path, presentation_id)
+    let identity = runtime.begin_drag(path, presentation_id)?;
+    let _ = runtime.set_auto_dismiss_pause_reason(
+        path,
+        presentation_id,
+        OverlayAutoDismissPauseReason::ActiveDrag,
+        true,
+        now,
+    );
+    Ok(identity)
+}
+
+fn finish_drag_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    identity: &OverlayDragIdentity,
+    now: Instant,
+) -> (bool, Option<OverlayAutoDismissSchedule>) {
+    if !runtime.finish_drag(identity) {
+        return (false, None);
+    }
+    let schedule = match runtime.set_auto_dismiss_pause_reason(
+        &identity.path,
+        identity.presentation_id,
+        OverlayAutoDismissPauseReason::ActiveDrag,
+        false,
+        now,
+    ) {
+        OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
+        _ => None,
+    };
+    (true, schedule)
+}
+
+fn release_renderer_auto_dismiss_pause_with_clock(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    now: Instant,
+) -> Option<OverlayAutoDismissSchedule> {
+    match runtime.set_auto_dismiss_paused(path, presentation_id, false, now) {
+        OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
+        _ => None,
+    }
 }
 
 fn invalid_export(message: impl Into<String>) -> io::Error {
@@ -1884,6 +2324,42 @@ fn release_quick_access_capture(app: &AppHandle, capture: &Path) {
     );
 }
 
+fn spawn_overlay_auto_dismiss(app: &AppHandle, schedule: OverlayAutoDismissSchedule) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut deadline = schedule.deadline;
+        let path = schedule.identity.path.clone();
+        let presentation_id = schedule.identity.presentation_id;
+        loop {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            let state = app.state::<Mutex<OverlayRuntime>>();
+            let outcome = dismiss_overlay_exact(
+                &app,
+                state.inner(),
+                path.clone(),
+                presentation_id,
+                DismissReason::Timeout,
+                Some(&schedule),
+            );
+            if matches!(outcome, Ok(true)) {
+                break;
+            }
+            let now = Instant::now();
+            let should_retry = state
+                .lock()
+                .map(|runtime| runtime.should_retry_ignored_auto_dismiss(&schedule, now))
+                .unwrap_or(false);
+            if !should_retry {
+                break;
+            }
+            if let Err(error) = outcome {
+                eprintln!("Could not auto-dismiss Quick Access: {error}");
+            }
+            deadline = now + OVERLAY_AUTO_DISMISS_RETRY_DELAY;
+        }
+    });
+}
+
 #[tauri::command]
 pub(crate) fn get_overlay_capture(
     state: State<'_, Mutex<OverlayRuntime>>,
@@ -1988,18 +2464,44 @@ pub(crate) fn overlay_hide_temporarily(
     }
 }
 
+#[tauri::command]
+pub(crate) fn overlay_set_auto_dismiss_paused(
+    app: AppHandle,
+    state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+    paused: bool,
+) -> Result<bool, String> {
+    let update = {
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        runtime.set_auto_dismiss_paused(&path, presentation_id, paused, Instant::now())
+    };
+    match update {
+        OverlayAutoDismissUpdate::Stale => Ok(false),
+        OverlayAutoDismissUpdate::Resumed(schedule) => {
+            spawn_overlay_auto_dismiss(&app, schedule);
+            Ok(true)
+        }
+        OverlayAutoDismissUpdate::Unarmed
+        | OverlayAutoDismissUpdate::Unchanged
+        | OverlayAutoDismissUpdate::Paused => Ok(true),
+    }
+}
+
 pub(crate) fn restore_temporarily_hidden_overlay(app: &AppHandle) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let transition = {
+    let (transition, schedule) = {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        restore_hidden_transition(&mut runtime, &window)
+        restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, Instant::now)
     };
-    finish_restore_transition(app, transition)
+    finish_restore_transition(app, transition, schedule)
 }
 
 fn restore_temporarily_hidden_overlay_if_current(
@@ -2007,29 +2509,36 @@ fn restore_temporarily_hidden_overlay_if_current(
     path: &str,
     presentation_id: u64,
 ) -> Result<bool, String> {
-    let transition = {
+    let (transition, schedule) = {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
-            return Ok(false);
-        }
         let window = app
             .get_webview_window(OVERLAY_LABEL)
             .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-        restore_exact_hidden_transition(&mut runtime, &window, path, presentation_id)
+        restore_exact_hidden_transition_and_resume_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            presentation_id,
+            Instant::now,
+        )
     };
-    finish_restore_transition(app, transition)
+    finish_restore_transition(app, transition, schedule)
 }
 
 fn finish_restore_transition(
     app: &AppHandle,
     transition: RestoreHiddenTransition,
+    schedule: Option<OverlayAutoDismissSchedule>,
 ) -> Result<bool, String> {
     match transition {
         RestoreHiddenTransition::Stale | RestoreHiddenTransition::NotHidden => Ok(false),
         RestoreHiddenTransition::Restored(capture) => {
+            if let Some(schedule) = schedule {
+                spawn_overlay_auto_dismiss(app, schedule);
+            }
             app.emit_to(
                 OVERLAY_LABEL,
                 "overlay-restored",
@@ -2162,17 +2671,26 @@ pub(crate) fn overlay_image_ready(
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let transition = {
+    let (transition, schedule) = {
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        reveal_transition(&mut runtime, &window, &path, presentation_id)
+        reveal_transition_and_arm_with_clock(
+            &mut runtime,
+            &window,
+            &path,
+            presentation_id,
+            Instant::now,
+        )
     };
 
     match transition {
         RevealTransition::Stale => Ok(false),
         RevealTransition::Hidden => Ok(false),
         RevealTransition::Shown(sample) => {
+            if let Some(schedule) = schedule {
+                spawn_overlay_auto_dismiss(&app, schedule);
+            }
             if let Some(sample) = sample {
                 if let Err(error) = crate::latency::record_for_app(&app, sample) {
                     if let Some(tray) = app.tray_by_id("main") {
@@ -2395,11 +2913,20 @@ fn begin_native_drag(
                 let _ = owner.take();
             }
 
-            let finished = callback_app
+            let (finished, schedule) = callback_app
                 .state::<Mutex<OverlayRuntime>>()
                 .lock()
-                .map(|mut runtime| runtime.finish_drag(&callback_identity))
-                .unwrap_or(false);
+                .map(|mut runtime| {
+                    finish_drag_transition_with_clock(
+                        &mut runtime,
+                        &callback_identity,
+                        Instant::now(),
+                    )
+                })
+                .unwrap_or((false, None));
+            if let Some(schedule) = schedule {
+                spawn_overlay_auto_dismiss(&callback_app, schedule);
+            }
             if finished {
                 let _ = callback_app.emit_to(
                     OVERLAY_LABEL,
@@ -2416,8 +2943,15 @@ fn begin_native_drag(
     );
 
     if let Err(error) = result {
-        if let Ok(mut runtime) = app.state::<Mutex<OverlayRuntime>>().lock() {
-            let _ = runtime.finish_drag(&identity);
+        let schedule = app
+            .state::<Mutex<OverlayRuntime>>()
+            .lock()
+            .ok()
+            .and_then(|mut runtime| {
+                finish_drag_transition_with_clock(&mut runtime, &identity, Instant::now()).1
+            });
+        if let Some(schedule) = schedule {
+            spawn_overlay_auto_dismiss(app, schedule);
         }
         if let Ok(mut owner) = artifact_owner.lock() {
             if let Some(artifact) = owner.take() {
@@ -2437,6 +2971,7 @@ pub(crate) async fn overlay_start_drag(
     presentation_id: u64,
     filename: String,
 ) -> Result<OverlayDragStarted, String> {
+    let _renderer_pause_lease = OverlayRendererPauseLease::acquire(&app, &path, presentation_id)?;
     let source = {
         let runtime = state
             .lock()
@@ -2519,6 +3054,17 @@ pub(crate) fn overlay_dismiss(
     presentation_id: u64,
     reason: DismissReason,
 ) -> Result<bool, String> {
+    dismiss_overlay_exact(&app, state.inner(), path, presentation_id, reason, None)
+}
+
+fn dismiss_overlay_exact(
+    app: &AppHandle,
+    state: &Mutex<OverlayRuntime>,
+    path: String,
+    presentation_id: u64,
+    reason: DismissReason,
+    auto_dismiss: Option<&OverlayAutoDismissSchedule>,
+) -> Result<bool, String> {
     let annotation_protected = app
         .state::<Mutex<crate::annotation::AnnotationRuntime>>()
         .lock()
@@ -2534,13 +3080,20 @@ pub(crate) fn overlay_dismiss(
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        dismiss_transition_for_reason(&mut runtime, &window, &path, presentation_id, reason)
+        match auto_dismiss {
+            Some(schedule) => {
+                dismiss_transition_for_auto_dismiss(&mut runtime, &window, schedule, Instant::now())
+            }
+            None => {
+                dismiss_transition_for_reason(&mut runtime, &window, &path, presentation_id, reason)
+            }
+        }
     };
 
     match transition {
         DismissTransition::Stale | DismissTransition::Hidden => Ok(false),
         DismissTransition::Dismissed => {
-            release_quick_access_capture(&app, Path::new(&path));
+            release_quick_access_capture(app, Path::new(&path));
             let _ = app.emit(
                 "capture-overlay-dismissed",
                 OverlayDismissed {
@@ -2552,7 +3105,7 @@ pub(crate) fn overlay_dismiss(
             Ok(true)
         }
         DismissTransition::Failed(failure) => {
-            report_overlay_failure(&app, &failure);
+            report_overlay_failure(app, &failure);
             Err(failure.message)
         }
     }
@@ -2561,19 +3114,24 @@ pub(crate) fn overlay_dismiss(
 #[cfg(test)]
 mod tests {
     use super::{
-        annotation_refresh_payload, begin_drag_transition, bottom_right_position, capture_display,
-        capture_matches, current_capture_path, current_capture_project_path, dismiss_transition,
+        annotation_refresh_payload, begin_drag_transition, begin_drag_transition_with_clock,
+        bottom_right_position, capture_display, capture_matches, current_capture_path,
+        current_capture_project_path, dismiss_transition, dismiss_transition_for_auto_dismiss,
         dismiss_transition_for_reason, display_at_cursor, display_profile_ids, export_capture,
-        export_png_bytes, fail_transition, load_stored_overlay_settings, prepare_transition,
-        restore_exact_hidden_transition, restore_hidden_transition, reveal_transition,
-        reveal_transition_with_clock, save_stored_overlay_settings, settings_for_display,
-        temporary_hide_transition, update_stored_preferences, validate_save_as_preferences,
-        CaptureExportFormat, DismissReason, DismissTransition, DisplayGeometry, DragGestureState,
-        OverlayAutoDismiss, OverlayCapture, OverlayDragEnded, OverlayDragOutcome, OverlayPlacement,
-        OverlayPreferences, OverlayQuickActions, OverlayRuntime, OverlaySaveAsPreferences,
-        OverlaySize, OverlaySource, OverlayWindowOps, RestoreHiddenTransition, RevealTransition,
-        ScreenPoint, ScreenRect, StoredOverlaySettings, TemporaryHideTransition,
-        OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        export_png_bytes, fail_transition, finish_drag_transition_with_clock,
+        load_stored_overlay_settings, prepare_transition,
+        release_renderer_auto_dismiss_pause_with_clock, restore_exact_hidden_transition,
+        restore_hidden_transition, restore_hidden_transition_and_resume_with_clock,
+        reveal_transition, reveal_transition_and_arm_with_clock, reveal_transition_with_clock,
+        save_stored_overlay_settings, settings_for_display, temporary_hide_transition,
+        temporary_hide_transition_with_clock, update_stored_preferences,
+        validate_save_as_preferences, CaptureExportFormat, DismissReason, DismissTransition,
+        DisplayGeometry, DragGestureState, OverlayAutoDismiss, OverlayAutoDismissSchedule,
+        OverlayAutoDismissUpdate, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
+        OverlayPlacement, OverlayPreferences, OverlayQuickActions, OverlayRuntime,
+        OverlaySaveAsPreferences, OverlaySize, OverlaySource, OverlayWindowOps,
+        RestoreHiddenTransition, RevealTransition, ScreenPoint, ScreenRect, StoredOverlaySettings,
+        TemporaryHideTransition, OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
     };
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
@@ -2638,6 +3196,305 @@ mod tests {
             quick_actions: OverlayQuickActions::default(),
             temporarily_hidden: false,
         }
+    }
+
+    fn at(start: std::time::Instant, seconds: u64) -> std::time::Instant {
+        start + std::time::Duration::from_secs(seconds)
+    }
+
+    fn revealed_clock(
+        path: &str,
+        presentation_id: u64,
+        start: std::time::Instant,
+    ) -> (OverlayRuntime, FakeWindow, OverlayAutoDismissSchedule) {
+        let window = FakeWindow::default();
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id(path, presentation_id));
+        let (shown, schedule) = reveal_transition_and_arm_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            presentation_id,
+            || start,
+        );
+        assert_eq!(shown, RevealTransition::Shown(None));
+        let schedule = schedule.expect("native clock");
+        assert_eq!(
+            schedule.deadline,
+            start + std::time::Duration::from_secs(10)
+        );
+        (runtime, window, schedule)
+    }
+
+    #[test]
+    fn auto_dismiss_arms_on_exact_first_show_for_ten_seconds() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, schedule) = revealed_clock(path, 1, start);
+        assert_eq!(schedule.after, std::time::Duration::from_secs(10));
+        let (stale, stale_schedule) =
+            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 2, || start);
+        assert_eq!((stale, stale_schedule), (RevealTransition::Stale, None));
+
+        let mut hidden_runtime = OverlayRuntime::default();
+        hidden_runtime.replace(capture(path));
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut hidden_runtime, &window, path, 1, || at(
+                start, 1
+            )),
+            TemporaryHideTransition::Hidden
+        );
+        let (_, restored_schedule) =
+            restore_hidden_transition_and_resume_with_clock(&mut hidden_runtime, &window, || {
+                at(start, 20)
+            });
+        assert_eq!(restored_schedule, None);
+        let (shown, revealed_schedule) =
+            reveal_transition_and_arm_with_clock(&mut hidden_runtime, &window, path, 1, || {
+                at(start, 25)
+            });
+        assert_eq!(shown, RevealTransition::Shown(None));
+        assert_eq!(
+            revealed_schedule
+                .expect("decoded reveal arms the clock")
+                .after,
+            std::time::Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn auto_dismiss_deadline_is_sampled_after_native_show() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let shown_at = at(start, 5);
+        let window = FakeWindow::default();
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture(path));
+
+        let (shown, schedule) =
+            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 1, || {
+                window.transitions.borrow_mut().push("clock");
+                shown_at
+            });
+
+        assert_eq!(shown, RevealTransition::Shown(None));
+        assert_eq!(*window.transitions.borrow(), vec!["show", "clock"]);
+        assert_eq!(
+            schedule.expect("shown presentation clock").deadline,
+            at(shown_at, 10),
+        );
+    }
+
+    #[test]
+    fn auto_dismiss_pause_reasons_preserve_visible_time_independently() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, first) = revealed_clock(path, 1, start);
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 2)),
+            OverlayAutoDismissUpdate::Paused
+        );
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 3)),
+            TemporaryHideTransition::Hidden
+        );
+        let (_, native_schedule) =
+            restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, || {
+                at(start, 30)
+            });
+        assert_eq!(native_schedule, None);
+        let OverlayAutoDismissUpdate::Resumed(resumed) =
+            runtime.set_auto_dismiss_paused(path, 1, false, at(start, 40))
+        else {
+            panic!("last pause owner resumes");
+        };
+        assert_eq!(resumed.after, std::time::Duration::from_secs(8));
+        assert_ne!(resumed.generation, first.generation);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &first, at(start, 10)),
+            DismissTransition::Stale
+        );
+    }
+
+    #[test]
+    fn auto_dismiss_native_drag_and_hidden_leases_do_not_race_renderer_ipc() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, first) = revealed_clock(path, 1, start);
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 7,
+        };
+        let identity =
+            begin_drag_transition_with_clock(&mut runtime, path, 1, pressed, pressed, at(start, 2))
+                .expect("drag begins");
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 3)),
+            TemporaryHideTransition::Hidden
+        );
+        let (_, restore_schedule) =
+            restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, || {
+                at(start, 20)
+            });
+        assert_eq!(restore_schedule, None);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &first, at(start, 10)),
+            DismissTransition::Stale
+        );
+        let (finished, resumed) =
+            finish_drag_transition_with_clock(&mut runtime, &identity, at(start, 30));
+        assert!(finished);
+        assert_eq!(
+            resumed.expect("drag was last pause").after,
+            std::time::Duration::from_secs(8)
+        );
+    }
+
+    #[test]
+    fn native_drag_releases_renderer_preflight_even_when_renderer_never_resumes() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, _window, _) = revealed_clock(path, 1, start);
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 1)),
+            OverlayAutoDismissUpdate::Paused
+        );
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 11,
+        };
+        let identity =
+            begin_drag_transition_with_clock(&mut runtime, path, 1, pressed, pressed, at(start, 2))
+                .expect("native drag owns the live session");
+        assert_eq!(
+            release_renderer_auto_dismiss_pause_with_clock(&mut runtime, path, 1, at(start, 2),),
+            None,
+            "ActiveDrag still owns the paused clock"
+        );
+        let (_, resumed) =
+            finish_drag_transition_with_clock(&mut runtime, &identity, at(start, 30));
+        assert_eq!(
+            resumed.expect("native completion is the final owner").after,
+            std::time::Duration::from_secs(9)
+        );
+
+        let (mut failed_runtime, _window, _) = revealed_clock(path, 1, start);
+        assert_eq!(
+            failed_runtime.set_auto_dismiss_paused(path, 1, true, at(start, 1)),
+            OverlayAutoDismissUpdate::Paused
+        );
+        assert_eq!(
+            release_renderer_auto_dismiss_pause_with_clock(
+                &mut failed_runtime,
+                path,
+                1,
+                at(start, 2),
+            )
+            .expect("command error releases preflight")
+            .after,
+            std::time::Duration::from_secs(9)
+        );
+    }
+
+    #[test]
+    fn auto_dismiss_replacement_rejects_old_wakeups_and_unrelated_drags() {
+        let path = "/tmp/capso/repeated.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, old_schedule) = revealed_clock(path, 1, start);
+        runtime.replace(capture_with_id(path, 2));
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(
+                &mut runtime,
+                &window,
+                &old_schedule,
+                at(start, 10)
+            ),
+            DismissTransition::Stale
+        );
+
+        runtime.replace(capture_with_id(path, 1));
+        let old_drag = runtime.begin_drag(path, 1).expect("old drag");
+        runtime.replace(capture_with_id(path, 2));
+        let (_, replacement) =
+            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 2, || start);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(
+                &mut runtime,
+                &window,
+                &replacement.expect("replacement clock"),
+                at(start, 10),
+            ),
+            DismissTransition::Dismissed
+        );
+        assert!(runtime.finish_drag(&old_drag));
+    }
+
+    #[test]
+    fn auto_dismiss_expiry_retries_hide_failure_and_clears_failed_presentations() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, schedule) = revealed_clock(path, 1, start);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &schedule, at(start, 9)),
+            DismissTransition::Stale
+        );
+        window.fail_hide.set(true);
+        assert!(matches!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &schedule, at(start, 10)),
+            DismissTransition::Failed(_)
+        ));
+        window.fail_hide.set(false);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &schedule, at(start, 11)),
+            DismissTransition::Dismissed
+        );
+
+        let (mut failed_runtime, failed_window, _) = revealed_clock(path, 1, start);
+        assert!(fail_transition(
+            &mut failed_runtime,
+            &failed_window,
+            path,
+            1,
+            "overlay_decode_failed",
+            "decode failed",
+        )
+        .is_some());
+        assert!(failed_runtime.auto_dismiss_clock.is_none());
+    }
+
+    #[test]
+    fn auto_dismiss_temporary_hide_failure_leaves_visible_clock_running() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, schedule) = revealed_clock(path, 1, start);
+        window.fail_hide.set(true);
+        assert!(matches!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 3)),
+            TemporaryHideTransition::Failed(_)
+        ));
+        window.fail_hide.set(false);
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &schedule, at(start, 10)),
+            DismissTransition::Dismissed
+        );
+    }
+
+    #[test]
+    fn auto_dismiss_protected_current_retries_but_stale_ignored_wakeup_stops() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, _window, schedule) = revealed_clock(path, 1, start);
+        // The scheduler asks this only after the shared dismiss lifecycle says
+        // `Ok(false)`. An exact due clock is therefore protected; a replaced
+        // or otherwise stale clock must stop instead of leaking a retry task.
+        assert!(runtime.should_retry_ignored_auto_dismiss(&schedule, at(start, 10)));
+        assert!(!runtime.should_retry_ignored_auto_dismiss(&schedule, at(start, 9)));
+
+        runtime.replace(capture_with_id(path, 2));
+        assert!(
+            !runtime.should_retry_ignored_auto_dismiss(&schedule, at(start, 11)),
+            "a stale ignored wakeup cannot leave a retry task behind"
+        );
     }
 
     fn display(bounds: ScreenRect, work_area: ScreenRect, scale_factor: f64) -> DisplayGeometry {
@@ -3305,7 +4162,7 @@ mod tests {
                 &window,
                 history_path,
                 1,
-                || panic!("history has no capture latency clock"),
+                std::time::Instant::now,
             ),
             RevealTransition::Shown(None)
         );

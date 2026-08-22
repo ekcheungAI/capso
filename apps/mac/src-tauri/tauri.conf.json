@@ -105,6 +105,7 @@
         "minimizable": false,
         "decorations": false,
         "transparent": true,
+        "backgroundThrottling": "disabled",
         "alwaysOnTop": true,
         "visibleOnAllWorkspaces": true,
         "skipTaskbar": true,

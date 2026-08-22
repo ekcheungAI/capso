@@ -2418,6 +2418,7 @@ pub fn run() {
             overlay::overlay_save_capture,
             overlay::overlay_start_drag,
             overlay::overlay_hide_temporarily,
+            overlay::overlay_set_auto_dismiss_paused,
             overlay::overlay_dismiss,
             pin::pin_overlay_capture,
             pin::get_pin_capture,

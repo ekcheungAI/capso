@@ -312,7 +312,14 @@ test("Quick Access reveals exactly Copy and Save over the image", async () => {
   assert.doesNotMatch(settings, /className="quick-access-settings__actions"/);
   assert.match(css, /\.capture-overlay__hover-actions\s*\{[\s\S]*?opacity:\s*0;/);
   assert.match(css, /\.capture-overlay:hover\s+\.capture-overlay__hover-actions/);
-  assert.match(config, /"label":\s*"capture-overlay"[\s\S]*?"transparent":\s*true/);
+  const parsedConfig = JSON.parse(config) as {
+    app: { windows: Array<Record<string, unknown>> };
+  };
+  const overlayWindow = parsedConfig.app.windows.find(
+    (window) => window.label === "capture-overlay",
+  );
+  assert.equal(overlayWindow?.transparent, true);
+  assert.equal(overlayWindow?.backgroundThrottling, "disabled");
   assert.match(config, /"macOSPrivateApi":\s*true/);
   assert.match(cargo, /tauri\s*=\s*\{[^}]*"macos-private-api"/);
 });
@@ -335,15 +342,36 @@ test("Quick Access enters after native reveal and trackpad-swipes right to dismi
   );
   assert.match(
     overlay,
-    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?setRevealedPresentation\(current\.presentation\)/,
+    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?revealRequestedPresentation\.current = null[\s\S]*?setTemporarilyHidden\(false\)/,
+  );
+  assert.match(
+    overlay,
+    /shouldRequestOverlayReveal\([\s\S]*?imageReady[\s\S]*?temporarilyHidden[\s\S]*?void reveal\(\)/,
   );
   assert.match(
     overlay,
     /const isRevealed =[\s\S]*?imageReady[\s\S]*?!imageFailed[\s\S]*?revealedPresentation === capture\.presentation/,
   );
   assert.match(overlay, /data-revealed=/);
+  assert.match(
+    overlay,
+    /const timerPresentation = capture\?\.presentation[\s\S]*?actionCoordinator\.current\?\.generation\(\) !== timerPresentation[\s\S]*?dismissRef\.current\("timeout"\)/,
+  );
   assert.match(overlay, /addEventListener\("wheel"/);
   assert.match(overlay, /new OverlaySwipeGesture/);
+  assert.match(overlay, /invoke<boolean>\("overlay_set_auto_dismiss_paused"/);
+  assert.match(
+    overlay,
+    /async function copyCapture\(\)[\s\S]*?await setRendererAutoDismissPaused\(capture, true\)[\s\S]*?invoke<ClipboardStatus>\("overlay_copy_capture"/,
+  );
+  assert.match(
+    overlay,
+    /async function saveCapture\(\)[\s\S]*?await setRendererAutoDismissPaused\(capture, true\)[\s\S]*?invoke<OverlaySaveResult>\("overlay_save_capture"/,
+  );
+  assert.match(
+    overlay,
+    /onPointerDown=\{\(event\) => \{[\s\S]*?setRendererAutoDismissPaused\(capture, true\)/,
+  );
   assert.match(
     overlay,
     /rawEvent\.preventDefault\(\);[\s\S]{0,600}?clearTimeout\(swipeSettleTimer\.current\)[\s\S]{0,600}?result\.kind === "tracking"/,

@@ -49,6 +49,9 @@ uuid = { version = "1", features = ["v4"] }
 # A bounded blocking client keeps the transport small and prevents network I/O
 # from ever running on the capture/UI executor.
 reqwest = { version = "0.13.4", features = ["blocking"], default-features = true }
+# Quick Access expiry lives on Tauri's async runtime. Tokio's monotonic timer
+# suspends the task without consuming a blocking-pool thread.
+tokio = { version = "1.53.1", features = ["time"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # These bindings expose Apple's own Screen Recording preflight and Login Items
