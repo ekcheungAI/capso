@@ -8,6 +8,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   OverlayActionCoordinator,
   type OverlayActionKind,
@@ -19,11 +20,17 @@ import {
   type OverlaySaveAsPreferences,
 } from "./overlay-drag";
 import { OverlaySwipeGesture } from "./overlay-swipe";
+import { reduceOverlayLifecycle } from "./overlay-lifecycle";
 import {
   createOverlayAutoDismissTimer,
+  isExactOverlayRendererIdentity,
   NativeOverlayAutoDismissBridge,
   PausableOverlayTimer,
   rendererOwnsAutoDismissPause,
+  requestNativeOverlayRevealWithRetry,
+  scheduleOverlayDomHiddenAcknowledgement,
+  scheduleOverlayPaintAcknowledgement,
+  shouldAcceptOverlaySurfaceGeneration,
   shouldRequestOverlayReveal,
 } from "./overlay-timing";
 
@@ -35,6 +42,7 @@ type ClipboardStatus =
 type OverlayCapture = {
   path: string;
   presentationId: number;
+  surfaceGeneration: number;
   clipboard: ClipboardStatus;
   source: "capture" | "history";
   autoDismissMs: number | null;
@@ -64,12 +72,30 @@ type OverlayDragStarted = {
 type OverlayDragEnded = {
   path: string;
   presentationId: number;
+  surfaceGeneration: number;
   outcome: "dropped" | "cancelled";
 };
 
 type OverlayRestored = {
   path: string;
   presentationId: number;
+  surfaceGeneration: number;
+};
+
+type OverlayDismissed = OverlayRestored & {
+  reason: DismissReason;
+};
+
+type OverlaySurfaceState = {
+  surfaceGeneration: number;
+  phase: "hard_hidden" | "warm_hidden" | "visible";
+  path?: string;
+  presentationId?: number;
+};
+
+type OverlayRendererSnapshot = {
+  surface: OverlaySurfaceState;
+  capture: OverlayCapture | null;
 };
 
 type BusyAction = OverlayActionKind | null;
@@ -92,6 +118,7 @@ const PREVIEW_CAPTURE: PresentedCapture = {
   quickActions: { pin: true, annotate: true, copy: true, save: true },
   temporarilyHidden: false,
   presentation: 0,
+  surfaceGeneration: 0,
 };
 
 function isTauriRuntime() {
@@ -132,16 +159,31 @@ export default function CaptureOverlay() {
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeIsWarning, setNoticeIsWarning] = useState(false);
+  const [preparedPresentation, setPreparedPresentation] = useState<number | null>(null);
   const [revealedPresentation, setRevealedPresentation] = useState<number | null>(null);
+  const [nativeShownPresentation, setNativeShownPresentation] = useState<number | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swipePhase, setSwipePhase] = useState<SwipePhase>("idle");
   const [pointerInteraction, setPointerInteraction] = useState(false);
+  const [toolbarHovered, setToolbarHovered] = useState(false);
+  const [revealRetryGeneration, setRevealRetryGeneration] = useState(0);
+  const [warmedSurfaceGeneration, setWarmedSurfaceGeneration] = useState<number | null>(
+    nativeRuntime ? null : PREVIEW_CAPTURE.surfaceGeneration,
+  );
   const [reducedMotion, setReducedMotion] = useState(() =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
 
   const overlayElement = useRef<HTMLElement | null>(null);
   const revealRequestedPresentation = useRef<number | null>(null);
+  const paintRequestedPresentation = useRef<number | null>(null);
+  const paintAcknowledgedPresentation = useRef<number | null>(null);
+  const paintAcknowledgementCancel = useRef<(() => void) | null>(null);
+  const domHiddenAcknowledgementCancel = useRef<(() => void) | null>(null);
+  const componentMounted = useRef(true);
+  const captureRef = useRef<PresentedCapture | null>(capture);
+  const surfaceGenerationRef = useRef(nativeRuntime ? -1 : PREVIEW_CAPTURE.surfaceGeneration);
+  const restoreEpoch = useRef(0);
   const dragGesture = useRef(new OverlayDragGesture(6));
   const swipeGesture = useRef(new OverlaySwipeGesture());
   const swipeQuietTimer = useRef<number | null>(null);
@@ -150,6 +192,7 @@ export default function CaptureOverlay() {
   const dragAction = useRef<{
     token: OverlayActionToken;
     presentationId: number;
+    surfaceGeneration: number;
   } | null>(null);
   const actionCoordinator = useRef<OverlayActionCoordinator | null>(null);
   if (actionCoordinator.current === null) {
@@ -162,10 +205,11 @@ export default function CaptureOverlay() {
   const nativeAutoDismiss = useRef<NativeOverlayAutoDismissBridge | null>(null);
   if (nativeAutoDismiss.current === null) {
     nativeAutoDismiss.current = new NativeOverlayAutoDismissBridge(
-      ({ path, presentationId }, paused) =>
+      ({ path, presentationId, surfaceGeneration }, paused) =>
         invoke<boolean>("overlay_set_auto_dismiss_paused", {
           path,
           presentationId,
+          surfaceGeneration,
           paused,
         }),
     );
@@ -177,11 +221,36 @@ export default function CaptureOverlay() {
         return Promise.resolve(false);
       }
       return nativeAutoDismiss.current!.setPaused(
-        { path: target.path, presentationId: target.presentationId },
+        {
+          path: target.path,
+          presentationId: target.presentationId,
+          surfaceGeneration: target.surfaceGeneration,
+        },
         paused,
       );
     },
     [nativeRuntime],
+  );
+
+  const setToolbarAutoDismissPaused = useCallback(
+    (paused: boolean) => {
+      setToolbarHovered(paused);
+      if (!capture) return;
+      const shouldPause = rendererOwnsAutoDismissPause(
+        pointerInteraction,
+        swipePhase,
+        busyAction,
+        paused,
+      );
+      void setRendererAutoDismissPaused(capture, shouldPause);
+    },
+    [
+      busyAction,
+      capture,
+      pointerInteraction,
+      setRendererAutoDismissPaused,
+      swipePhase,
+    ],
   );
 
   const clearSwipeTimers = useCallback(() => {
@@ -207,33 +276,227 @@ export default function CaptureOverlay() {
   }, []);
 
   useEffect(() => {
+    captureRef.current = capture;
+  }, [capture]);
+
+  const scheduleDomHiddenAck = useCallback(
+    (surfaceGeneration: number, conceal: () => void = () => undefined) => {
+      if (
+        !shouldAcceptOverlaySurfaceGeneration(
+          surfaceGenerationRef.current,
+          surfaceGeneration,
+        )
+      ) {
+        return;
+      }
+      domHiddenAcknowledgementCancel.current?.();
+      surfaceGenerationRef.current = surfaceGeneration;
+      const identity = { surfaceGeneration };
+      const isCurrent = () =>
+        componentMounted.current && surfaceGenerationRef.current === surfaceGeneration;
+      const cancel = scheduleOverlayDomHiddenAcknowledgement(
+        identity,
+        isCurrent,
+        () => {
+          flushSync(() => {
+            setWarmedSurfaceGeneration(null);
+            setRevealedPresentation(null);
+            setNativeShownPresentation(null);
+            conceal();
+          });
+        },
+        ({ surfaceGeneration: generation }) =>
+          invoke<boolean>("overlay_dom_hidden_painted", {
+            surfaceGeneration: generation,
+          }),
+        ({ surfaceGeneration: generation }) => {
+          if (!isCurrent()) return;
+          setWarmedSurfaceGeneration(generation);
+          setRevealRetryGeneration((current) => current + 1);
+        },
+        {
+          request: (callback) => window.requestAnimationFrame(callback),
+          cancel: (handle) => window.cancelAnimationFrame(handle),
+        },
+        {
+          maxAttempts: 3,
+          wait: () => new Promise<void>((resolve) => window.setTimeout(resolve, 80)),
+          onFailed: () => {
+            if (!isCurrent()) return;
+            const failed = captureRef.current;
+            console.error(
+              `Could not warm Quick Access surface generation ${surfaceGeneration}.`,
+            );
+            if (!failed || failed.surfaceGeneration !== surfaceGeneration) return;
+            void invoke<boolean>("overlay_dismiss", {
+              path: failed.path,
+              presentationId: failed.presentationId,
+              surfaceGeneration: failed.surfaceGeneration,
+              reason: "close",
+            })
+              .then((dismissed) => {
+                if (!dismissed || !isCurrent()) return;
+                actionCoordinator.current?.deactivateCapture(failed.path);
+                captureRef.current = null;
+                setCapture(null);
+              })
+              .catch((error) => {
+                console.error("Could not clean up an unwarmed Quick Access surface", error);
+              });
+          },
+        },
+      );
+      domHiddenAcknowledgementCancel.current = cancel;
+    },
+    [],
+  );
+
+  useEffect(() => {
     if (!nativeRuntime) return;
 
     let disposed = false;
-    let receivedLiveCapture = false;
     let unlisten: UnlistenFn | undefined;
     let unlistenDrag: UnlistenFn | undefined;
     let unlistenHidden: UnlistenFn | undefined;
     let unlistenRestore: UnlistenFn | undefined;
+    let unlistenDismissed: UnlistenFn | undefined;
+    let snapshotInFlight = false;
+    let snapshotRequested = false;
+
+    const resetPaintRequests = () => {
+      paintAcknowledgementCancel.current?.();
+      paintAcknowledgementCancel.current = null;
+      revealRequestedPresentation.current = null;
+      paintRequestedPresentation.current = null;
+      paintAcknowledgedPresentation.current = null;
+    };
+
+    const lifecycleState = () => {
+      const current = captureRef.current;
+      return {
+        surfaceGeneration: surfaceGenerationRef.current,
+        capture: current
+          ? {
+              path: current.path,
+              presentationId: current.presentationId,
+              surfaceGeneration: current.surfaceGeneration,
+              temporarilyHidden: current.temporarilyHidden,
+            }
+          : null,
+      };
+    };
+
+    const clearRendererCapture = () => {
+      const current = captureRef.current;
+      if (current) actionCoordinator.current?.deactivateCapture(current.path);
+      resetPaintRequests();
+      resetSwipePresentation();
+      dragGesture.current.reset();
+      dragAction.current = null;
+      captureRef.current = null;
+      setCapture(null);
+      setPreparedPresentation(null);
+      setImageReady(false);
+      setImageFailed(false);
+      setTemporarilyHidden(false);
+      setBusyAction(null);
+      setPointerInteraction(false);
+      setToolbarHovered(false);
+      setNotice(null);
+      setNoticeIsWarning(false);
+    };
+
+    const applyRendererSnapshot = (snapshot: OverlayRendererSnapshot) => {
+      const { surface, capture: current } = snapshot;
+      const lifecycle = reduceOverlayLifecycle(lifecycleState(), {
+        kind: "bootstrap",
+        surfaceGeneration: surface.surfaceGeneration,
+        capture: current,
+      });
+      if (disposed || lifecycle.decision !== "apply") return;
+
+      if (current) {
+        resetSwipePresentation();
+        resetPaintRequests();
+        const presentation = actionCoordinator.current!.activateCapture(current.path);
+        const next = {
+          ...current,
+          presentation,
+          surfaceGeneration: lifecycle.state.surfaceGeneration,
+        };
+        scheduleDomHiddenAck(lifecycle.state.surfaceGeneration, () => {
+          captureRef.current = next;
+          setCapture(next);
+          setPreparedPresentation(null);
+          setRevealedPresentation(null);
+          setImageFailed(false);
+          setImageReady(false);
+          setTemporarilyHidden(next.temporarilyHidden);
+          setBusyAction(null);
+        });
+        return;
+      }
+
+      scheduleDomHiddenAck(
+        lifecycle.state.surfaceGeneration,
+        clearRendererCapture,
+      );
+    };
+
+    const requestRendererSnapshot = (resync = false) => {
+      if (resync || !snapshotInFlight) snapshotRequested = true;
+      if (snapshotInFlight) return;
+      snapshotInFlight = true;
+      void (async () => {
+        while (!disposed && snapshotRequested) {
+          snapshotRequested = false;
+          try {
+            const snapshot = await invoke<OverlayRendererSnapshot>(
+              "overlay_renderer_ready",
+            );
+            applyRendererSnapshot(snapshot);
+          } catch (error) {
+            console.error("Could not synchronize the Quick Access renderer", error);
+          }
+        }
+      })().finally(() => {
+        snapshotInFlight = false;
+        if (!disposed && snapshotRequested) requestRendererSnapshot();
+      });
+    };
+
+    const resyncRenderer = (surfaceGeneration: number) => {
+      scheduleDomHiddenAck(surfaceGeneration, clearRendererCapture);
+      requestRendererSnapshot(true);
+    };
 
     void (async () => {
       unlisten = await listen<OverlayCapture>("overlay-capture", (event) => {
         if (disposed) return;
-        receivedLiveCapture = true;
+        const lifecycle = reduceOverlayLifecycle(lifecycleState(), {
+          kind: "capture",
+          capture: event.payload,
+        });
+        if (lifecycle.decision !== "apply") return;
         resetSwipePresentation();
         dragGesture.current.reset();
         dragAction.current = null;
         setPointerInteraction(false);
+        setToolbarHovered(false);
         const presentation = actionCoordinator.current!.activateCapture(event.payload.path);
-        revealRequestedPresentation.current = null;
-        setRevealedPresentation(null);
-        setImageFailed(false);
-        setImageReady(false);
-        setTemporarilyHidden(event.payload.temporarilyHidden);
-        setBusyAction(null);
-        setNotice(null);
-        setNoticeIsWarning(false);
-        setCapture({ ...event.payload, presentation });
+        const next = { ...event.payload, presentation };
+        resetPaintRequests();
+        scheduleDomHiddenAck(event.payload.surfaceGeneration, () => {
+          captureRef.current = next;
+          setCapture(next);
+          setPreparedPresentation(null);
+          setImageFailed(false);
+          setImageReady(false);
+          setTemporarilyHidden(event.payload.temporarilyHidden);
+          setBusyAction(null);
+          setNotice(null);
+          setNoticeIsWarning(false);
+        });
       });
       unlistenDrag = await listen<OverlayDragEnded>("overlay-drag-ended", (event) => {
         if (disposed) return;
@@ -242,6 +505,8 @@ export default function CaptureOverlay() {
           !active ||
           active.token.path !== event.payload.path ||
           active.presentationId !== event.payload.presentationId ||
+          active.surfaceGeneration !== event.payload.surfaceGeneration ||
+          captureRef.current?.surfaceGeneration !== event.payload.surfaceGeneration ||
           !actionCoordinator.current?.finish(active.token)
         ) {
           return;
@@ -254,51 +519,98 @@ export default function CaptureOverlay() {
       });
       unlistenHidden = await listen<OverlayRestored>("overlay-hidden", (event) => {
         if (disposed) return;
-        setCapture((current) => {
-          if (
-            current?.path === event.payload.path &&
-            current.presentationId === event.payload.presentationId
-          ) {
-            autoDismiss.current?.pause();
-            setTemporarilyHidden(true);
-          }
-          return current;
+        const lifecycle = reduceOverlayLifecycle(lifecycleState(), {
+          kind: "hidden",
+          ...event.payload,
+        });
+        if (lifecycle.decision === "ignore") return;
+        if (lifecycle.decision === "resync") {
+          resyncRenderer(lifecycle.state.surfaceGeneration);
+          return;
+        }
+        const current = captureRef.current!;
+        const presentation = actionCoordinator.current!.activateCapture(current.path);
+        const next = {
+          ...current,
+          presentation,
+          surfaceGeneration: event.payload.surfaceGeneration,
+          temporarilyHidden: true,
+        };
+        resetPaintRequests();
+        autoDismiss.current?.pause();
+        dragGesture.current.reset();
+        dragAction.current = null;
+        scheduleDomHiddenAck(event.payload.surfaceGeneration, () => {
+          captureRef.current = next;
+          setCapture(next);
+          setPreparedPresentation(null);
+          setImageReady(false);
+          setImageFailed(false);
+          setTemporarilyHidden(true);
+          setPointerInteraction(false);
+          setToolbarHovered(false);
+          setBusyAction(null);
         });
       });
       unlistenRestore = await listen<OverlayRestored>("overlay-restored", (event) => {
         if (disposed) return;
-        setCapture((current) => {
-          if (
-            current?.path === event.payload.path &&
-            current.presentationId === event.payload.presentationId
-          ) {
-            if (autoDismiss.current?.remainingMs() === 0) {
-              autoDismiss.current.reset();
-            }
-            revealRequestedPresentation.current = null;
-            setTemporarilyHidden(false);
-            setNotice("Quick Access restored");
-            setNoticeIsWarning(false);
-          }
-          return current;
+        const lifecycle = reduceOverlayLifecycle(lifecycleState(), {
+          kind: "restored",
+          ...event.payload,
+        });
+        if (lifecycle.decision === "ignore") return;
+        if (lifecycle.decision === "resync") {
+          resyncRenderer(lifecycle.state.surfaceGeneration);
+          return;
+        }
+        const current = captureRef.current!;
+        if (autoDismiss.current?.remainingMs() === 0) autoDismiss.current.reset();
+        restoreEpoch.current += 1;
+        const presentation = actionCoordinator.current!.activateCapture(current.path);
+        const next = {
+          ...current,
+          presentation,
+          surfaceGeneration: event.payload.surfaceGeneration,
+          temporarilyHidden: false,
+        };
+        resetPaintRequests();
+        scheduleDomHiddenAck(event.payload.surfaceGeneration, () => {
+          captureRef.current = next;
+          setCapture(next);
+          setPreparedPresentation(null);
+          setImageReady(false);
+          setImageFailed(false);
+          setTemporarilyHidden(false);
+          setNotice("Quick Access restored");
+          setNoticeIsWarning(false);
         });
       });
+      unlistenDismissed = await listen<OverlayDismissed>(
+        "capture-overlay-dismissed",
+        (event) => {
+          if (disposed) return;
+          const lifecycle = reduceOverlayLifecycle(lifecycleState(), {
+            kind: "dismissed",
+            ...event.payload,
+          });
+          if (lifecycle.decision !== "apply") return;
+          scheduleDomHiddenAck(
+            lifecycle.state.surfaceGeneration,
+            clearRendererCapture,
+          );
+        },
+      );
 
       if (disposed) {
         unlisten?.();
         unlistenDrag?.();
         unlistenHidden?.();
         unlistenRestore?.();
+        unlistenDismissed?.();
         return;
       }
 
-      const current = await invoke<OverlayCapture | null>("get_overlay_capture");
-      if (!disposed && !receivedLiveCapture && current) {
-        resetSwipePresentation();
-        const presentation = actionCoordinator.current!.activateCapture(current.path);
-        setTemporarilyHidden(current.temporarilyHidden);
-        setCapture({ ...current, presentation });
-      }
+      requestRendererSnapshot();
     })();
 
     return () => {
@@ -307,72 +619,286 @@ export default function CaptureOverlay() {
       unlistenDrag?.();
       unlistenHidden?.();
       unlistenRestore?.();
+      unlistenDismissed?.();
     };
-  }, [nativeRuntime, resetSwipePresentation]);
+  }, [nativeRuntime, resetSwipePresentation, scheduleDomHiddenAck]);
 
-  const reveal = useCallback(async () => {
+  const commitPrepared = useCallback(() => {
     if (!capture) return;
-    if (!nativeRuntime || !capture.path) {
-      const presentation = capture.presentation;
-      window.requestAnimationFrame(() => setRevealedPresentation(presentation));
+    const presentation = capture.presentation;
+    if (actionCoordinator.current?.generation() !== presentation) return;
+    if (warmedSurfaceGeneration !== capture.surfaceGeneration || temporarilyHidden) return;
+    setPreparedPresentation(presentation);
+  }, [capture, temporarilyHidden, warmedSurfaceGeneration]);
+
+  const requestNativeShow = useCallback(async () => {
+    if (!nativeRuntime || !capture?.path) return;
+    const { path, presentation, presentationId, surfaceGeneration } = capture;
+    if (revealRequestedPresentation.current === presentation) return;
+    const revealAction = actionCoordinator.current?.begin(path, "reveal");
+    if (!revealAction) return;
+    const restoreEpochAtStart = restoreEpoch.current;
+    revealRequestedPresentation.current = presentation;
+    const isCurrent = () =>
+      componentMounted.current &&
+      actionCoordinator.current?.isCurrent(revealAction) === true &&
+      surfaceGenerationRef.current === surfaceGeneration;
+    const revealResult = await requestNativeOverlayRevealWithRetry(
+      () =>
+        invoke<boolean>("overlay_image_ready", {
+          path,
+          presentationId,
+          surfaceGeneration,
+        }),
+      isCurrent,
+      () => new Promise<void>((resolve) => window.setTimeout(resolve, 80)),
+      3,
+    );
+    if (!isCurrent()) return;
+    if (revealResult === "shown") {
+      if (actionCoordinator.current?.finish(revealAction)) {
+        setNativeShownPresentation(presentation);
+      }
       return;
     }
-    if (revealRequestedPresentation.current === capture.presentation) return;
-
-    const { path, presentation, presentationId } = capture;
-    revealRequestedPresentation.current = presentation;
-    try {
-      const revealed = await invoke<boolean>("overlay_image_ready", { path, presentationId });
-      if (!revealed) {
-        if (
-          actionCoordinator.current?.generation() === presentation &&
-          revealRequestedPresentation.current === presentation
-        ) {
+    if (revealResult === "not_shown") {
+      if (actionCoordinator.current?.finish(revealAction)) {
+        revealRequestedPresentation.current = null;
+        if (restoreEpoch.current !== restoreEpochAtStart) {
+          setRevealRetryGeneration((generation) => generation + 1);
+        }
+      }
+      return;
+    }
+    if (revealResult === "failed") {
+      let dismissed = false;
+      try {
+        dismissed = await invoke<boolean>("overlay_dismiss", {
+          path,
+          presentationId,
+          surfaceGeneration,
+          reason: "close",
+        });
+      } catch (error) {
+        console.error("Could not clean up a failed native overlay reveal", error);
+      }
+      if (!isCurrent()) return;
+      if (!dismissed) {
+        if (actionCoordinator.current?.finish(revealAction)) {
           revealRequestedPresentation.current = null;
+          setNotice("Quick Access could not reveal this preview yet");
+          setNoticeIsWarning(true);
         }
         return;
       }
-      if (
-        actionCoordinator.current?.generation() === presentation &&
-        revealRequestedPresentation.current === presentation
-      ) {
-        setRevealedPresentation(presentation);
-      }
-    } catch {
-      if (
-        actionCoordinator.current?.generation() === presentation &&
-        revealRequestedPresentation.current === presentation
-      ) {
+      if (actionCoordinator.current?.dismiss(revealAction)) {
         revealRequestedPresentation.current = null;
+        paintRequestedPresentation.current = null;
+        paintAcknowledgedPresentation.current = null;
+        setPreparedPresentation(null);
+        setRevealedPresentation(null);
+        setNativeShownPresentation(null);
+        if (captureRef.current?.presentation === presentation) {
+          captureRef.current = null;
+        }
+        setCapture((current) =>
+          current?.presentation === presentation ? null : current,
+        );
       }
     }
   }, [capture, nativeRuntime]);
 
-  useEffect(() => {
-    if (!nativeRuntime && capture) void reveal();
-  }, [capture, nativeRuntime, reveal]);
+  const isSurfaceWarm =
+    capture !== null && warmedSurfaceGeneration === capture.surfaceGeneration;
 
   useEffect(() => {
     if (
-      !nativeRuntime ||
       !capture ||
       !shouldRequestOverlayReveal(
         imageReady,
         imageFailed,
         temporarilyHidden,
-        revealedPresentation === capture.presentation,
+        isSurfaceWarm,
+        preparedPresentation === capture.presentation,
       )
     ) {
       return;
     }
-    void reveal();
+    commitPrepared();
   }, [
     capture,
+    commitPrepared,
     imageFailed,
     imageReady,
+    isSurfaceWarm,
+    preparedPresentation,
+    temporarilyHidden,
+  ]);
+
+  const isPrepared =
+    capture !== null &&
+    imageReady &&
+    !imageFailed &&
+    preparedPresentation === capture.presentation;
+
+  const isRevealed =
+    isPrepared &&
+    isSurfaceWarm &&
+    !temporarilyHidden &&
+    capture !== null &&
+    revealedPresentation === capture.presentation;
+
+  useEffect(() => {
+    if (
+      nativeRuntime ||
+      !capture ||
+      !isPrepared ||
+      temporarilyHidden ||
+      revealedPresentation === capture.presentation
+    ) {
+      return;
+    }
+    const presentation = capture.presentation;
+    const frame = window.requestAnimationFrame(() => {
+      if (actionCoordinator.current?.generation() === presentation) {
+        setRevealedPresentation(presentation);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [capture, isPrepared, nativeRuntime, revealedPresentation, temporarilyHidden]);
+
+  useEffect(() => {
+    if (
+      !nativeRuntime ||
+      !capture?.path ||
+      !isPrepared ||
+      temporarilyHidden ||
+      nativeShownPresentation === capture.presentation
+    ) {
+      return;
+    }
+    void requestNativeShow();
+  }, [
+    capture,
+    isPrepared,
     nativeRuntime,
-    reveal,
-    revealedPresentation,
+    nativeShownPresentation,
+    requestNativeShow,
+    revealRetryGeneration,
+    temporarilyHidden,
+  ]);
+
+  useEffect(() => {
+    if (
+      !nativeRuntime ||
+      !capture?.path ||
+      !isPrepared ||
+      temporarilyHidden ||
+      nativeShownPresentation !== capture.presentation ||
+      paintRequestedPresentation.current === capture.presentation ||
+      paintAcknowledgedPresentation.current === capture.presentation
+    ) {
+      return;
+    }
+
+    const { path, presentationId, presentation, surfaceGeneration } = capture;
+    paintRequestedPresentation.current = presentation;
+    const cancel = scheduleOverlayPaintAcknowledgement(
+      { path, presentationId, presentation, surfaceGeneration, reducedMotion },
+      () =>
+        actionCoordinator.current?.generation() === presentation &&
+        surfaceGenerationRef.current === surfaceGeneration,
+      () => {
+        if (actionCoordinator.current?.generation() !== presentation) return;
+        flushSync(() => setRevealedPresentation(presentation));
+      },
+      ({ path, presentationId, surfaceGeneration, reducedMotion }) =>
+        invoke<boolean>("overlay_presentation_painted", {
+          path,
+          presentationId,
+          surfaceGeneration,
+          reducedMotion,
+        }),
+      (painted) => {
+        if (actionCoordinator.current?.generation() === painted.presentation) {
+          paintAcknowledgedPresentation.current = painted.presentation;
+        }
+      },
+      {
+        request: (callback) => window.requestAnimationFrame(callback),
+        cancel: (handle) => window.cancelAnimationFrame(handle),
+      },
+      {
+        maxAttempts: 3,
+        wait: () => new Promise<void>((resolve) => window.setTimeout(resolve, 80)),
+        onFailed: (failed) => {
+          if (
+            !componentMounted.current ||
+            actionCoordinator.current?.generation() !== failed.presentation
+          ) {
+            return;
+          }
+          const action = actionCoordinator.current.begin(failed.path, "dismiss");
+          if (!action) return;
+          void invoke<boolean>("overlay_dismiss", {
+            path: failed.path,
+            presentationId: failed.presentationId,
+            surfaceGeneration: failed.surfaceGeneration,
+            reason: "close",
+          })
+            .then((dismissed) => {
+              if (
+                !dismissed ||
+                !componentMounted.current ||
+                !actionCoordinator.current?.dismiss(action)
+              ) {
+                if (componentMounted.current) {
+                  actionCoordinator.current?.finish(action);
+                }
+                return;
+              }
+              revealRequestedPresentation.current = null;
+              paintRequestedPresentation.current = null;
+              paintAcknowledgedPresentation.current = null;
+              setPreparedPresentation(null);
+              setRevealedPresentation(null);
+              setNativeShownPresentation(null);
+              if (captureRef.current?.presentation === failed.presentation) {
+                captureRef.current = null;
+              }
+              setCapture((current) =>
+                current?.presentation === failed.presentation ? null : current,
+              );
+            })
+            .catch((error) => {
+              console.error("Could not clean up a failed overlay paint", error);
+              if (componentMounted.current) {
+                actionCoordinator.current?.finish(action);
+              }
+            });
+        },
+      },
+    );
+    paintAcknowledgementCancel.current = cancel;
+
+    return () => {
+      cancel();
+      if (paintAcknowledgementCancel.current === cancel) {
+        paintAcknowledgementCancel.current = null;
+      }
+      if (
+        paintAcknowledgedPresentation.current !== presentation &&
+        paintRequestedPresentation.current === presentation
+      ) {
+        paintRequestedPresentation.current = null;
+      }
+    };
+  }, [
+    capture,
+    isPrepared,
+    nativeRuntime,
+    nativeShownPresentation,
+    reducedMotion,
     temporarilyHidden,
   ]);
 
@@ -380,11 +906,12 @@ export default function CaptureOverlay() {
     async (reason: DismissReason): Promise<boolean> => {
       if (!capture) return false;
       if (!nativeRuntime || !capture.path) {
+        captureRef.current = null;
         setCapture(null);
         return true;
       }
 
-      const { path, presentationId } = capture;
+      const { path, presentationId, surfaceGeneration } = capture;
       const action = actionCoordinator.current?.begin(path, "dismiss");
       if (!action) return false;
       setBusyAction("dismiss");
@@ -392,10 +919,12 @@ export default function CaptureOverlay() {
         const dismissed = await invoke<boolean>("overlay_dismiss", {
           path,
           presentationId,
+          surfaceGeneration,
           reason,
         });
         if (dismissed && actionCoordinator.current?.dismiss(action)) {
           setBusyAction(null);
+          captureRef.current = null;
           setCapture((current) =>
             current?.presentation === action.captureGeneration ? null : current,
           );
@@ -445,13 +974,8 @@ export default function CaptureOverlay() {
     );
   }, [capture?.autoDismissMs, capture?.presentation]);
 
-  const isRevealed =
-    capture !== null &&
-    imageReady &&
-    !imageFailed &&
-    revealedPresentation === capture.presentation;
   const shouldRunAutoDismiss =
-    nativeRuntime &&
+    !nativeRuntime &&
     Boolean(capture?.path) &&
     capture?.autoDismissMs !== null &&
     imageReady &&
@@ -482,6 +1006,7 @@ export default function CaptureOverlay() {
     pointerInteraction,
     swipePhase,
     busyAction,
+    toolbarHovered,
   );
 
   useEffect(() => {
@@ -491,6 +1016,7 @@ export default function CaptureOverlay() {
     capture?.autoDismissMs,
     capture?.path,
     capture?.presentationId,
+    capture?.surfaceGeneration,
     nativeRuntime,
     rendererInteractionActive,
     setRendererAutoDismissPaused,
@@ -506,13 +1032,20 @@ export default function CaptureOverlay() {
     capture?.autoDismissMs,
     capture?.path,
     capture?.presentationId,
+    capture?.surfaceGeneration,
     nativeRuntime,
     setRendererAutoDismissPaused,
   ]);
 
-  useEffect(() => () => {
-    autoDismiss.current?.cancel();
-    clearSwipeTimers();
+  useEffect(() => {
+    componentMounted.current = true;
+    return () => {
+      componentMounted.current = false;
+      autoDismiss.current?.cancel();
+      paintAcknowledgementCancel.current?.();
+      domHiddenAcknowledgementCancel.current?.();
+      clearSwipeTimers();
+    };
   }, [clearSwipeTimers]);
 
   async function copyCapture() {
@@ -601,10 +1134,10 @@ export default function CaptureOverlay() {
 
   async function startDragCapture() {
     if (!nativeRuntime || !capture?.path || !imageReady || imageFailed) return;
-    const { path, presentationId } = capture;
+    const { path, presentationId, surfaceGeneration } = capture;
     const action = actionCoordinator.current?.begin(path, "drag");
     if (!action) return;
-    dragAction.current = { token: action, presentationId };
+    dragAction.current = { token: action, presentationId, surfaceGeneration };
     setBusyAction("drag");
     setNotice("Drag into any app");
     setNoticeIsWarning(false);
@@ -613,6 +1146,7 @@ export default function CaptureOverlay() {
       await invoke<OverlayDragStarted>("overlay_start_drag", {
         path,
         presentationId,
+        surfaceGeneration,
         filename: suggestedCaptureFilename(),
       });
       setPointerInteraction(false);
@@ -628,16 +1162,39 @@ export default function CaptureOverlay() {
   }
 
   const handleImageFailure = useCallback((failed: PresentedCapture) => {
-    if (actionCoordinator.current?.generation() !== failed.presentation) return;
-    dragGesture.current.reset();
-    setImageReady(false);
-    setImageFailed(true);
+    const isCurrent = () =>
+      actionCoordinator.current?.generation() === failed.presentation &&
+      surfaceGenerationRef.current === failed.surfaceGeneration;
+    if (!isCurrent()) return;
+    const commitFailure = () => {
+      if (!isCurrent()) return;
+      paintAcknowledgementCancel.current?.();
+      paintAcknowledgementCancel.current = null;
+      paintRequestedPresentation.current = null;
+      paintAcknowledgedPresentation.current = null;
+      dragGesture.current.reset();
+      setPreparedPresentation(null);
+      setRevealedPresentation(null);
+      setNativeShownPresentation(null);
+      setImageReady(false);
+      setImageFailed(true);
+    };
     if (nativeRuntime && failed.path) {
       void invoke<boolean>("overlay_image_failed", {
         path: failed.path,
         presentationId: failed.presentationId,
-      }).catch(() => undefined);
+        surfaceGeneration: failed.surfaceGeneration,
+      })
+        .then((accepted) => {
+          if (!accepted) return;
+          commitFailure();
+        })
+        .catch((error) => {
+          console.error("Could not report a failed Quick Access image", error);
+        });
+      return;
     }
+    commitFailure();
   }, [nativeRuntime]);
 
   const settleSwipe = useCallback((presentation: number) => {
@@ -745,11 +1302,17 @@ export default function CaptureOverlay() {
   }, [capture?.presentation, resetSwipePresentation]);
 
   if (!capture) {
-    return <main className="capture-overlay capture-overlay--waiting" aria-hidden="true" />;
+    return (
+      <main
+        className="capture-overlay capture-overlay--waiting"
+        aria-hidden="true"
+        inert
+      />
+    );
   }
 
   const source = nativeRuntime && capture.path
-    ? `${convertFileSrc(capture.path)}?presentation=${capture.presentationId}`
+    ? `${convertFileSrc(capture.path)}?presentation=${capture.presentationId}&surface=${capture.surfaceGeneration}`
     : null;
   const isHistory = capture.source === "history";
   const swipeThreshold = Math.min(96, Math.max(1, window.innerWidth) * 0.25);
@@ -764,12 +1327,18 @@ export default function CaptureOverlay() {
   return (
     <main
       ref={overlayElement}
-      key={capture.path ? `${capture.path}:${capture.presentationId}` : "preview"}
+      key={capture.path
+        ? `${capture.path}:${capture.presentationId}:${capture.surfaceGeneration}`
+        : "preview"}
       className="capture-overlay"
       role="region"
+      aria-hidden={!isRevealed}
+      inert={!isRevealed}
       aria-label={isHistory
         ? "Restored Capso capture. Swipe right to dismiss."
         : "Latest Capso capture. Swipe right to dismiss."}
+      data-native-runtime={nativeRuntime}
+      data-prepared={isPrepared}
       data-revealed={isRevealed}
       data-swipe-phase={swipePhase}
       style={overlayStyle}
@@ -777,7 +1346,7 @@ export default function CaptureOverlay() {
       <div className="capture-overlay__preview" data-dragging={busyAction === "drag"}>
         {source && !imageFailed ? (
           <img
-            key={`${capture.path}:${capture.presentationId}`}
+            key={`${capture.path}:${capture.presentationId}:${capture.surfaceGeneration}`}
             src={source}
             alt={isHistory ? "Restored screenshot" : "Latest screenshot"}
             title="Drag screenshot to another app"
@@ -821,13 +1390,17 @@ export default function CaptureOverlay() {
                   handleImageFailure(loadedCapture);
                   return;
                 }
-                if (
-                  actionCoordinator.current?.generation() !== loadedCapture.presentation
-                ) {
+                if (!isExactOverlayRendererIdentity(
+                  {
+                    presentation: actionCoordinator.current?.generation() ?? -1,
+                    surfaceGeneration: surfaceGenerationRef.current,
+                  },
+                  loadedCapture,
+                )) {
                   return;
                 }
                 setImageReady(true);
-                void reveal();
+                commitPrepared();
               })();
             }}
             onError={() => handleImageFailure(capture)}
@@ -850,7 +1423,13 @@ export default function CaptureOverlay() {
           </div>
         )}
 
-        <div className="capture-overlay__hover-actions" role="toolbar" aria-label="Capture actions">
+        <div
+          className="capture-overlay__hover-actions"
+          role="toolbar"
+          aria-label="Capture actions"
+          onPointerEnter={() => setToolbarAutoDismissPaused(true)}
+          onPointerLeave={() => setToolbarAutoDismissPaused(false)}
+        >
           <button
             type="button"
             className="capture-overlay__action"

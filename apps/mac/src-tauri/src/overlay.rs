@@ -1,16 +1,22 @@
 use crate::{capture::CaptureMode, clipboard::ClipboardStatus};
 use image::{codecs::jpeg::JpegEncoder, ImageReader, Limits};
 #[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSAccessibility, NSWindow, NSWindowAnimationBehavior};
+#[cfg(target_os = "macos")]
 use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGEventType, CGMouseButton};
+#[cfg(target_os = "macos")]
+use objc2_quartz_core::CATransaction;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, BufReader, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{mpsc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::{
@@ -32,6 +38,7 @@ const MAX_SAVE_AS_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 const JPEG_SAVE_AS_QUALITY: u8 = 92;
 const OVERLAY_AUTO_DISMISS_DURATION: Duration = Duration::from_secs(10);
 const OVERLAY_AUTO_DISMISS_RETRY_DELAY: Duration = Duration::from_secs(1);
+const OVERLAY_PAINT_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 const JPEG_SIGNATURE: &[u8; 3] = b"\xff\xd8\xff";
 
@@ -632,6 +639,7 @@ pub(crate) fn update_overlay_settings(
 pub(crate) struct OverlayCapture {
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
     clipboard: ClipboardStatus,
     source: OverlaySource,
     auto_dismiss_ms: Option<u64>,
@@ -646,22 +654,82 @@ pub(crate) enum OverlaySource {
     History,
 }
 
-#[derive(Default)]
 pub(crate) struct OverlayRuntime {
     current: Option<OverlayCapture>,
+    presented: Option<OverlayPresentationIdentity>,
     last_failure: Option<OverlayFailureRecord>,
     presentation_generation: u64,
+    surface_generation: u64,
+    surface_phase: OverlaySurfacePhase,
+    renderer_bootstrap_generation: Option<u64>,
     auto_dismiss_generation: u64,
     auto_dismiss_clock: Option<OverlayAutoDismissClock>,
+    pending_paint_generation: u64,
+    pending_paint: Option<OverlayPendingPaint>,
     active_drag: Option<OverlayDragIdentity>,
     pending_latency: Option<PendingOverlayLatency>,
     temporarily_hidden: bool,
+}
+
+impl Default for OverlayRuntime {
+    fn default() -> Self {
+        Self {
+            current: None,
+            presented: None,
+            last_failure: None,
+            presentation_generation: 0,
+            surface_generation: 0,
+            surface_phase: OverlaySurfacePhase::HardHidden,
+            renderer_bootstrap_generation: None,
+            auto_dismiss_generation: 0,
+            auto_dismiss_clock: None,
+            pending_paint_generation: 0,
+            pending_paint: None,
+            active_drag: None,
+            pending_latency: None,
+            temporarily_hidden: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OverlaySurfacePhase {
+    #[default]
+    HardHidden,
+    WarmHidden,
+    Visible,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlaySurfaceState {
+    surface_generation: u64,
+    phase: OverlaySurfacePhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presentation_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OverlayRendererReadySnapshot {
+    surface: OverlaySurfaceState,
+    capture: Option<OverlayCapture>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OverlayPresentationIdentity {
     path: String,
     presentation_id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OverlayHiddenSurfaceIdentity {
+    path: String,
+    presentation_id: u64,
+    surface_generation: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -677,6 +745,24 @@ struct OverlayAutoDismissClock {
     identity: OverlayPresentationIdentity,
     generation: u64,
     remaining: Duration,
+    deadline: Option<Instant>,
+    pause_reasons: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OverlayPendingPaintSchedule {
+    identity: OverlayPresentationIdentity,
+    surface_generation: u64,
+    generation: u64,
+    after: Duration,
+    deadline: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct OverlayPendingPaint {
+    identity: OverlayPresentationIdentity,
+    surface_generation: u64,
+    generation: u64,
     deadline: Option<Instant>,
     pause_reasons: u8,
 }
@@ -707,9 +793,30 @@ enum OverlayAutoDismissUpdate {
     Resumed(OverlayAutoDismissSchedule),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OverlayPaintAcknowledgement {
+    Stale,
+    NotShown,
+    AlreadyArmed,
+    Paused,
+    Armed(OverlayAutoDismissSchedule),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct OverlayResumeSchedules {
+    auto_dismiss: Option<OverlayAutoDismissSchedule>,
+    paint_watchdog: Option<OverlayPendingPaintSchedule>,
+    latency: Option<crate::latency::OverlayLatencySample>,
+}
+
+enum OverlayDismissConstraint {
+    AutoDismiss(OverlayAutoDismissSchedule),
+    PendingPaint(OverlayPendingPaintSchedule),
+}
+
 pub(crate) struct CaptureOverlayLease {
     app: AppHandle,
-    hidden: Option<OverlayPresentationIdentity>,
+    hidden: Option<OverlayHiddenSurfaceIdentity>,
 }
 
 impl CaptureOverlayLease {
@@ -722,10 +829,11 @@ impl CaptureOverlayLease {
 impl Drop for CaptureOverlayLease {
     fn drop(&mut self) {
         if let Some(hidden) = self.hidden.as_ref() {
-            if let Err(error) = restore_temporarily_hidden_overlay_if_current(
+            if let Err(error) = restore_temporarily_hidden_overlay_surface_if_current(
                 &self.app,
                 &hidden.path,
                 hidden.presentation_id,
+                hidden.surface_generation,
             ) {
                 eprintln!("Could not restore Quick Access after capture: {error}");
             }
@@ -736,15 +844,27 @@ impl Drop for CaptureOverlayLease {
 struct OverlayRendererPauseLease {
     app: AppHandle,
     identity: OverlayPresentationIdentity,
+    surface_generation: u64,
 }
 
 impl OverlayRendererPauseLease {
-    fn acquire(app: &AppHandle, path: &str, presentation_id: u64) -> Result<Self, String> {
+    fn acquire(
+        app: &AppHandle,
+        path: &str,
+        presentation_id: u64,
+        surface_generation: u64,
+    ) -> Result<Self, String> {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let update = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?
-            .set_auto_dismiss_paused(path, presentation_id, true, Instant::now());
+            .set_auto_dismiss_paused_exact(
+                path,
+                presentation_id,
+                surface_generation,
+                true,
+                Instant::now(),
+            );
         if matches!(update, OverlayAutoDismissUpdate::Stale) {
             return Err("That capture is no longer active in the overlay.".into());
         }
@@ -754,6 +874,7 @@ impl OverlayRendererPauseLease {
                 path: path.into(),
                 presentation_id,
             },
+            surface_generation,
         })
     }
 }
@@ -766,10 +887,11 @@ impl Drop for OverlayRendererPauseLease {
             .lock()
             .ok()
             .and_then(|mut runtime| {
-                release_renderer_auto_dismiss_pause_with_clock(
+                release_renderer_auto_dismiss_pause_exact_with_clock(
                     &mut runtime,
                     &self.identity.path,
                     self.identity.presentation_id,
+                    self.surface_generation,
                     Instant::now(),
                 )
             });
@@ -783,6 +905,7 @@ impl Drop for OverlayRendererPauseLease {
 struct OverlayDragIdentity {
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -798,20 +921,64 @@ struct DragGestureState {
 }
 
 impl OverlayRuntime {
+    fn surface_state(&self) -> OverlaySurfaceState {
+        let (path, presentation_id) = self
+            .current
+            .as_ref()
+            .map(|capture| (Some(capture.path.clone()), Some(capture.presentation_id)))
+            .unwrap_or((None, None));
+        OverlaySurfaceState {
+            surface_generation: self.surface_generation,
+            phase: self.surface_phase,
+            path,
+            presentation_id,
+        }
+    }
+
+    fn begin_hard_hidden_surface(&mut self) -> u64 {
+        self.surface_generation = self
+            .surface_generation
+            .checked_add(1)
+            .expect("overlay surface generation cannot exhaust u64");
+        self.surface_phase = OverlaySurfacePhase::HardHidden;
+        self.renderer_bootstrap_generation = None;
+        self.presented = None;
+        self.active_drag = None;
+        if let Some(capture) = self.current.as_mut() {
+            capture.surface_generation = self.surface_generation;
+        }
+        self.surface_generation
+    }
+
+    fn is_exact_surface(&self, path: &str, presentation_id: u64, surface_generation: u64) -> bool {
+        self.surface_generation == surface_generation
+            && self.current.as_ref().is_some_and(|capture| {
+                capture.path == path
+                    && capture.presentation_id == presentation_id
+                    && capture.surface_generation == surface_generation
+            })
+    }
+
     fn reset(&mut self) {
         self.invalidate_auto_dismiss_clock();
+        self.invalidate_pending_paint();
         self.current = None;
+        self.presented = None;
         self.last_failure = None;
         self.pending_latency = None;
         self.temporarily_hidden = false;
+        self.active_drag = None;
     }
 
     fn replace(&mut self, capture: OverlayCapture) {
         self.invalidate_auto_dismiss_clock();
+        self.invalidate_pending_paint();
         self.current = Some(capture);
+        self.presented = None;
         self.last_failure = None;
         self.pending_latency = None;
         self.temporarily_hidden = false;
+        self.active_drag = None;
     }
 
     fn next_capture(
@@ -827,6 +994,7 @@ impl OverlayRuntime {
         OverlayCapture {
             path,
             presentation_id: self.presentation_generation,
+            surface_generation: self.surface_generation,
             clipboard,
             source,
             auto_dismiss_ms: OverlayAutoDismiss::TenSeconds.milliseconds(),
@@ -844,46 +1012,175 @@ impl OverlayRuntime {
         self.auto_dismiss_generation
     }
 
-    fn arm_auto_dismiss(
+    fn next_pending_paint_generation(&mut self) -> u64 {
+        self.pending_paint_generation = self
+            .pending_paint_generation
+            .checked_add(1)
+            .expect("overlay pending-paint generation cannot exhaust u64");
+        self.pending_paint_generation
+    }
+
+    fn invalidate_pending_paint(&mut self) -> u64 {
+        let generation = self.next_pending_paint_generation();
+        self.pending_paint = None;
+        generation
+    }
+
+    fn begin_pending_paint(
         &mut self,
         path: &str,
         presentation_id: u64,
+        surface_generation: u64,
         now: Instant,
-    ) -> Option<OverlayAutoDismissSchedule> {
-        let eligible = self.current.as_ref().is_some_and(|capture| {
-            capture.path == path
-                && capture.presentation_id == presentation_id
-                && !capture.temporarily_hidden
-                && !self.temporarily_hidden
-        });
+    ) -> Option<OverlayPendingPaintSchedule> {
+        let eligible = self.is_exact_surface(path, presentation_id, surface_generation)
+            && self.surface_phase == OverlaySurfacePhase::WarmHidden
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|capture| !capture.temporarily_hidden)
+            && !self.temporarily_hidden;
         if !eligible {
             return None;
         }
-        if self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
-            clock.identity.path == path && clock.identity.presentation_id == presentation_id
-        }) {
+        let already_pending = self.pending_paint.as_ref().is_some_and(|pending| {
+            pending.identity.path == path
+                && pending.identity.presentation_id == presentation_id
+                && pending.surface_generation == surface_generation
+        });
+        if already_pending {
             return None;
         }
-        let after = OVERLAY_AUTO_DISMISS_DURATION;
+        let after = OVERLAY_PAINT_ACK_TIMEOUT;
         let deadline = now + after;
         let identity = OverlayPresentationIdentity {
             path: path.into(),
             presentation_id,
         };
-        let generation = self.invalidate_auto_dismiss_clock();
-        self.auto_dismiss_clock = Some(OverlayAutoDismissClock {
+        let generation = self.next_pending_paint_generation();
+        self.pending_paint = Some(OverlayPendingPaint {
             identity: identity.clone(),
+            surface_generation,
             generation,
-            remaining: after,
             deadline: Some(deadline),
             pause_reasons: 0,
         });
-        Some(OverlayAutoDismissSchedule {
+        Some(OverlayPendingPaintSchedule {
             identity,
+            surface_generation,
             generation,
             after,
             deadline,
         })
+    }
+
+    fn acknowledge_painted(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        now: Instant,
+    ) -> OverlayPaintAcknowledgement {
+        self.acknowledge_painted_exact(path, presentation_id, self.surface_generation, now)
+    }
+
+    fn acknowledge_painted_exact(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        surface_generation: u64,
+        now: Instant,
+    ) -> OverlayPaintAcknowledgement {
+        if !self.is_exact_surface(path, presentation_id, surface_generation) {
+            return OverlayPaintAcknowledgement::Stale;
+        }
+        let Some(pending) = self.pending_paint.clone().filter(|pending| {
+            pending.identity.path == path
+                && pending.identity.presentation_id == presentation_id
+                && pending.surface_generation == surface_generation
+        }) else {
+            return if self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
+                clock.identity.path == path && clock.identity.presentation_id == presentation_id
+            }) {
+                OverlayPaintAcknowledgement::AlreadyArmed
+            } else {
+                OverlayPaintAcknowledgement::NotShown
+            };
+        };
+
+        if self.auto_dismiss_clock.as_ref().is_some_and(|clock| {
+            clock.identity.path == path && clock.identity.presentation_id == presentation_id
+        }) {
+            let pending_pause_reasons = pending.pause_reasons;
+            self.invalidate_pending_paint();
+            for reason in [
+                OverlayAutoDismissPauseReason::Renderer,
+                OverlayAutoDismissPauseReason::ActiveDrag,
+            ] {
+                if pending_pause_reasons & reason.bit() != 0 {
+                    let _ = self.set_auto_dismiss_pause_reason(
+                        path,
+                        presentation_id,
+                        reason,
+                        true,
+                        now,
+                    );
+                }
+            }
+            return match self.set_auto_dismiss_pause_reason(
+                path,
+                presentation_id,
+                OverlayAutoDismissPauseReason::TemporarilyHidden,
+                false,
+                now,
+            ) {
+                OverlayAutoDismissUpdate::Resumed(schedule) => {
+                    OverlayPaintAcknowledgement::Armed(schedule)
+                }
+                OverlayAutoDismissUpdate::Paused => OverlayPaintAcknowledgement::Paused,
+                OverlayAutoDismissUpdate::Unchanged => OverlayPaintAcknowledgement::AlreadyArmed,
+                OverlayAutoDismissUpdate::Stale | OverlayAutoDismissUpdate::Unarmed => {
+                    OverlayPaintAcknowledgement::Stale
+                }
+            };
+        }
+
+        let mut pause_reasons = pending.pause_reasons;
+        if self.temporarily_hidden
+            || self
+                .current
+                .as_ref()
+                .is_some_and(|capture| capture.temporarily_hidden)
+        {
+            pause_reasons |= OverlayAutoDismissPauseReason::TemporarilyHidden.bit();
+        }
+        if self
+            .active_drag
+            .as_ref()
+            .is_some_and(|drag| drag.path == path && drag.presentation_id == presentation_id)
+        {
+            pause_reasons |= OverlayAutoDismissPauseReason::ActiveDrag.bit();
+        }
+
+        self.invalidate_pending_paint();
+        let identity = pending.identity;
+        let generation = self.invalidate_auto_dismiss_clock();
+        let deadline = (pause_reasons == 0).then_some(now + OVERLAY_AUTO_DISMISS_DURATION);
+        self.auto_dismiss_clock = Some(OverlayAutoDismissClock {
+            identity: identity.clone(),
+            generation,
+            remaining: OVERLAY_AUTO_DISMISS_DURATION,
+            deadline,
+            pause_reasons,
+        });
+        match deadline {
+            Some(deadline) => OverlayPaintAcknowledgement::Armed(OverlayAutoDismissSchedule {
+                identity,
+                generation,
+                after: OVERLAY_AUTO_DISMISS_DURATION,
+                deadline,
+            }),
+            None => OverlayPaintAcknowledgement::Paused,
+        }
     }
 
     fn set_auto_dismiss_paused(
@@ -902,6 +1199,20 @@ impl OverlayRuntime {
         )
     }
 
+    fn set_auto_dismiss_paused_exact(
+        &mut self,
+        path: &str,
+        presentation_id: u64,
+        surface_generation: u64,
+        paused: bool,
+        now: Instant,
+    ) -> OverlayAutoDismissUpdate {
+        if !self.is_exact_surface(path, presentation_id, surface_generation) {
+            return OverlayAutoDismissUpdate::Stale;
+        }
+        self.set_auto_dismiss_paused(path, presentation_id, paused, now)
+    }
+
     fn set_auto_dismiss_pause_reason(
         &mut self,
         path: &str,
@@ -912,6 +1223,21 @@ impl OverlayRuntime {
     ) -> OverlayAutoDismissUpdate {
         if !capture_matches(self.current.as_ref(), path, presentation_id) {
             return OverlayAutoDismissUpdate::Stale;
+        }
+        if let Some(pending) = self.pending_paint.as_mut().filter(|pending| {
+            pending.identity.path == path && pending.identity.presentation_id == presentation_id
+        }) {
+            let reason = reason.bit();
+            let reason_was_paused = pending.pause_reasons & reason != 0;
+            if reason_was_paused == paused {
+                return OverlayAutoDismissUpdate::Unchanged;
+            }
+            if paused {
+                pending.pause_reasons |= reason;
+            } else {
+                pending.pause_reasons &= !reason;
+            }
+            return OverlayAutoDismissUpdate::Paused;
         }
         let Some(clock) = self.auto_dismiss_clock.clone() else {
             return OverlayAutoDismissUpdate::Unarmed;
@@ -1022,6 +1348,50 @@ impl OverlayRuntime {
         })
     }
 
+    fn claim_pending_paint_expiry(
+        &self,
+        schedule: &OverlayPendingPaintSchedule,
+        now: Instant,
+    ) -> bool {
+        self.pending_paint.as_ref().is_some_and(|pending| {
+            pending.identity == schedule.identity
+                && pending.surface_generation == schedule.surface_generation
+                && pending.generation == schedule.generation
+                && pending.deadline == Some(schedule.deadline)
+                && schedule.deadline <= now
+                && !self.temporarily_hidden
+                && self.surface_generation == schedule.surface_generation
+                && self.surface_phase == OverlaySurfacePhase::WarmHidden
+                && capture_matches(
+                    self.current.as_ref(),
+                    &schedule.identity.path,
+                    schedule.identity.presentation_id,
+                )
+        })
+    }
+
+    fn should_retry_pending_paint(
+        &self,
+        schedule: &OverlayPendingPaintSchedule,
+        now: Instant,
+    ) -> bool {
+        self.pending_paint.as_ref().is_some_and(|pending| {
+            pending.identity == schedule.identity
+                && pending.surface_generation == schedule.surface_generation
+                && pending.generation == schedule.generation
+                && pending.deadline == Some(schedule.deadline)
+                && schedule.deadline <= now
+                && !self.temporarily_hidden
+                && self.surface_generation == schedule.surface_generation
+                && self.surface_phase == OverlaySurfacePhase::WarmHidden
+                && capture_matches(
+                    self.current.as_ref(),
+                    &schedule.identity.path,
+                    schedule.identity.presentation_id,
+                )
+        })
+    }
+
     fn record_failure(
         &mut self,
         path: &str,
@@ -1051,9 +1421,12 @@ impl OverlayRuntime {
         }
 
         self.current = None;
+        self.presented = None;
         self.invalidate_auto_dismiss_clock();
+        self.invalidate_pending_paint();
         self.pending_latency = None;
         self.temporarily_hidden = false;
+        self.active_drag = None;
         Some(self.record_failure(path, presentation_id, code, message))
     }
 
@@ -1062,15 +1435,19 @@ impl OverlayRuntime {
         path: &str,
         presentation_id: u64,
     ) -> Result<OverlayDragIdentity, String> {
-        if !capture_matches(self.current.as_ref(), path, presentation_id) {
-            return Err("That capture is no longer active in the overlay.".into());
-        }
+        let surface_generation = self
+            .current
+            .as_ref()
+            .filter(|capture| capture.path == path && capture.presentation_id == presentation_id)
+            .map(|capture| capture.surface_generation)
+            .ok_or_else(|| "That capture is no longer active in the overlay.".to_string())?;
         if self.active_drag.is_some() {
             return Err("Another capture drag is still in progress.".into());
         }
         let identity = OverlayDragIdentity {
             path: path.into(),
             presentation_id,
+            surface_generation,
         };
         self.active_drag = Some(identity.clone());
         Ok(identity)
@@ -1094,19 +1471,168 @@ struct OverlayFailureRecord {
     message: String,
 }
 
+type OverlayMainThreadTask = Box<dyn FnOnce() + Send + 'static>;
+
+fn dispatch_acknowledged_main_thread_transaction<T, D, F>(
+    dispatch: D,
+    transaction: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    D: FnOnce(OverlayMainThreadTask) -> Result<(), String>,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    dispatch(Box::new(move || {
+        let _ = sender.send(transaction());
+    }))?;
+    receiver
+        .recv()
+        .map_err(|_| "The Quick Access main-thread transaction did not complete.".to_string())
+}
+
+fn run_overlay_main_thread_transaction<T, F>(app: &AppHandle, transaction: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(AppHandle) -> T + Send + 'static,
+{
+    let transaction_app = app.clone();
+    dispatch_acknowledged_main_thread_transaction(
+        |task| {
+            app.run_on_main_thread(task)
+                .map_err(|error| format!("Could not schedule Quick Access on main: {error}"))
+        },
+        move || transaction(transaction_app),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn mutate_native_overlay_window<T, F>(window: &WebviewWindow, mutation: F) -> Result<T, String>
+where
+    F: FnOnce(&NSWindow) -> Result<T, String>,
+{
+    let _main_thread = MainThreadMarker::new().ok_or_else(|| {
+        "Quick Access native mutation was not on AppKit's main thread.".to_string()
+    })?;
+    let pointer = window
+        .ns_window()
+        .map_err(|error| format!("Could not access the native Quick Access panel: {error}"))?;
+    // SAFETY: Tauri owns this NSWindow for at least as long as WebviewWindow,
+    // and MainThreadMarker above proves AppKit's thread requirement.
+    let window = unsafe { &*pointer.cast::<NSWindow>() };
+    mutation(window)
+}
+
+#[cfg(target_os = "macos")]
+fn park_native_overlay(window: &WebviewWindow) -> Result<(), String> {
+    mutate_native_overlay_window(window, |window| {
+        let content = window
+            .contentView()
+            .ok_or_else(|| "The Quick Access content view is unavailable.".to_string())?;
+        // The transparent NSWindow stays fully present so WindowServer never
+        // defers its next reveal. Only the content view is concealed; WebKit
+        // remains warm and native expiry can still remove pixels immediately.
+        window.setIgnoresMouseEvents(true);
+        content.setAccessibilityHidden(true);
+        window.setAnimationBehavior(NSWindowAnimationBehavior::None);
+        window.setAlphaValue(1.0);
+        content.setAlphaValue(0.0);
+        if window.isKeyWindow() {
+            window.orderOut(None);
+        }
+        window.orderFrontRegardless();
+        window.displayIfNeeded();
+        CATransaction::flush();
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn warm_native_overlay(window: &WebviewWindow) -> Result<(), String> {
+    mutate_native_overlay_window(window, |window| {
+        let content = window
+            .contentView()
+            .ok_or_else(|| "The Quick Access content view is unavailable.".to_string())?;
+        // The renderer has committed an exact hidden DOM generation. Warm its
+        // compositor surface without exposing it to pointer or accessibility
+        // input; the later exact paint acknowledgement performs activation.
+        window.setIgnoresMouseEvents(true);
+        content.setAccessibilityHidden(true);
+        window.setAnimationBehavior(NSWindowAnimationBehavior::None);
+        window.setAlphaValue(1.0);
+        content.setAlphaValue(1.0);
+        window.orderFrontRegardless();
+        content.displayIfNeededIgnoringOpacity();
+        window.displayIfNeeded();
+        CATransaction::flush();
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn present_native_overlay(window: &WebviewWindow, reduced_motion: bool) -> Result<(), String> {
+    mutate_native_overlay_window(window, move |window| {
+        let _ = reduced_motion;
+        let content = window
+            .contentView()
+            .ok_or_else(|| "The Quick Access content view is unavailable.".to_string())?;
+        window.setAnimationBehavior(NSWindowAnimationBehavior::None);
+        window.setIgnoresMouseEvents(true);
+        if !window.isVisible() {
+            window.orderFrontRegardless();
+        }
+
+        // Force the decoded WebKit tree to display while concealed, then
+        // reveal only that content. NSWindow itself never leaves alpha one.
+        content.displayIfNeededIgnoringOpacity();
+        window.setAlphaValue(1.0);
+        content.setAlphaValue(1.0);
+        content.setAccessibilityHidden(false);
+        window.orderFrontRegardless();
+        content.displayIfNeeded();
+        window.displayIfNeeded();
+        CATransaction::flush();
+        window.setIgnoresMouseEvents(false);
+        Ok(())
+    })
+}
+
 trait OverlayWindowOps {
-    fn hide_overlay(&self) -> Result<(), String>;
-    fn show_overlay(&self) -> Result<(), String>;
+    fn park_overlay(&self) -> Result<(), String>;
+    fn warm_overlay(&self) -> Result<(), String>;
+    fn present_overlay(&self, reduced_motion: bool) -> Result<(), String>;
     fn size_overlay(&self, width: u32, height: u32) -> Result<(), String>;
     fn position_overlay(&self, x: i32, y: i32) -> Result<(), String>;
 }
 
 impl OverlayWindowOps for WebviewWindow {
-    fn hide_overlay(&self) -> Result<(), String> {
+    fn park_overlay(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            return park_native_overlay(self);
+        }
+        #[cfg(not(target_os = "macos"))]
         self.hide().map_err(|error| error.to_string())
     }
 
-    fn show_overlay(&self) -> Result<(), String> {
+    fn present_overlay(&self, reduced_motion: bool) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            return present_native_overlay(self, reduced_motion);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = reduced_motion;
+            self.show().map_err(|error| error.to_string())
+        }
+    }
+
+    fn warm_overlay(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            return warm_native_overlay(self);
+        }
+        #[cfg(not(target_os = "macos"))]
         self.show().map_err(|error| error.to_string())
     }
 
@@ -1121,12 +1647,31 @@ impl OverlayWindowOps for WebviewWindow {
     }
 }
 
+pub(crate) fn initialize_warm_overlay(window: &WebviewWindow) -> Result<(), String> {
+    window
+        .park_overlay()
+        .map_err(|error| format!("Could not conceal the warm Quick Access webview: {error}"))?;
+    window
+        .show()
+        .map_err(|error| format!("Could not activate the warm Quick Access webview: {error}"))?;
+    window
+        .park_overlay()
+        .map_err(|error| format!("Could not initialize the warm Quick Access panel: {error}"))
+}
+
 #[derive(Debug, PartialEq)]
 enum RevealTransition {
     Stale,
     Hidden,
     Shown(Option<crate::latency::OverlayLatencySample>),
-    Failed(OverlayFailureRecord),
+}
+
+#[derive(Debug, PartialEq)]
+enum WarmHiddenTransition {
+    Stale,
+    AlreadyWarm,
+    Warmed,
+    Failed(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -1207,6 +1752,7 @@ pub(crate) enum OverlayDragOutcome {
 struct OverlayDragEnded {
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
     outcome: OverlayDragOutcome,
 }
 
@@ -1215,6 +1761,7 @@ struct OverlayDragEnded {
 struct OverlayDismissed<'a> {
     path: &'a str,
     presentation_id: u64,
+    surface_generation: u64,
     reason: DismissReason,
 }
 
@@ -1223,6 +1770,7 @@ struct OverlayDismissed<'a> {
 struct OverlayRestored<'a> {
     path: &'a str,
     presentation_id: u64,
+    surface_generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1263,13 +1811,13 @@ fn capture_matches(current: Option<&OverlayCapture>, path: &str, presentation_id
 fn prepare_transition(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
-    capture: OverlayCapture,
+    mut capture: OverlayCapture,
     latency_start: Option<crate::latency::OverlayLatencyStart>,
     width: u32,
     height: u32,
     x: i32,
     y: i32,
-) -> Result<(), OverlayFailureRecord> {
+) -> Result<OverlayCapture, OverlayFailureRecord> {
     let path = capture.path.clone();
     let presentation_id = capture.presentation_id;
 
@@ -1277,7 +1825,8 @@ fn prepare_transition(
     // or failed callback cannot interleave and mutate visibility for an older
     // capture while a newer capture is being prepared.
     runtime.reset();
-    if let Err(error) = window.hide_overlay() {
+    capture.surface_generation = runtime.begin_hard_hidden_surface();
+    if let Err(error) = window.park_overlay() {
         return Err(runtime.record_failure(
             &path,
             presentation_id,
@@ -1302,12 +1851,103 @@ fn prepare_transition(
         ));
     }
 
-    runtime.replace(capture);
+    runtime.replace(capture.clone());
     runtime.pending_latency = latency_start.map(|start| PendingOverlayLatency {
         presentation_id,
         start,
     });
-    Ok(())
+    Ok(capture)
+}
+
+fn warm_hidden_transition(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    surface_generation: u64,
+) -> WarmHiddenTransition {
+    if runtime.surface_generation != surface_generation {
+        return WarmHiddenTransition::Stale;
+    }
+    match runtime.surface_phase {
+        OverlaySurfacePhase::WarmHidden => return WarmHiddenTransition::AlreadyWarm,
+        OverlaySurfacePhase::Visible => return WarmHiddenTransition::Stale,
+        OverlaySurfacePhase::HardHidden => {}
+    }
+    match window.warm_overlay() {
+        Ok(()) => {
+            runtime.surface_phase = OverlaySurfacePhase::WarmHidden;
+            WarmHiddenTransition::Warmed
+        }
+        Err(error) => WarmHiddenTransition::Failed(error),
+    }
+}
+
+fn renderer_ready_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    now: impl FnOnce() -> Instant,
+) -> Result<OverlayRendererReadySnapshot, String> {
+    // Native pixels disappear before any renderer state is accepted. Main
+    // thread serialization means a capture prepare or timeout cannot interleave
+    // between this park and the atomic generation snapshot below.
+    window
+        .park_overlay()
+        .map_err(|error| format!("Could not park Quick Access for renderer startup: {error}"))?;
+    if runtime.surface_phase == OverlaySurfacePhase::HardHidden
+        && runtime.renderer_bootstrap_generation == Some(runtime.surface_generation)
+    {
+        return Ok(OverlayRendererReadySnapshot {
+            surface: runtime.surface_state(),
+            capture: runtime.current.clone(),
+        });
+    }
+    let parked_at = now();
+
+    // A WebView reload abandons every old JS-owned paint/hover/drag callback.
+    // Invalidate its watchdog, preserve the native visible-time balance behind
+    // one hidden pause, and release JS interaction pauses that can no longer end.
+    runtime.invalidate_pending_paint();
+    if let Some(capture) = runtime.current.clone() {
+        let _ = runtime.set_auto_dismiss_pause_reason(
+            &capture.path,
+            capture.presentation_id,
+            OverlayAutoDismissPauseReason::TemporarilyHidden,
+            true,
+            parked_at,
+        );
+        let _ = runtime.set_auto_dismiss_pause_reason(
+            &capture.path,
+            capture.presentation_id,
+            OverlayAutoDismissPauseReason::Renderer,
+            false,
+            parked_at,
+        );
+        let _ = runtime.set_auto_dismiss_pause_reason(
+            &capture.path,
+            capture.presentation_id,
+            OverlayAutoDismissPauseReason::ActiveDrag,
+            false,
+            parked_at,
+        );
+    }
+    runtime.active_drag = None;
+    let surface_generation = runtime.begin_hard_hidden_surface();
+    runtime.renderer_bootstrap_generation = Some(surface_generation);
+
+    Ok(OverlayRendererReadySnapshot {
+        surface: runtime.surface_state(),
+        capture: runtime.current.clone(),
+    })
+}
+
+fn renderer_page_load_started_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    now: impl FnOnce() -> Instant,
+) -> Result<OverlaySurfaceState, String> {
+    // A committed navigation is a new renderer even when the previous renderer
+    // was already waiting on a hard-hidden bootstrap surface.
+    runtime.renderer_bootstrap_generation = None;
+    renderer_ready_transition_with_clock(runtime, window, now).map(|snapshot| snapshot.surface)
 }
 
 #[cfg(test)]
@@ -1322,12 +1962,30 @@ fn reveal_transition(
 
 fn reveal_transition_with_clock(
     runtime: &mut OverlayRuntime,
-    window: &impl OverlayWindowOps,
+    _window: &impl OverlayWindowOps,
     path: &str,
     presentation_id: u64,
-    now: impl FnOnce() -> Instant,
+    _now: impl FnOnce() -> Instant,
 ) -> RevealTransition {
-    if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
+    reveal_transition_exact_with_clock(
+        runtime,
+        _window,
+        path,
+        presentation_id,
+        runtime.surface_generation,
+        _now,
+    )
+}
+
+fn reveal_transition_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    _window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    _now: impl FnOnce() -> Instant,
+) -> RevealTransition {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
         return RevealTransition::Stale;
     }
     if runtime.temporarily_hidden
@@ -1338,15 +1996,150 @@ fn reveal_transition_with_clock(
     {
         return RevealTransition::Hidden;
     }
+    if runtime.surface_phase != OverlaySurfacePhase::WarmHidden {
+        return RevealTransition::Hidden;
+    }
 
-    match window.show_overlay() {
+    RevealTransition::Shown(None)
+}
+
+fn reveal_transition_and_begin_paint_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    now: impl FnOnce() -> Instant,
+) -> (RevealTransition, Option<OverlayPendingPaintSchedule>) {
+    reveal_transition_and_begin_paint_exact_with_clock(
+        runtime,
+        window,
+        path,
+        presentation_id,
+        runtime.surface_generation,
+        now,
+    )
+}
+
+fn reveal_transition_and_begin_paint_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    now: impl FnOnce() -> Instant,
+) -> (RevealTransition, Option<OverlayPendingPaintSchedule>) {
+    let transition = reveal_transition_exact_with_clock(
+        runtime,
+        window,
+        path,
+        presentation_id,
+        surface_generation,
+        Instant::now,
+    );
+    let schedule = matches!(transition, RevealTransition::Shown(_))
+        .then(|| runtime.begin_pending_paint(path, presentation_id, surface_generation, now()))
+        .flatten();
+    (transition, schedule)
+}
+
+#[cfg(test)]
+fn acknowledge_painted_presentation(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    now: Instant,
+) -> OverlayPaintAcknowledgement {
+    runtime.acknowledge_painted(path, presentation_id, now)
+}
+
+fn present_painted_transition_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    _reduced_motion: bool,
+    now: impl FnOnce() -> Instant,
+) -> Result<
+    (
+        OverlayPaintAcknowledgement,
+        Option<crate::latency::OverlayLatencySample>,
+    ),
+    OverlayFailureRecord,
+> {
+    present_painted_transition_exact_with_clock(
+        runtime,
+        window,
+        path,
+        presentation_id,
+        runtime.surface_generation,
+        _reduced_motion,
+        now,
+    )
+}
+
+fn present_painted_transition_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    reduced_motion: bool,
+    now: impl FnOnce() -> Instant,
+) -> Result<
+    (
+        OverlayPaintAcknowledgement,
+        Option<crate::latency::OverlayLatencySample>,
+    ),
+    OverlayFailureRecord,
+> {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return Ok((OverlayPaintAcknowledgement::Stale, None));
+    }
+    if runtime.surface_phase == OverlaySurfacePhase::Visible {
+        return Ok((OverlayPaintAcknowledgement::AlreadyArmed, None));
+    }
+    if runtime.surface_phase != OverlaySurfacePhase::WarmHidden {
+        return Ok((OverlayPaintAcknowledgement::NotShown, None));
+    }
+    let pending_is_exact = runtime.pending_paint.as_ref().is_some_and(|pending| {
+        pending.identity.path == path
+            && pending.identity.presentation_id == presentation_id
+            && pending.surface_generation == surface_generation
+    });
+    if !pending_is_exact {
+        return Ok((OverlayPaintAcknowledgement::NotShown, None));
+    }
+    if runtime.temporarily_hidden
+        || runtime
+            .current
+            .as_ref()
+            .is_some_and(|capture| capture.temporarily_hidden)
+    {
+        return Ok((
+            runtime.acknowledge_painted_exact(path, presentation_id, surface_generation, now()),
+            None,
+        ));
+    }
+
+    match window.present_overlay(reduced_motion) {
         Ok(()) => {
-            let shown_at = now();
-            runtime.temporarily_hidden = false;
-            let sample = runtime.pending_latency.take().and_then(|pending| {
-                (pending.presentation_id == presentation_id).then(|| pending.start.finish(shown_at))
+            let presented_at = now();
+            let acknowledgement = runtime.acknowledge_painted_exact(
+                path,
+                presentation_id,
+                surface_generation,
+                presented_at,
+            );
+            runtime.presented = Some(OverlayPresentationIdentity {
+                path: path.into(),
+                presentation_id,
             });
-            RevealTransition::Shown(sample)
+            runtime.surface_phase = OverlaySurfacePhase::Visible;
+            let sample = runtime.pending_latency.take().and_then(|pending| {
+                (pending.presentation_id == presentation_id)
+                    .then(|| pending.start.finish(presented_at))
+            });
+            Ok((acknowledgement, sample))
         }
         Err(error) => {
             let failure = runtime
@@ -1357,31 +2150,12 @@ fn reveal_transition_with_clock(
                     format!("Could not show the capture overlay: {error}"),
                 )
                 .expect("the exact current capture was validated above");
-            let _ = window.hide_overlay();
-            RevealTransition::Failed(failure)
+            if window.park_overlay().is_ok() {
+                runtime.begin_hard_hidden_surface();
+            }
+            Err(failure)
         }
     }
-}
-
-fn reveal_transition_and_arm_with_clock(
-    runtime: &mut OverlayRuntime,
-    window: &impl OverlayWindowOps,
-    path: &str,
-    presentation_id: u64,
-    now: impl FnOnce() -> Instant,
-) -> (RevealTransition, Option<OverlayAutoDismissSchedule>) {
-    let mut shown_at = None;
-    let transition = reveal_transition_with_clock(runtime, window, path, presentation_id, || {
-        let instant = now();
-        shown_at = Some(instant);
-        instant
-    });
-    let schedule = matches!(transition, RevealTransition::Shown(_))
-        .then(|| {
-            shown_at.and_then(|instant| runtime.arm_auto_dismiss(path, presentation_id, instant))
-        })
-        .flatten();
-    (transition, schedule)
 }
 
 fn temporary_hide_transition(
@@ -1406,10 +2180,11 @@ fn temporary_hide_transition_with_clock(
     if runtime.temporarily_hidden {
         return TemporaryHideTransition::AlreadyHidden;
     }
-    match window.hide_overlay() {
+    match window.park_overlay() {
         Ok(()) => {
             let hidden_at = now();
             runtime.temporarily_hidden = true;
+            runtime.presented = None;
             if let Some(capture) = runtime.current.as_mut() {
                 capture.temporarily_hidden = true;
             }
@@ -1420,6 +2195,23 @@ fn temporary_hide_transition_with_clock(
                 true,
                 hidden_at,
             );
+            let _ = runtime.set_auto_dismiss_pause_reason(
+                path,
+                presentation_id,
+                OverlayAutoDismissPauseReason::Renderer,
+                false,
+                hidden_at,
+            );
+            let _ = runtime.set_auto_dismiss_pause_reason(
+                path,
+                presentation_id,
+                OverlayAutoDismissPauseReason::ActiveDrag,
+                false,
+                hidden_at,
+            );
+            runtime.active_drag = None;
+            runtime.invalidate_pending_paint();
+            runtime.begin_hard_hidden_surface();
             TemporaryHideTransition::Hidden
         }
         Err(error) => TemporaryHideTransition::Failed(runtime.record_failure(
@@ -1429,6 +2221,20 @@ fn temporary_hide_transition_with_clock(
             format!("Could not temporarily hide Quick Access: {error}"),
         )),
     }
+}
+
+fn temporary_hide_transition_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    now: impl FnOnce() -> Instant,
+) -> TemporaryHideTransition {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return TemporaryHideTransition::Stale;
+    }
+    temporary_hide_transition_with_clock(runtime, window, path, presentation_id, now)
 }
 
 fn restore_hidden_transition(
@@ -1442,64 +2248,67 @@ fn restore_hidden_transition(
         runtime.temporarily_hidden = false;
         return RestoreHiddenTransition::NotHidden;
     };
-    match window.show_overlay() {
-        Ok(()) => {
-            runtime.temporarily_hidden = false;
-            if let Some(current) = runtime.current.as_mut() {
-                current.temporarily_hidden = false;
-            }
-            RestoreHiddenTransition::Restored(
-                runtime
-                    .current
-                    .clone()
-                    .expect("hidden capture remains current through native show"),
-            )
-        }
-        Err(error) => RestoreHiddenTransition::Failed(runtime.record_failure(
+    if let Err(error) = window.park_overlay() {
+        return RestoreHiddenTransition::Failed(runtime.record_failure(
             &capture.path,
             capture.presentation_id,
             "overlay_temporary_restore_failed",
-            format!("Could not restore Quick Access: {error}"),
-        )),
+            format!("Could not prepare Quick Access for restore: {error}"),
+        ));
     }
+    runtime.temporarily_hidden = false;
+    if let Some(current) = runtime.current.as_mut() {
+        current.temporarily_hidden = false;
+    }
+    runtime.invalidate_pending_paint();
+    runtime.begin_hard_hidden_surface();
+    RestoreHiddenTransition::Restored(
+        runtime
+            .current
+            .clone()
+            .expect("hidden capture remains current through native restore"),
+    )
 }
 
-fn restore_hidden_transition_and_resume_with_clock(
+fn restore_hidden_transition_without_resume(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
-    now: impl FnOnce() -> Instant,
-) -> (RestoreHiddenTransition, Option<OverlayAutoDismissSchedule>) {
-    let transition = restore_hidden_transition(runtime, window);
-    let schedule = match &transition {
-        RestoreHiddenTransition::Restored(capture) => {
-            let shown_at = now();
-            match runtime.set_auto_dismiss_pause_reason(
-                &capture.path,
-                capture.presentation_id,
-                OverlayAutoDismissPauseReason::TemporarilyHidden,
-                false,
-                shown_at,
-            ) {
-                OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
-                _ => None,
-            }
-        }
-        _ => None,
-    };
-    (transition, schedule)
+) -> (RestoreHiddenTransition, OverlayResumeSchedules) {
+    (
+        restore_hidden_transition(runtime, window),
+        OverlayResumeSchedules::default(),
+    )
 }
 
-fn restore_exact_hidden_transition_and_resume_with_clock(
+fn restore_exact_hidden_transition_without_resume(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
     path: &str,
     presentation_id: u64,
-    now: impl FnOnce() -> Instant,
-) -> (RestoreHiddenTransition, Option<OverlayAutoDismissSchedule>) {
+) -> (RestoreHiddenTransition, OverlayResumeSchedules) {
     if !capture_matches(runtime.current.as_ref(), path, presentation_id) {
-        return (RestoreHiddenTransition::Stale, None);
+        return (
+            RestoreHiddenTransition::Stale,
+            OverlayResumeSchedules::default(),
+        );
     }
-    restore_hidden_transition_and_resume_with_clock(runtime, window, now)
+    restore_hidden_transition_without_resume(runtime, window)
+}
+
+fn restore_exact_hidden_surface_transition_without_resume(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+) -> (RestoreHiddenTransition, OverlayResumeSchedules) {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return (
+            RestoreHiddenTransition::Stale,
+            OverlayResumeSchedules::default(),
+        );
+    }
+    restore_hidden_transition_without_resume(runtime, window)
 }
 
 #[cfg(test)]
@@ -1525,9 +2334,26 @@ fn fail_transition(
 ) -> Option<OverlayFailureRecord> {
     let failure = runtime.fail_if_current(path, presentation_id, code, message);
     if failure.is_some() {
-        let _ = window.hide_overlay();
+        if window.park_overlay().is_ok() {
+            runtime.begin_hard_hidden_surface();
+        }
     }
     failure
+}
+
+fn fail_transition_exact(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    code: &'static str,
+    message: impl Into<String>,
+) -> Option<OverlayFailureRecord> {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return None;
+    }
+    fail_transition(runtime, window, path, presentation_id, code, message)
 }
 
 #[cfg(test)]
@@ -1554,9 +2380,10 @@ fn dismiss_transition_for_reason(
         return DismissTransition::Hidden;
     }
 
-    match window.hide_overlay() {
+    match window.park_overlay() {
         Ok(()) => {
             runtime.reset();
+            runtime.begin_hard_hidden_surface();
             DismissTransition::Dismissed
         }
         Err(error) => DismissTransition::Failed(runtime.record_failure(
@@ -1568,6 +2395,20 @@ fn dismiss_transition_for_reason(
     }
 }
 
+fn dismiss_transition_for_reason_exact(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    reason: DismissReason,
+) -> DismissTransition {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return DismissTransition::Stale;
+    }
+    dismiss_transition_for_reason(runtime, window, path, presentation_id, reason)
+}
+
 fn dismiss_transition_for_auto_dismiss(
     runtime: &mut OverlayRuntime,
     window: &impl OverlayWindowOps,
@@ -1575,6 +2416,24 @@ fn dismiss_transition_for_auto_dismiss(
     now: Instant,
 ) -> DismissTransition {
     if !runtime.claim_auto_dismiss_expiry(schedule, now) {
+        return DismissTransition::Stale;
+    }
+    dismiss_transition_for_reason(
+        runtime,
+        window,
+        &schedule.identity.path,
+        schedule.identity.presentation_id,
+        DismissReason::Timeout,
+    )
+}
+
+fn dismiss_transition_for_pending_paint(
+    runtime: &mut OverlayRuntime,
+    window: &impl OverlayWindowOps,
+    schedule: &OverlayPendingPaintSchedule,
+    now: Instant,
+) -> DismissTransition {
+    if !runtime.claim_pending_paint_expiry(schedule, now) {
         return DismissTransition::Stale;
     }
     dismiss_transition_for_reason(
@@ -1644,17 +2503,24 @@ pub(crate) fn hide_for_annotation(
     path: &str,
     presentation_id: u64,
 ) -> Result<(), String> {
-    let window = app
-        .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let runtime = app.state::<Mutex<OverlayRuntime>>();
-    let runtime = runtime
-        .lock()
-        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-    current_capture_path(&runtime, path, presentation_id)?;
-    window
-        .hide()
-        .map_err(|error| format!("Could not hide the capture overlay for editing: {error}"))
+    let path = path.to_string();
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        hide_for_annotation_on_main(&main_app, &path, presentation_id)
+    })?
+}
+
+fn hide_for_annotation_on_main(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<(), String> {
+    overlay_hide_temporarily_on_main(app, path.to_string(), presentation_id, None).and_then(
+        |hidden| {
+            hidden
+                .then_some(())
+                .ok_or_else(|| "That capture is no longer active in Quick Access.".to_string())
+        },
+    )
 }
 
 pub(crate) fn restore_after_annotation(
@@ -1662,17 +2528,24 @@ pub(crate) fn restore_after_annotation(
     path: &str,
     presentation_id: u64,
 ) -> Result<(), String> {
-    let window = app
-        .get_webview_window(OVERLAY_LABEL)
-        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let runtime = app.state::<Mutex<OverlayRuntime>>();
-    let runtime = runtime
-        .lock()
-        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-    current_capture_path(&runtime, path, presentation_id)?;
-    window
-        .show()
-        .map_err(|error| format!("Could not restore the capture overlay: {error}"))
+    let path = path.to_string();
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        restore_after_annotation_on_main(&main_app, &path, presentation_id)
+    })?
+}
+
+fn restore_after_annotation_on_main(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<(), String> {
+    restore_temporarily_hidden_overlay_if_current_on_main(app, path, presentation_id).and_then(
+        |restored| {
+            restored
+                .then_some(())
+                .ok_or_else(|| "That capture is no longer hidden in Quick Access.".to_string())
+        },
+    )
 }
 
 fn annotation_refresh_payload(
@@ -1703,6 +2576,19 @@ pub(crate) fn refresh_after_annotation(
     presentation_id: u64,
     clipboard: Option<&ClipboardStatus>,
 ) -> Result<OverlayStatus, String> {
+    let path = path.to_string();
+    let clipboard = clipboard.cloned();
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        refresh_after_annotation_on_main(&main_app, &path, presentation_id, clipboard.as_ref())
+    })?
+}
+
+fn refresh_after_annotation_on_main(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+    clipboard: Option<&ClipboardStatus>,
+) -> Result<OverlayStatus, String> {
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return Err("The capture overlay window is unavailable after annotation.".into());
     };
@@ -1711,15 +2597,17 @@ pub(crate) fn refresh_after_annotation(
     let mut runtime = state
         .lock()
         .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-    let (previous, payload) =
+    let (previous, mut payload) =
         annotation_refresh_payload(&mut runtime, path, presentation_id, clipboard)?;
     window
-        .hide()
+        .park_overlay()
         .map_err(|error| format!("Could not reset the annotated capture preview: {error}"))?;
+    payload.surface_generation = runtime.begin_hard_hidden_surface();
     runtime.replace(payload.clone());
     if let Err(error) = app.emit_to(OVERLAY_LABEL, "overlay-capture", payload) {
+        let mut previous = previous;
+        previous.surface_generation = runtime.begin_hard_hidden_surface();
         runtime.replace(previous);
-        let _ = window.show();
         return Err(format!(
             "Could not refresh the annotated capture preview: {error}"
         ));
@@ -1774,6 +2662,28 @@ fn begin_drag_transition_with_clock(
     Ok(identity)
 }
 
+fn begin_drag_transition_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    initial_gesture: DragGestureState,
+    current_gesture: DragGestureState,
+    now: Instant,
+) -> Result<OverlayDragIdentity, String> {
+    if !runtime.is_exact_surface(path, presentation_id, surface_generation) {
+        return Err("That capture surface is no longer active in the overlay.".into());
+    }
+    begin_drag_transition_with_clock(
+        runtime,
+        path,
+        presentation_id,
+        initial_gesture,
+        current_gesture,
+        now,
+    )
+}
+
 fn finish_drag_transition_with_clock(
     runtime: &mut OverlayRuntime,
     identity: &OverlayDragIdentity,
@@ -1802,6 +2712,25 @@ fn release_renderer_auto_dismiss_pause_with_clock(
     now: Instant,
 ) -> Option<OverlayAutoDismissSchedule> {
     match runtime.set_auto_dismiss_paused(path, presentation_id, false, now) {
+        OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
+        _ => None,
+    }
+}
+
+fn release_renderer_auto_dismiss_pause_exact_with_clock(
+    runtime: &mut OverlayRuntime,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+    now: Instant,
+) -> Option<OverlayAutoDismissSchedule> {
+    match runtime.set_auto_dismiss_paused_exact(
+        path,
+        presentation_id,
+        surface_generation,
+        false,
+        now,
+    ) {
         OverlayAutoDismissUpdate::Resumed(schedule) => Some(schedule),
         _ => None,
     }
@@ -2112,7 +3041,18 @@ pub(crate) fn prepare_capture_overlay(
     clipboard: &ClipboardStatus,
     latency_start: crate::latency::OverlayLatencyStart,
 ) -> OverlayStatus {
-    let status = prepare_capture_overlay_transaction(app, mode, path, clipboard, latency_start);
+    let capture_path = path.to_path_buf();
+    let transition_clipboard = clipboard.clone();
+    let status = run_overlay_main_thread_transaction(app, move |main_app| {
+        prepare_capture_overlay_transaction(
+            &main_app,
+            mode,
+            &capture_path,
+            &transition_clipboard,
+            latency_start,
+        )
+    })
+    .unwrap_or_else(|error| overlay_failure("overlay_main_thread_failed", error));
     if matches!(status, OverlayStatus::Failed { .. }) {
         release_quick_access_capture(app, path);
     }
@@ -2152,6 +3092,14 @@ fn prepare_capture_overlay_transaction(
 /// The clipboard status is deliberately `unchanged`: selecting history only
 /// presents the original and Copy remains an explicit user action.
 pub(crate) fn prepare_history_overlay(app: &AppHandle, path: &Path) -> OverlayStatus {
+    let history_path = path.to_path_buf();
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        prepare_history_overlay_on_main(&main_app, &history_path)
+    })
+    .unwrap_or_else(|error| overlay_failure("overlay_main_thread_failed", error))
+}
+
+fn prepare_history_overlay_on_main(app: &AppHandle, path: &Path) -> OverlayStatus {
     if crate::annotation::is_active(app) {
         return overlay_failure(
             "overlay_annotation_active",
@@ -2259,7 +3207,7 @@ fn prepare_overlay(
     payload.auto_dismiss_ms = preferences.auto_dismiss.milliseconds();
     payload.quick_actions = preferences.quick_actions;
 
-    if let Err(failure) = prepare_transition(
+    payload = match prepare_transition(
         &mut runtime,
         window,
         payload.clone(),
@@ -2269,11 +3217,14 @@ fn prepare_overlay(
         x,
         y,
     ) {
-        drop(annotation_runtime);
-        drop(runtime);
-        finish_quick_access_publication(app, None);
-        return overlay_failure(failure.code, failure.message);
-    }
+        Ok(payload) => payload,
+        Err(failure) => {
+            drop(annotation_runtime);
+            drop(runtime);
+            finish_quick_access_publication(app, None);
+            return overlay_failure(failure.code, failure.message);
+        }
+    };
 
     // Keep the transition lock through delivery: a ready callback can run only
     // after the matching payload is committed, and failed delivery is cleared
@@ -2335,11 +3286,11 @@ fn spawn_overlay_auto_dismiss(app: &AppHandle, schedule: OverlayAutoDismissSched
             let state = app.state::<Mutex<OverlayRuntime>>();
             let outcome = dismiss_overlay_exact(
                 &app,
-                state.inner(),
                 path.clone(),
                 presentation_id,
                 DismissReason::Timeout,
-                Some(&schedule),
+                None,
+                Some(OverlayDismissConstraint::AutoDismiss(schedule.clone())),
             );
             if matches!(outcome, Ok(true)) {
                 break;
@@ -2360,6 +3311,42 @@ fn spawn_overlay_auto_dismiss(app: &AppHandle, schedule: OverlayAutoDismissSched
     });
 }
 
+fn spawn_overlay_paint_watchdog(app: &AppHandle, schedule: OverlayPendingPaintSchedule) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut deadline = schedule.deadline;
+        let path = schedule.identity.path.clone();
+        let presentation_id = schedule.identity.presentation_id;
+        loop {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+            let state = app.state::<Mutex<OverlayRuntime>>();
+            let outcome = dismiss_overlay_exact(
+                &app,
+                path.clone(),
+                presentation_id,
+                DismissReason::Timeout,
+                None,
+                Some(OverlayDismissConstraint::PendingPaint(schedule.clone())),
+            );
+            if matches!(outcome, Ok(true)) {
+                break;
+            }
+            let now = Instant::now();
+            let should_retry = state
+                .lock()
+                .map(|runtime| runtime.should_retry_pending_paint(&schedule, now))
+                .unwrap_or(false);
+            if !should_retry {
+                break;
+            }
+            if let Err(error) = outcome {
+                eprintln!("Could not close an unpainted Quick Access preview: {error}");
+            }
+            deadline = now + OVERLAY_AUTO_DISMISS_RETRY_DELAY;
+        }
+    });
+}
+
 #[tauri::command]
 pub(crate) fn get_overlay_capture(
     state: State<'_, Mutex<OverlayRuntime>>,
@@ -2370,6 +3357,78 @@ pub(crate) fn get_overlay_capture(
         .map_err(|_| "The capture overlay state is temporarily unavailable.".into())
 }
 
+#[tauri::command]
+pub(crate) fn get_overlay_surface_state(
+    state: State<'_, Mutex<OverlayRuntime>>,
+) -> Result<OverlaySurfaceState, String> {
+    state
+        .lock()
+        .map(|runtime| runtime.surface_state())
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".into())
+}
+
+#[tauri::command]
+pub(crate) fn overlay_renderer_ready(
+    app: AppHandle,
+    _state: State<'_, Mutex<OverlayRuntime>>,
+) -> Result<OverlayRendererReadySnapshot, String> {
+    run_overlay_main_thread_transaction(&app, |main_app| overlay_renderer_ready_on_main(&main_app))?
+}
+
+fn overlay_renderer_ready_on_main(app: &AppHandle) -> Result<OverlayRendererReadySnapshot, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let state = app.state::<Mutex<OverlayRuntime>>();
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    renderer_ready_transition_with_clock(&mut runtime, &window, Instant::now)
+}
+
+pub(crate) fn overlay_renderer_page_load_started_on_main(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let state = app.state::<Mutex<OverlayRuntime>>();
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    renderer_page_load_started_transition_with_clock(&mut runtime, &window, Instant::now)
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub(crate) fn overlay_dom_hidden_painted(
+    app: AppHandle,
+    _state: State<'_, Mutex<OverlayRuntime>>,
+    surface_generation: u64,
+) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(&app, move |main_app| {
+        overlay_dom_hidden_painted_on_main(&main_app, surface_generation)
+    })?
+}
+
+fn overlay_dom_hidden_painted_on_main(
+    app: &AppHandle,
+    surface_generation: u64,
+) -> Result<bool, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let state = app.state::<Mutex<OverlayRuntime>>();
+    let mut runtime = state
+        .lock()
+        .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+    match warm_hidden_transition(&mut runtime, &window, surface_generation) {
+        WarmHiddenTransition::Stale => Ok(false),
+        WarmHiddenTransition::AlreadyWarm | WarmHiddenTransition::Warmed => Ok(true),
+        WarmHiddenTransition::Failed(error) => Err(format!(
+            "Could not warm the hidden Quick Access surface: {error}"
+        )),
+    }
+}
+
 pub(crate) fn has_temporarily_hidden_capture<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.state::<Mutex<OverlayRuntime>>()
         .lock()
@@ -2377,10 +3436,25 @@ pub(crate) fn has_temporarily_hidden_capture<R: Runtime>(app: &AppHandle<R>) -> 
         .unwrap_or(false)
 }
 
+pub(crate) fn has_logically_presented_capture<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.state::<Mutex<OverlayRuntime>>()
+        .lock()
+        .map(|runtime| runtime.presented.is_some())
+        .unwrap_or(false)
+}
+
 fn hide_current_overlay_for_capture(
     app: &AppHandle,
-) -> Result<Option<OverlayPresentationIdentity>, String> {
-    let (transition, identity) = {
+) -> Result<Option<OverlayHiddenSurfaceIdentity>, String> {
+    run_overlay_main_thread_transaction(app, |main_app| {
+        hide_current_overlay_for_capture_on_main(&main_app)
+    })?
+}
+
+fn hide_current_overlay_for_capture_on_main(
+    app: &AppHandle,
+) -> Result<Option<OverlayHiddenSurfaceIdentity>, String> {
+    let (transition, identity, surface_generation) = {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
@@ -2401,23 +3475,30 @@ fn hide_current_overlay_for_capture(
             &capture.path,
             capture.presentation_id,
         );
-        (transition, identity)
+        (transition, identity, runtime.surface_generation)
     };
     match transition {
         TemporaryHideTransition::Stale | TemporaryHideTransition::AlreadyHidden => Ok(None),
         TemporaryHideTransition::Hidden => {
+            let hidden = OverlayHiddenSurfaceIdentity {
+                path: identity.path,
+                presentation_id: identity.presentation_id,
+                surface_generation,
+            };
             if let Err(error) = app.emit_to(
                 OVERLAY_LABEL,
                 "overlay-hidden",
                 OverlayRestored {
-                    path: &identity.path,
-                    presentation_id: identity.presentation_id,
+                    path: &hidden.path,
+                    presentation_id: hidden.presentation_id,
+                    surface_generation: hidden.surface_generation,
                 },
             ) {
-                let rollback = restore_temporarily_hidden_overlay_if_current(
+                let rollback = restore_temporarily_hidden_overlay_surface_if_current(
                     app,
-                    &identity.path,
-                    identity.presentation_id,
+                    &hidden.path,
+                    hidden.presentation_id,
+                    hidden.surface_generation,
                 )
                 .err()
                 .map(|restore_error| format!(" Restore also failed: {restore_error}"))
@@ -2426,7 +3507,7 @@ fn hide_current_overlay_for_capture(
                     "Could not pause the Quick Access timer before capture: {error}.{rollback}"
                 ));
             }
-            Ok(Some(identity))
+            Ok(Some(hidden))
         }
         TemporaryHideTransition::Failed(failure) => {
             report_overlay_failure(app, &failure);
@@ -2438,22 +3519,59 @@ fn hide_current_overlay_for_capture(
 #[tauri::command]
 pub(crate) fn overlay_hide_temporarily(
     app: AppHandle,
-    state: State<'_, Mutex<OverlayRuntime>>,
+    _state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
+) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(&app, move |main_app| {
+        overlay_hide_temporarily_on_main(&main_app, path, presentation_id, Some(surface_generation))
+    })?
+}
+
+fn overlay_hide_temporarily_on_main(
+    app: &AppHandle,
+    path: String,
+    presentation_id: u64,
+    surface_generation: Option<u64>,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let transition = {
+    let (transition, payload) = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        temporary_hide_transition(&mut runtime, &window, &path, presentation_id)
+        let transition = match surface_generation {
+            Some(surface_generation) => temporary_hide_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                &path,
+                presentation_id,
+                surface_generation,
+                Instant::now,
+            ),
+            None => temporary_hide_transition(&mut runtime, &window, &path, presentation_id),
+        };
+        let payload = runtime.current.clone();
+        (transition, payload)
     };
     match transition {
         TemporaryHideTransition::Stale => Ok(false),
         TemporaryHideTransition::AlreadyHidden | TemporaryHideTransition::Hidden => {
+            if let Some(capture) = payload {
+                app.emit_to(
+                    OVERLAY_LABEL,
+                    "overlay-hidden",
+                    OverlayRestored {
+                        path: &capture.path,
+                        presentation_id: capture.presentation_id,
+                        surface_generation: capture.surface_generation,
+                    },
+                )
+                .map_err(|error| format!("Could not publish hidden Quick Access state: {error}"))?;
+            }
             crate::refresh_tray_status(&app)?;
             Ok(true)
         }
@@ -2470,13 +3588,20 @@ pub(crate) fn overlay_set_auto_dismiss_paused(
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
     paused: bool,
 ) -> Result<bool, String> {
     let update = {
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        runtime.set_auto_dismiss_paused(&path, presentation_id, paused, Instant::now())
+        runtime.set_auto_dismiss_paused_exact(
+            &path,
+            presentation_id,
+            surface_generation,
+            paused,
+            Instant::now(),
+        )
     };
     match update {
         OverlayAutoDismissUpdate::Stale => Ok(false),
@@ -2491,25 +3616,49 @@ pub(crate) fn overlay_set_auto_dismiss_paused(
 }
 
 pub(crate) fn restore_temporarily_hidden_overlay(app: &AppHandle) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(app, |main_app| {
+        restore_temporarily_hidden_overlay_on_main(&main_app)
+    })?
+}
+
+fn restore_temporarily_hidden_overlay_on_main(app: &AppHandle) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let (transition, schedule) = {
+    let (transition, schedules) = {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, Instant::now)
+        restore_hidden_transition_without_resume(&mut runtime, &window)
     };
-    finish_restore_transition(app, transition, schedule)
+    finish_restore_transition(app, transition, schedules)
 }
 
-fn restore_temporarily_hidden_overlay_if_current(
+fn restore_temporarily_hidden_overlay_surface_if_current(
     app: &AppHandle,
     path: &str,
     presentation_id: u64,
+    surface_generation: u64,
 ) -> Result<bool, String> {
-    let (transition, schedule) = {
+    let path = path.to_string();
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        restore_temporarily_hidden_overlay_surface_if_current_on_main(
+            &main_app,
+            &path,
+            presentation_id,
+            surface_generation,
+        )
+    })?
+}
+
+fn restore_temporarily_hidden_overlay_surface_if_current_on_main(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+    surface_generation: u64,
+) -> Result<bool, String> {
+    let (transition, schedules) = {
         let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
@@ -2517,37 +3666,54 @@ fn restore_temporarily_hidden_overlay_if_current(
         let window = app
             .get_webview_window(OVERLAY_LABEL)
             .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-        restore_exact_hidden_transition_and_resume_with_clock(
+        restore_exact_hidden_surface_transition_without_resume(
             &mut runtime,
             &window,
             path,
             presentation_id,
-            Instant::now,
+            surface_generation,
         )
     };
-    finish_restore_transition(app, transition, schedule)
+    finish_restore_transition(app, transition, schedules)
+}
+
+fn restore_temporarily_hidden_overlay_if_current_on_main(
+    app: &AppHandle,
+    path: &str,
+    presentation_id: u64,
+) -> Result<bool, String> {
+    let (transition, schedules) = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        let window = app
+            .get_webview_window(OVERLAY_LABEL)
+            .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+        restore_exact_hidden_transition_without_resume(&mut runtime, &window, path, presentation_id)
+    };
+    finish_restore_transition(app, transition, schedules)
 }
 
 fn finish_restore_transition(
     app: &AppHandle,
     transition: RestoreHiddenTransition,
-    schedule: Option<OverlayAutoDismissSchedule>,
+    schedules: OverlayResumeSchedules,
 ) -> Result<bool, String> {
+    debug_assert_eq!(schedules, OverlayResumeSchedules::default());
     match transition {
         RestoreHiddenTransition::Stale | RestoreHiddenTransition::NotHidden => Ok(false),
         RestoreHiddenTransition::Restored(capture) => {
-            if let Some(schedule) = schedule {
-                spawn_overlay_auto_dismiss(app, schedule);
-            }
             app.emit_to(
                 OVERLAY_LABEL,
                 "overlay-restored",
                 OverlayRestored {
                     path: &capture.path,
                     presentation_id: capture.presentation_id,
+                    surface_generation: capture.surface_generation,
                 },
             )
-            .map_err(|error| format!("Could not resume the Quick Access timer: {error}"))?;
+            .map_err(|error| format!("Could not publish restored Quick Access state: {error}"))?;
             crate::refresh_tray_status(app)?;
             Ok(true)
         }
@@ -2667,19 +3833,21 @@ pub(crate) fn overlay_image_ready(
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let (transition, schedule) = {
+    let (transition, watchdog) = {
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        reveal_transition_and_arm_with_clock(
+        reveal_transition_and_begin_paint_exact_with_clock(
             &mut runtime,
             &window,
             &path,
             presentation_id,
+            surface_generation,
             Instant::now,
         )
     };
@@ -2688,8 +3856,8 @@ pub(crate) fn overlay_image_ready(
         RevealTransition::Stale => Ok(false),
         RevealTransition::Hidden => Ok(false),
         RevealTransition::Shown(sample) => {
-            if let Some(schedule) = schedule {
-                spawn_overlay_auto_dismiss(&app, schedule);
+            if let Some(watchdog) = watchdog {
+                spawn_overlay_paint_watchdog(&app, watchdog);
             }
             if let Some(sample) = sample {
                 if let Err(error) = crate::latency::record_for_app(&app, sample) {
@@ -2705,10 +3873,80 @@ pub(crate) fn overlay_image_ready(
             }
             Ok(true)
         }
-        RevealTransition::Failed(failure) => {
+    }
+}
+
+#[tauri::command]
+pub(crate) fn overlay_presentation_painted(
+    app: AppHandle,
+    _state: State<'_, Mutex<OverlayRuntime>>,
+    path: String,
+    presentation_id: u64,
+    surface_generation: u64,
+    reduced_motion: bool,
+) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(&app, move |main_app| {
+        overlay_presentation_painted_on_main(
+            &main_app,
+            path,
+            presentation_id,
+            surface_generation,
+            reduced_motion,
+        )
+    })?
+}
+
+fn overlay_presentation_painted_on_main(
+    app: &AppHandle,
+    path: String,
+    presentation_id: u64,
+    surface_generation: u64,
+    reduced_motion: bool,
+) -> Result<bool, String> {
+    let window = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
+    let presentation = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
+        let mut runtime = state
+            .lock()
+            .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
+        present_painted_transition_exact_with_clock(
+            &mut runtime,
+            &window,
+            &path,
+            presentation_id,
+            surface_generation,
+            reduced_motion,
+            Instant::now,
+        )
+    };
+    let (acknowledgement, sample) = match presentation {
+        Ok(presentation) => presentation,
+        Err(failure) => {
             release_quick_access_capture(&app, Path::new(&path));
             report_overlay_failure(&app, &failure);
-            Err(failure.message)
+            return Err(failure.message);
+        }
+    };
+    if let Some(sample) = sample {
+        if let Err(error) = crate::latency::record_for_app(&app, sample) {
+            if let Some(tray) = app.tray_by_id("main") {
+                let _ = tray.set_tooltip(Some(format!(
+                    "Capso — overlay shown; timing evidence unavailable: {error}"
+                )));
+            }
+        }
+        if let Err(error) = crate::refresh_tray_status(&app) {
+            eprintln!("Could not refresh Capso overlay timing status: {error}");
+        }
+    }
+    match acknowledgement {
+        OverlayPaintAcknowledgement::Stale | OverlayPaintAcknowledgement::NotShown => Ok(false),
+        OverlayPaintAcknowledgement::AlreadyArmed | OverlayPaintAcknowledgement::Paused => Ok(true),
+        OverlayPaintAcknowledgement::Armed(schedule) => {
+            spawn_overlay_auto_dismiss(&app, schedule);
+            Ok(true)
         }
     }
 }
@@ -2716,32 +3954,59 @@ pub(crate) fn overlay_image_ready(
 #[tauri::command]
 pub(crate) fn overlay_image_failed(
     app: AppHandle,
-    state: State<'_, Mutex<OverlayRuntime>>,
+    _state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
+) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(&app, move |main_app| {
+        overlay_image_failed_on_main(&main_app, path, presentation_id, surface_generation)
+    })?
+}
+
+fn overlay_image_failed_on_main(
+    app: &AppHandle,
+    path: String,
+    presentation_id: u64,
+    surface_generation: u64,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let failure = {
+    let (failure, hard_hidden_generation) = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        fail_transition(
+        let failure = fail_transition_exact(
             &mut runtime,
             &window,
             &path,
             presentation_id,
+            surface_generation,
             "overlay_decode_failed",
             "The saved capture could not be decoded for the overlay preview.",
-        )
+        );
+        (failure, runtime.surface_generation)
     };
     let Some(failure) = failure else {
         return Ok(false);
     };
 
+    let dismissed = app.emit_to(
+        OVERLAY_LABEL,
+        "capture-overlay-dismissed",
+        OverlayDismissed {
+            path: &path,
+            presentation_id,
+            surface_generation: hard_hidden_generation,
+            reason: DismissReason::Close,
+        },
+    );
     release_quick_access_capture(&app, Path::new(&path));
     report_overlay_failure(&app, &failure);
+    dismissed
+        .map_err(|error| format!("Could not publish failed Quick Access cleanup state: {error}"))?;
     Ok(true)
 }
 
@@ -2934,6 +4199,7 @@ fn begin_native_drag(
                     OverlayDragEnded {
                         path: callback_identity.path.clone(),
                         presentation_id: callback_identity.presentation_id,
+                        surface_generation: callback_identity.surface_generation,
                         outcome,
                     },
                 );
@@ -2969,9 +4235,11 @@ pub(crate) async fn overlay_start_drag(
     state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
     filename: String,
 ) -> Result<OverlayDragStarted, String> {
-    let _renderer_pause_lease = OverlayRendererPauseLease::acquire(&app, &path, presentation_id)?;
+    let _renderer_pause_lease =
+        OverlayRendererPauseLease::acquire(&app, &path, presentation_id, surface_generation)?;
     let source = {
         let runtime = state
             .lock()
@@ -3012,12 +4280,14 @@ pub(crate) async fn overlay_start_drag(
                 .lock()
                 .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())
                 .and_then(|mut runtime| {
-                    begin_drag_transition(
+                    begin_drag_transition_exact_with_clock(
                         &mut runtime,
                         &path,
                         presentation_id,
+                        surface_generation,
                         initial_gesture,
                         current_drag_gesture_state(),
+                        Instant::now(),
                     )
                 });
             let result = match identity {
@@ -3041,7 +4311,7 @@ pub(crate) async fn overlay_start_drag(
     #[cfg(not(target_os = "macos"))]
     {
         crate::dragout::cleanup_drag_artifact(&artifact);
-        let _ = (app, path, presentation_id);
+        let _ = (app, path, presentation_id, surface_generation);
         Err("Capture drag-out is only available in the macOS app.".into())
     }
 }
@@ -3049,21 +4319,49 @@ pub(crate) async fn overlay_start_drag(
 #[tauri::command]
 pub(crate) fn overlay_dismiss(
     app: AppHandle,
-    state: State<'_, Mutex<OverlayRuntime>>,
+    _state: State<'_, Mutex<OverlayRuntime>>,
     path: String,
     presentation_id: u64,
+    surface_generation: u64,
     reason: DismissReason,
 ) -> Result<bool, String> {
-    dismiss_overlay_exact(&app, state.inner(), path, presentation_id, reason, None)
+    dismiss_overlay_exact(
+        &app,
+        path,
+        presentation_id,
+        reason,
+        Some(surface_generation),
+        None,
+    )
 }
 
 fn dismiss_overlay_exact(
     app: &AppHandle,
-    state: &Mutex<OverlayRuntime>,
     path: String,
     presentation_id: u64,
     reason: DismissReason,
-    auto_dismiss: Option<&OverlayAutoDismissSchedule>,
+    requested_surface_generation: Option<u64>,
+    constraint: Option<OverlayDismissConstraint>,
+) -> Result<bool, String> {
+    run_overlay_main_thread_transaction(app, move |main_app| {
+        dismiss_overlay_exact_on_main(
+            &main_app,
+            path,
+            presentation_id,
+            reason,
+            requested_surface_generation,
+            constraint,
+        )
+    })?
+}
+
+fn dismiss_overlay_exact_on_main(
+    app: &AppHandle,
+    path: String,
+    presentation_id: u64,
+    reason: DismissReason,
+    requested_surface_generation: Option<u64>,
+    constraint: Option<OverlayDismissConstraint>,
 ) -> Result<bool, String> {
     let annotation_protected = app
         .state::<Mutex<crate::annotation::AnnotationRuntime>>()
@@ -3076,29 +4374,60 @@ fn dismiss_overlay_exact(
     let window = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| "The capture overlay window is unavailable.".to_string())?;
-    let transition = {
+    let (transition, surface_generation) = {
+        let state = app.state::<Mutex<OverlayRuntime>>();
         let mut runtime = state
             .lock()
             .map_err(|_| "The capture overlay state is temporarily unavailable.".to_string())?;
-        match auto_dismiss {
-            Some(schedule) => {
-                dismiss_transition_for_auto_dismiss(&mut runtime, &window, schedule, Instant::now())
+        let transition = match constraint {
+            Some(OverlayDismissConstraint::AutoDismiss(schedule)) => {
+                dismiss_transition_for_auto_dismiss(
+                    &mut runtime,
+                    &window,
+                    &schedule,
+                    Instant::now(),
+                )
             }
-            None => {
-                dismiss_transition_for_reason(&mut runtime, &window, &path, presentation_id, reason)
+            Some(OverlayDismissConstraint::PendingPaint(schedule)) => {
+                dismiss_transition_for_pending_paint(
+                    &mut runtime,
+                    &window,
+                    &schedule,
+                    Instant::now(),
+                )
             }
-        }
+            None => match requested_surface_generation {
+                Some(surface_generation) => dismiss_transition_for_reason_exact(
+                    &mut runtime,
+                    &window,
+                    &path,
+                    presentation_id,
+                    surface_generation,
+                    reason,
+                ),
+                None => dismiss_transition_for_reason(
+                    &mut runtime,
+                    &window,
+                    &path,
+                    presentation_id,
+                    reason,
+                ),
+            },
+        };
+        (transition, runtime.surface_generation)
     };
 
     match transition {
         DismissTransition::Stale | DismissTransition::Hidden => Ok(false),
         DismissTransition::Dismissed => {
             release_quick_access_capture(app, Path::new(&path));
-            let _ = app.emit(
+            let _ = app.emit_to(
+                OVERLAY_LABEL,
                 "capture-overlay-dismissed",
                 OverlayDismissed {
                     path: &path,
                     presentation_id,
+                    surface_generation,
                     reason,
                 },
             );
@@ -3114,25 +4443,254 @@ fn dismiss_overlay_exact(
 #[cfg(test)]
 mod tests {
     use super::{
-        annotation_refresh_payload, begin_drag_transition, begin_drag_transition_with_clock,
+        acknowledge_painted_presentation, annotation_refresh_payload, begin_drag_transition,
+        begin_drag_transition_exact_with_clock, begin_drag_transition_with_clock,
         bottom_right_position, capture_display, capture_matches, current_capture_path,
         current_capture_project_path, dismiss_transition, dismiss_transition_for_auto_dismiss,
-        dismiss_transition_for_reason, display_at_cursor, display_profile_ids, export_capture,
-        export_png_bytes, fail_transition, finish_drag_transition_with_clock,
-        load_stored_overlay_settings, prepare_transition,
-        release_renderer_auto_dismiss_pause_with_clock, restore_exact_hidden_transition,
-        restore_hidden_transition, restore_hidden_transition_and_resume_with_clock,
-        reveal_transition, reveal_transition_and_arm_with_clock, reveal_transition_with_clock,
+        dismiss_transition_for_pending_paint, dismiss_transition_for_reason,
+        dismiss_transition_for_reason_exact, dispatch_acknowledged_main_thread_transaction,
+        display_at_cursor, display_profile_ids, export_capture, export_png_bytes, fail_transition,
+        fail_transition_exact, finish_drag_transition_with_clock, load_stored_overlay_settings,
+        prepare_transition, present_painted_transition_exact_with_clock,
+        present_painted_transition_with_clock, release_renderer_auto_dismiss_pause_with_clock,
+        renderer_ready_transition_with_clock, restore_exact_hidden_transition,
+        restore_hidden_transition, restore_hidden_transition_without_resume, reveal_transition,
+        reveal_transition_and_begin_paint_exact_with_clock,
+        reveal_transition_and_begin_paint_with_clock, reveal_transition_with_clock,
         save_stored_overlay_settings, settings_for_display, temporary_hide_transition,
-        temporary_hide_transition_with_clock, update_stored_preferences,
-        validate_save_as_preferences, CaptureExportFormat, DismissReason, DismissTransition,
-        DisplayGeometry, DragGestureState, OverlayAutoDismiss, OverlayAutoDismissSchedule,
-        OverlayAutoDismissUpdate, OverlayCapture, OverlayDragEnded, OverlayDragOutcome,
-        OverlayPlacement, OverlayPreferences, OverlayQuickActions, OverlayRuntime,
-        OverlaySaveAsPreferences, OverlaySize, OverlaySource, OverlayWindowOps,
-        RestoreHiddenTransition, RevealTransition, ScreenPoint, ScreenRect, StoredOverlaySettings,
-        TemporaryHideTransition, OVERLAY_HEIGHT_LOGICAL, OVERLAY_LABEL, OVERLAY_WIDTH_LOGICAL,
+        temporary_hide_transition_exact_with_clock, temporary_hide_transition_with_clock,
+        update_stored_preferences, validate_save_as_preferences, warm_hidden_transition,
+        CaptureExportFormat, DismissReason, DismissTransition, DisplayGeometry, DragGestureState,
+        OverlayAutoDismiss, OverlayAutoDismissSchedule, OverlayAutoDismissUpdate, OverlayCapture,
+        OverlayDismissed, OverlayDragEnded, OverlayDragOutcome, OverlayPaintAcknowledgement,
+        OverlayPlacement, OverlayPreferences, OverlayQuickActions, OverlayRestored,
+        OverlayResumeSchedules, OverlayRuntime, OverlaySaveAsPreferences, OverlaySize,
+        OverlaySource, OverlayWindowOps, RestoreHiddenTransition, RevealTransition, ScreenPoint,
+        ScreenRect, StoredOverlaySettings, TemporaryHideTransition, OVERLAY_HEIGHT_LOGICAL,
+        OVERLAY_LABEL, OVERLAY_PAINT_ACK_TIMEOUT, OVERLAY_WIDTH_LOGICAL,
     };
+
+    #[test]
+    fn parked_native_panel_conceals_content_without_lowering_window_alpha() {
+        let implementation = include_str!("overlay.rs");
+        let parking = implementation
+            .split("fn park_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("fn warm_native_overlay").next())
+            .expect("native parking remains explicit");
+
+        assert!(parking.contains(".contentView()"));
+        assert!(parking.contains("content.setAlphaValue(0.0)"));
+        assert!(parking.contains("window.setAlphaValue(1.0)"));
+    }
+
+    #[test]
+    fn renderer_lifecycle_commands_require_an_exact_surface_generation() {
+        let implementation = include_str!("overlay.rs");
+        for command in [
+            "pub(crate) fn overlay_hide_temporarily(",
+            "pub(crate) fn overlay_set_auto_dismiss_paused(",
+            "pub(crate) fn overlay_image_failed(",
+            "pub(crate) async fn overlay_start_drag(",
+            "pub(crate) fn overlay_dismiss(",
+        ] {
+            let body = implementation
+                .split(command)
+                .nth(1)
+                .and_then(|tail| tail.split("#[tauri::command]").next())
+                .unwrap_or_else(|| panic!("{command} remains a registered command"));
+            assert!(
+                body.contains("surface_generation: u64"),
+                "{command} must validate the exact renderer surface"
+            );
+        }
+
+        let pause_drop = implementation
+            .split("impl Drop for OverlayRendererPauseLease")
+            .nth(1)
+            .and_then(|tail| tail.split("struct OverlayDragIdentity").next())
+            .expect("renderer pause cleanup remains explicit");
+        assert!(pause_drop.contains("release_renderer_auto_dismiss_pause_exact_with_clock"));
+        assert!(pause_drop.contains("self.surface_generation"));
+    }
+
+    #[test]
+    fn accepted_image_failure_publishes_targeted_hard_hidden_cleanup() {
+        let implementation = include_str!("overlay.rs");
+        let failure_command = implementation
+            .split("fn overlay_image_failed_on_main")
+            .nth(1)
+            .and_then(|tail| tail.split("#[tauri::command]").next())
+            .expect("image failure command remains explicit");
+
+        assert!(failure_command.contains("capture-overlay-dismissed"));
+        assert!(failure_command.contains("OverlayDismissed"));
+        assert!(failure_command.contains("surface_generation"));
+        assert!(failure_command.contains("DismissReason::Close"));
+    }
+
+    #[test]
+    fn capture_overlay_lease_restores_only_its_owned_hidden_surface() {
+        let implementation = include_str!("overlay.rs");
+        let lease = implementation
+            .split("pub(crate) struct CaptureOverlayLease")
+            .nth(1)
+            .and_then(|tail| tail.split("struct OverlayRendererPauseLease").next())
+            .expect("capture overlay lease remains explicit");
+
+        assert!(lease.contains("OverlayHiddenSurfaceIdentity"));
+        assert!(lease.contains("hidden.surface_generation"));
+        assert!(lease.contains("restore_temporarily_hidden_overlay_surface_if_current"));
+    }
+
+    #[test]
+    fn native_panel_hides_accessibility_before_parking_and_restores_it_before_input() {
+        let implementation = include_str!("overlay.rs");
+        let parking = implementation
+            .split("fn park_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("fn warm_native_overlay").next())
+            .expect("native parking remains explicit");
+        let ignore_pointer = parking
+            .find("window.setIgnoresMouseEvents(true)")
+            .expect("parking must reject input first");
+        let hide_accessibility = parking
+            .find("content.setAccessibilityHidden(true)")
+            .expect("parked content must leave the accessibility tree");
+        let hide_pixels = parking
+            .find("content.setAlphaValue(0.0)")
+            .expect("parking must conceal the pixels");
+        assert!(ignore_pointer < hide_accessibility && hide_accessibility < hide_pixels);
+
+        let presentation = implementation
+            .split("fn present_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("trait OverlayWindowOps").next())
+            .expect("native presentation remains explicit");
+        let show_pixels = presentation
+            .find("content.setAlphaValue(1.0)")
+            .expect("presentation must reveal pixels");
+        let show_accessibility = presentation
+            .find("content.setAccessibilityHidden(false)")
+            .expect("presented content must return to the accessibility tree");
+        let flush_pixels = presentation
+            .find("CATransaction::flush()")
+            .expect("presented pixels must reach the compositor before input");
+        let accept_pointer = presentation
+            .find("window.setIgnoresMouseEvents(false)")
+            .expect("presentation must accept input last");
+        assert!(
+            show_pixels < show_accessibility
+                && show_accessibility < flush_pixels
+                && flush_pixels < accept_pointer
+        );
+    }
+
+    #[test]
+    fn native_panel_flushes_each_content_visibility_change_before_returning() {
+        let implementation = include_str!("overlay.rs");
+        let parking = implementation
+            .split("fn park_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("fn warm_native_overlay").next())
+            .expect("native parking remains explicit");
+        let hide_pixels = parking
+            .find("content.setAlphaValue(0.0)")
+            .expect("parking must conceal pixels");
+        let park_flush = parking
+            .find("CATransaction::flush()")
+            .expect("parking must commit the Core Animation transaction");
+        assert!(hide_pixels < park_flush);
+
+        let presentation = implementation
+            .split("fn present_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("trait OverlayWindowOps").next())
+            .expect("native presentation remains explicit");
+        let show_pixels = presentation
+            .find("content.setAlphaValue(1.0)")
+            .expect("presentation must reveal pixels");
+        let present_flush = presentation
+            .find("CATransaction::flush()")
+            .expect("presentation must commit the Core Animation transaction");
+        assert!(show_pixels < present_flush);
+    }
+
+    #[test]
+    fn native_warm_surface_exposes_pixels_only_to_the_hidden_renderer() {
+        let implementation = include_str!("overlay.rs");
+        let warming = implementation
+            .split("fn warm_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("fn present_native_overlay").next())
+            .expect("native warming remains a distinct phase");
+        let ignore_pointer = warming
+            .find("window.setIgnoresMouseEvents(true)")
+            .expect("warm surface remains click-through");
+        let hide_accessibility = warming
+            .find("content.setAccessibilityHidden(true)")
+            .expect("warm surface remains outside accessibility");
+        let warm_pixels = warming
+            .find("content.setAlphaValue(1.0)")
+            .expect("renderer surface is composited after hidden DOM paint");
+        let flush = warming
+            .find("CATransaction::flush()")
+            .expect("warm surface is committed synchronously");
+        assert!(ignore_pointer < hide_accessibility);
+        assert!(hide_accessibility < warm_pixels);
+        assert!(warm_pixels < flush);
+        assert!(!warming.contains("content.setAccessibilityHidden(false)"));
+        assert!(!warming.contains("window.setIgnoresMouseEvents(false)"));
+    }
+
+    #[test]
+    fn warm_panel_conceals_content_before_tauri_marks_the_window_visible() {
+        let implementation = include_str!("overlay.rs");
+        let initializer = implementation
+            .split("pub(crate) fn initialize_warm_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("enum RevealTransition").next())
+            .expect("warm overlay initializer remains explicit");
+        let show = initializer
+            .find(".show()")
+            .expect("Tauri must mark the webview visible once at startup");
+        let first_park = initializer
+            .find("park_overlay()")
+            .expect("the webview must be concealed before its first show");
+        let final_park = initializer
+            .rfind("park_overlay()")
+            .expect("the visible webview must remain parked click-through");
+        assert!(first_park < show && show < final_park);
+    }
+
+    #[test]
+    fn native_entrance_commits_visible_alpha_without_a_deferred_window_animator() {
+        let implementation = include_str!("overlay.rs");
+        let presentation = implementation
+            .split("fn present_native_overlay")
+            .nth(1)
+            .and_then(|tail| tail.split("trait OverlayWindowOps").next())
+            .expect("native presentation remains explicit");
+        let visible = presentation
+            .find("window.setAlphaValue(1.0)")
+            .expect("the panel must become synchronously visible");
+        let reordered = presentation[visible..]
+            .find("window.orderFrontRegardless()")
+            .map(|offset| visible + offset)
+            .expect("visible alpha must be flushed through WindowServer");
+
+        assert!(visible < reordered);
+        assert!(presentation.contains(".contentView()"));
+        assert!(presentation.contains("content.setAlphaValue(1.0)"));
+        assert!(
+            !presentation.contains("window.setAlphaValue(0.0)"),
+            "alpha zero makes WindowServer defer the otherwise-ready panel"
+        );
+        assert!(!presentation.contains("NSAnimationContext"));
+        assert!(!presentation.contains(".animator()"));
+        assert!(!presentation.contains("setFrameOrigin"));
+    }
+
     use crate::capture::CaptureMode;
     use crate::clipboard::ClipboardStatus;
     use std::{
@@ -3151,8 +4709,8 @@ mod tests {
     }
 
     impl OverlayWindowOps for FakeWindow {
-        fn hide_overlay(&self) -> Result<(), String> {
-            self.transitions.borrow_mut().push("hide");
+        fn park_overlay(&self) -> Result<(), String> {
+            self.transitions.borrow_mut().push("park");
             if self.fail_hide.get() {
                 return Err("native hide rejected".into());
             }
@@ -3160,12 +4718,24 @@ mod tests {
             Ok(())
         }
 
-        fn show_overlay(&self) -> Result<(), String> {
-            self.transitions.borrow_mut().push("show");
+        fn present_overlay(&self, reduced_motion: bool) -> Result<(), String> {
+            self.transitions.borrow_mut().push(if reduced_motion {
+                "present_reduced"
+            } else {
+                "present"
+            });
             if self.fail_show.get() {
                 return Err("native show rejected".into());
             }
             self.visible.set(true);
+            Ok(())
+        }
+
+        fn warm_overlay(&self) -> Result<(), String> {
+            self.transitions.borrow_mut().push("warm");
+            if self.fail_show.get() {
+                return Err("native warm rejected".into());
+            }
             Ok(())
         }
 
@@ -3190,6 +4760,7 @@ mod tests {
         OverlayCapture {
             path: path.into(),
             presentation_id,
+            surface_generation: 0,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             source: OverlaySource::Capture,
             auto_dismiss_ms: Some(8_000),
@@ -3202,15 +4773,28 @@ mod tests {
         start + std::time::Duration::from_secs(seconds)
     }
 
-    fn revealed_clock(
+    fn commit_hidden_dom_for_fixture(runtime: &mut OverlayRuntime) {
+        assert_eq!(
+            runtime.surface_phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        runtime.surface_phase = super::OverlaySurfacePhase::WarmHidden;
+    }
+
+    fn shown_pending_paint(
         path: &str,
         presentation_id: u64,
         start: std::time::Instant,
-    ) -> (OverlayRuntime, FakeWindow, OverlayAutoDismissSchedule) {
+    ) -> (
+        OverlayRuntime,
+        FakeWindow,
+        super::OverlayPendingPaintSchedule,
+    ) {
         let window = FakeWindow::default();
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture_with_id(path, presentation_id));
-        let (shown, schedule) = reveal_transition_and_arm_with_clock(
+        commit_hidden_dom_for_fixture(&mut runtime);
+        let (shown, watchdog) = reveal_transition_and_begin_paint_with_clock(
             &mut runtime,
             &window,
             path,
@@ -3218,23 +4802,425 @@ mod tests {
             || start,
         );
         assert_eq!(shown, RevealTransition::Shown(None));
-        let schedule = schedule.expect("native clock");
-        assert_eq!(
-            schedule.deadline,
-            start + std::time::Duration::from_secs(10)
-        );
+        let watchdog = watchdog.expect("exact pending-paint watchdog");
+        assert_eq!(watchdog.deadline, start + OVERLAY_PAINT_ACK_TIMEOUT,);
+        assert!(runtime.auto_dismiss_clock.is_none());
+        (runtime, window, watchdog)
+    }
+
+    fn revealed_clock(
+        path: &str,
+        presentation_id: u64,
+        start: std::time::Instant,
+    ) -> (OverlayRuntime, FakeWindow, OverlayAutoDismissSchedule) {
+        let (mut runtime, window, _) = shown_pending_paint(path, presentation_id, start);
+        let OverlayPaintAcknowledgement::Armed(schedule) =
+            acknowledge_painted_presentation(&mut runtime, path, presentation_id, start)
+        else {
+            panic!("first exact paint acknowledgement arms the native clock");
+        };
+        assert_eq!(schedule.deadline, at(start, 10));
         (runtime, window, schedule)
     }
 
     #[test]
-    fn auto_dismiss_arms_on_exact_first_show_for_ten_seconds() {
+    fn image_ready_starts_only_the_paint_watchdog_while_the_window_stays_parked() {
         let path = "/tmp/capso/current.png";
         let start = std::time::Instant::now();
-        let (mut runtime, window, schedule) = revealed_clock(path, 1, start);
+        let (runtime, window, watchdog) = shown_pending_paint(path, 1, start);
+        assert!(runtime.auto_dismiss_clock.is_none());
+        assert_eq!(watchdog.deadline, start + OVERLAY_PAINT_ACK_TIMEOUT);
+        assert!(!window.visible.get());
+        assert!(window.transitions.borrow().is_empty());
+    }
+
+    #[test]
+    fn exact_paint_ack_presents_before_starting_the_visible_clock() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+
+        let (acknowledgement, sample) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || {
+                window.transitions.borrow_mut().push("clock");
+                at(start, 5)
+            })
+            .expect("exact paint presents");
+
+        assert!(sample.is_none());
+        let OverlayPaintAcknowledgement::Armed(schedule) = acknowledgement else {
+            panic!("first painted frame arms the native clock");
+        };
+        assert_eq!(schedule.deadline, at(start, 15));
+        assert!(window.visible.get());
+        assert_eq!(*window.transitions.borrow(), vec!["present", "clock"]);
+    }
+
+    #[test]
+    fn reduced_motion_presents_immediately_without_the_entrance_animation() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+
+        present_painted_transition_with_clock(&mut runtime, &window, path, 1, true, || start)
+            .expect("reduced-motion presentation");
+
+        assert_eq!(*window.transitions.borrow(), vec!["present_reduced"]);
+        assert!(window.visible.get());
+    }
+
+    #[test]
+    fn native_overlay_never_dispatches_to_main_from_inside_a_runtime_transition() {
+        let implementation = include_str!("overlay.rs");
+        let forbidden_inner_dispatch = ["fn run_acknowledged", "_overlay_window_mutation"].concat();
+        let native_mutation = implementation
+            .split("fn mutate_native_overlay_window")
+            .nth(1)
+            .and_then(|tail| tail.split("fn park_native_overlay").next())
+            .expect("native window mutation helper remains explicit");
+
+        assert!(
+            !implementation.contains(&forbidden_inner_dispatch),
+            "a runtime transition must not hold OverlayRuntime while waiting for main"
+        );
+        assert!(native_mutation.contains("MainThreadMarker::new"));
+        assert!(
+            !native_mutation.contains("run_on_main_thread"),
+            "native mutation must fail fast off-main instead of dispatching while a lock may exist"
+        );
+        assert!(implementation.contains("fn run_overlay_main_thread_transaction"));
+    }
+
+    #[test]
+    fn background_main_transaction_dispatches_before_it_can_lock_runtime() {
+        let runtime = std::sync::Arc::new(std::sync::Mutex::new(()));
+        let worker_runtime = runtime.clone();
+        let (task_sender, task_receiver) =
+            std::sync::mpsc::sync_channel::<super::OverlayMainThreadTask>(1);
+
+        let worker = std::thread::spawn(move || {
+            dispatch_acknowledged_main_thread_transaction(
+                |task| {
+                    task_sender
+                        .send(task)
+                        .map_err(|_| "main transaction receiver stopped".to_string())
+                },
+                move || {
+                    let _runtime = worker_runtime.lock().expect("runtime lock");
+                    42
+                },
+            )
+        });
+
+        let task = task_receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("background worker dispatches without owning runtime");
+        let main_runtime = runtime
+            .try_lock()
+            .expect("main can inspect runtime before executing the transaction");
+        drop(main_runtime);
+        task();
+
+        assert_eq!(
+            worker.join().expect("worker joins").expect("transaction"),
+            42
+        );
+    }
+
+    #[test]
+    fn prepare_parks_the_warm_window_before_replacing_its_presentation() {
+        let window = FakeWindow::default();
+        window.visible.set(true);
+        let mut runtime = OverlayRuntime::default();
+
+        prepare_transition(
+            &mut runtime,
+            &window,
+            capture("/tmp/capso/current.png"),
+            None,
+            304,
+            194,
+            120,
+            240,
+        )
+        .expect("warm preview parks and prepares");
+
+        assert!(!window.visible.get());
+        assert_eq!(
+            *window.transitions.borrow(),
+            vec!["park", "size", "position"]
+        );
+    }
+
+    #[test]
+    fn restoring_an_unpainted_capture_keeps_the_warm_window_parked() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 2)),
+            TemporaryHideTransition::Hidden,
+        );
+        let (restored, schedules) = restore_hidden_transition_without_resume(&mut runtime, &window);
+
+        assert!(matches!(restored, RestoreHiddenTransition::Restored(_)));
+        assert!(!window.visible.get());
+        assert_eq!(*window.transitions.borrow(), vec!["park", "park"]);
+        assert_eq!(schedules, OverlayResumeSchedules::default());
+        assert_eq!(
+            runtime.surface_phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+    }
+
+    #[test]
+    fn first_exact_paint_ack_arms_ten_seconds_and_duplicates_do_not_extend_it() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, _, _) = shown_pending_paint(path, 1, start);
+        let OverlayPaintAcknowledgement::Armed(schedule) =
+            acknowledge_painted_presentation(&mut runtime, path, 1, at(start, 5))
+        else {
+            panic!("first paint acknowledgement arms");
+        };
         assert_eq!(schedule.after, std::time::Duration::from_secs(10));
-        let (stale, stale_schedule) =
-            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 2, || start);
-        assert_eq!((stale, stale_schedule), (RevealTransition::Stale, None));
+        assert_eq!(schedule.deadline, at(start, 15));
+        assert_eq!(
+            acknowledge_painted_presentation(&mut runtime, path, 1, at(start, 9)),
+            OverlayPaintAcknowledgement::AlreadyArmed,
+        );
+        assert_eq!(
+            runtime
+                .auto_dismiss_clock
+                .as_ref()
+                .and_then(|clock| clock.deadline),
+            Some(at(start, 15)),
+        );
+    }
+
+    #[test]
+    fn stale_paint_ack_and_watchdog_cannot_mutate_a_replacement() {
+        let path = "/tmp/capso/repeated.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, old_watchdog) = shown_pending_paint(path, 1, start);
+        runtime.replace(capture_with_id(path, 2));
+        let (acknowledgement, sample) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || {
+                at(start, 5)
+            })
+            .expect("stale presentation is a harmless no-op");
+        assert_eq!(acknowledgement, OverlayPaintAcknowledgement::Stale);
+        assert!(sample.is_none());
+        assert!(!window.visible.get());
+        assert!(window.transitions.borrow().is_empty());
+        assert!(runtime.presented.is_none());
+        assert_eq!(
+            dismiss_transition_for_pending_paint(
+                &mut runtime,
+                &window,
+                &old_watchdog,
+                start + OVERLAY_PAINT_ACK_TIMEOUT,
+            ),
+            DismissTransition::Stale,
+        );
+        assert!(runtime
+            .current
+            .is_some_and(|capture| capture.presentation_id == 2));
+    }
+
+    #[test]
+    fn pauses_acquired_before_paint_transfer_to_the_native_clock() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, _, _) = shown_pending_paint(path, 1, start);
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 1)),
+            OverlayAutoDismissUpdate::Paused,
+        );
+        assert_eq!(
+            acknowledge_painted_presentation(&mut runtime, path, 1, at(start, 5)),
+            OverlayPaintAcknowledgement::Paused,
+        );
+        let OverlayAutoDismissUpdate::Resumed(schedule) =
+            runtime.set_auto_dismiss_paused(path, 1, false, at(start, 20))
+        else {
+            panic!("the last pre-paint owner resumes the transferred clock");
+        };
+        assert_eq!(schedule.after, std::time::Duration::from_secs(10));
+        assert_eq!(schedule.deadline, at(start, 30));
+    }
+
+    #[test]
+    fn active_drag_acquired_before_paint_transfers_until_exact_drag_completion() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, _, _) = shown_pending_paint(path, 1, start);
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 7,
+        };
+        let identity =
+            begin_drag_transition_with_clock(&mut runtime, path, 1, pressed, pressed, at(start, 1))
+                .expect("exact pending presentation owns the drag pause");
+        assert_eq!(
+            acknowledge_painted_presentation(&mut runtime, path, 1, at(start, 2)),
+            OverlayPaintAcknowledgement::Paused,
+        );
+        let (finished, schedule) =
+            finish_drag_transition_with_clock(&mut runtime, &identity, at(start, 20));
+        assert!(finished);
+        let schedule = schedule.expect("drag completion starts the full visible lifetime");
+        assert_eq!(schedule.after, std::time::Duration::from_secs(10));
+        assert_eq!(schedule.deadline, at(start, 30));
+    }
+
+    #[test]
+    fn renderer_pause_cannot_make_an_unpainted_window_immortal() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, watchdog) = shown_pending_paint(path, 1, start);
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 1)),
+            OverlayAutoDismissUpdate::Paused,
+        );
+        assert_eq!(
+            dismiss_transition_for_pending_paint(
+                &mut runtime,
+                &window,
+                &watchdog,
+                start + OVERLAY_PAINT_ACK_TIMEOUT,
+            ),
+            DismissTransition::Dismissed,
+        );
+        assert!(runtime.current.is_none());
+    }
+
+    #[test]
+    fn pending_paint_watchdog_is_bounded_and_temporary_hide_replaces_it_exactly() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, first_watchdog) = shown_pending_paint(path, 1, start);
+        assert_eq!(
+            dismiss_transition_for_pending_paint(
+                &mut runtime,
+                &window,
+                &first_watchdog,
+                start + OVERLAY_PAINT_ACK_TIMEOUT - std::time::Duration::from_millis(1),
+            ),
+            DismissTransition::Stale,
+        );
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 2)),
+            TemporaryHideTransition::Hidden,
+        );
+        assert_eq!(
+            dismiss_transition_for_pending_paint(
+                &mut runtime,
+                &window,
+                &first_watchdog,
+                start + OVERLAY_PAINT_ACK_TIMEOUT,
+            ),
+            DismissTransition::Stale,
+        );
+        let (_, schedules) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert_eq!(schedules, OverlayResumeSchedules::default());
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        let (_, resumed_watchdog) = reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 30),
+        );
+        let resumed_watchdog = resumed_watchdog.expect("restore creates a fresh exact watchdog");
+        assert_eq!(resumed_watchdog.after, OVERLAY_PAINT_ACK_TIMEOUT);
+        assert_eq!(
+            dismiss_transition_for_pending_paint(
+                &mut runtime,
+                &window,
+                &resumed_watchdog,
+                resumed_watchdog.deadline,
+            ),
+            DismissTransition::Dismissed,
+        );
+    }
+
+    #[test]
+    fn paint_ack_while_temporarily_hidden_is_rejected_until_exact_restore_paints() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 2)),
+            TemporaryHideTransition::Hidden,
+        );
+        assert_eq!(
+            acknowledge_painted_presentation(&mut runtime, path, 1, at(start, 3)),
+            OverlayPaintAcknowledgement::NotShown,
+        );
+        let (_, schedules) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert_eq!(schedules, OverlayResumeSchedules::default());
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 30),
+        )
+        .1
+        .is_some());
+        let (OverlayPaintAcknowledgement::Armed(schedule), _) =
+            present_painted_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                restored_generation,
+                true,
+                || at(start, 30),
+            )
+            .expect("restored paint activates")
+        else {
+            panic!("restored exact paint arms the clock");
+        };
+        assert_eq!(schedule.after, std::time::Duration::from_secs(10));
+        assert_eq!(schedule.deadline, at(start, 40));
+    }
+
+    #[test]
+    fn pending_paint_is_invalidated_by_decode_failure() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        assert!(fail_transition(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            "overlay_decode_failed",
+            "decode failed",
+        )
+        .is_some());
+        assert!(runtime.pending_paint.is_none());
+    }
+
+    #[test]
+    fn paint_ack_after_a_hidden_unarmed_restore_still_owns_the_clock_start() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let window = FakeWindow::default();
 
         let mut hidden_runtime = OverlayRuntime::default();
         hidden_runtime.replace(capture(path));
@@ -3244,44 +5230,52 @@ mod tests {
             )),
             TemporaryHideTransition::Hidden
         );
-        let (_, restored_schedule) =
-            restore_hidden_transition_and_resume_with_clock(&mut hidden_runtime, &window, || {
-                at(start, 20)
-            });
-        assert_eq!(restored_schedule, None);
-        let (shown, revealed_schedule) =
-            reveal_transition_and_arm_with_clock(&mut hidden_runtime, &window, path, 1, || {
-                at(start, 25)
-            });
-        assert_eq!(shown, RevealTransition::Shown(None));
+        let (_, restored_schedules) =
+            restore_hidden_transition_without_resume(&mut hidden_runtime, &window);
+        assert_eq!(restored_schedules, super::OverlayResumeSchedules::default());
+        let restored_generation = hidden_runtime.surface_generation;
         assert_eq!(
-            revealed_schedule
-                .expect("decoded reveal arms the clock")
-                .after,
-            std::time::Duration::from_secs(10)
+            warm_hidden_transition(&mut hidden_runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
         );
+        let (shown, watchdog) = reveal_transition_and_begin_paint_with_clock(
+            &mut hidden_runtime,
+            &window,
+            path,
+            1,
+            || at(start, 25),
+        );
+        assert_eq!(shown, RevealTransition::Shown(None));
+        assert!(watchdog.is_some());
+        let OverlayPaintAcknowledgement::Armed(schedule) =
+            acknowledge_painted_presentation(&mut hidden_runtime, path, 1, at(start, 26))
+        else {
+            panic!("restored decoded paint arms");
+        };
+        assert_eq!(schedule.deadline, at(start, 36));
     }
 
     #[test]
-    fn auto_dismiss_deadline_is_sampled_after_native_show() {
+    fn pending_paint_deadline_is_sampled_while_the_native_panel_stays_parked() {
         let path = "/tmp/capso/current.png";
         let start = std::time::Instant::now();
         let shown_at = at(start, 5);
         let window = FakeWindow::default();
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(path));
+        commit_hidden_dom_for_fixture(&mut runtime);
 
         let (shown, schedule) =
-            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 1, || {
+            reveal_transition_and_begin_paint_with_clock(&mut runtime, &window, path, 1, || {
                 window.transitions.borrow_mut().push("clock");
                 shown_at
             });
 
         assert_eq!(shown, RevealTransition::Shown(None));
-        assert_eq!(*window.transitions.borrow(), vec!["show", "clock"]);
+        assert_eq!(*window.transitions.borrow(), vec!["clock"]);
         assert_eq!(
             schedule.expect("shown presentation clock").deadline,
-            at(shown_at, 10),
+            shown_at + OVERLAY_PAINT_ACK_TIMEOUT,
         );
     }
 
@@ -3298,15 +5292,41 @@ mod tests {
             temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 3)),
             TemporaryHideTransition::Hidden
         );
-        let (_, native_schedule) =
-            restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, || {
-                at(start, 30)
-            });
-        assert_eq!(native_schedule, None);
-        let OverlayAutoDismissUpdate::Resumed(resumed) =
-            runtime.set_auto_dismiss_paused(path, 1, false, at(start, 40))
+        let (_, native_schedule) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert_eq!(native_schedule, OverlayResumeSchedules::default());
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, false, at(start, 40)),
+            OverlayAutoDismissUpdate::Unchanged,
+            "the old renderer pause is abandoned while hidden paint still owns its pause"
+        );
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 40),
+        )
+        .1
+        .is_some());
+        let (OverlayPaintAcknowledgement::Armed(resumed), _) =
+            present_painted_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                restored_generation,
+                true,
+                || at(start, 40),
+            )
+            .expect("exact restore paint resumes")
         else {
-            panic!("last pause owner resumes");
+            panic!("last hidden-paint owner resumes");
         };
         assert_eq!(resumed.after, std::time::Duration::from_secs(8));
         assert_ne!(resumed.generation, first.generation);
@@ -3314,6 +5334,55 @@ mod tests {
             dismiss_transition_for_auto_dismiss(&mut runtime, &window, &first, at(start, 10)),
             DismissTransition::Stale
         );
+    }
+
+    #[test]
+    fn restored_paint_transfers_renderer_pause_to_the_existing_visible_clock() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = revealed_clock(path, 1, start);
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 2)),
+            TemporaryHideTransition::Hidden
+        );
+        let (_, schedules) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert_eq!(schedules, OverlayResumeSchedules::default());
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 20),
+        )
+        .1
+        .is_some());
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 21)),
+            OverlayAutoDismissUpdate::Paused
+        );
+        let (acknowledgement, _) = present_painted_transition_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            true,
+            || at(start, 22),
+        )
+        .expect("restored paint activates while renderer remains paused");
+        assert_eq!(acknowledgement, OverlayPaintAcknowledgement::Paused);
+        let OverlayAutoDismissUpdate::Resumed(schedule) =
+            runtime.set_auto_dismiss_paused(path, 1, false, at(start, 30))
+        else {
+            panic!("renderer releases the last pause after restored paint");
+        };
+        assert_eq!(schedule.after, std::time::Duration::from_secs(8));
     }
 
     #[test]
@@ -3332,22 +5401,46 @@ mod tests {
             temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 3)),
             TemporaryHideTransition::Hidden
         );
-        let (_, restore_schedule) =
-            restore_hidden_transition_and_resume_with_clock(&mut runtime, &window, || {
-                at(start, 20)
-            });
-        assert_eq!(restore_schedule, None);
+        let (_, restore_schedule) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert_eq!(restore_schedule, OverlayResumeSchedules::default());
         assert_eq!(
             dismiss_transition_for_auto_dismiss(&mut runtime, &window, &first, at(start, 10)),
             DismissTransition::Stale
         );
         let (finished, resumed) =
             finish_drag_transition_with_clock(&mut runtime, &identity, at(start, 30));
-        assert!(finished);
+        assert!(!finished, "the hidden surface abandoned its old drag");
+        assert!(resumed.is_none());
+        let restored_generation = runtime.surface_generation;
         assert_eq!(
-            resumed.expect("drag was last pause").after,
-            std::time::Duration::from_secs(8)
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
         );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 30),
+        )
+        .1
+        .is_some());
+        let (OverlayPaintAcknowledgement::Armed(resumed), _) =
+            present_painted_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                restored_generation,
+                true,
+                || at(start, 30),
+            )
+            .expect("exact restored paint resumes")
+        else {
+            panic!("restored paint is the last pause owner");
+        };
+        assert_eq!(resumed.after, std::time::Duration::from_secs(8));
     }
 
     #[test]
@@ -3415,18 +5508,19 @@ mod tests {
         runtime.replace(capture_with_id(path, 1));
         let old_drag = runtime.begin_drag(path, 1).expect("old drag");
         runtime.replace(capture_with_id(path, 2));
-        let (_, replacement) =
-            reveal_transition_and_arm_with_clock(&mut runtime, &window, path, 2, || start);
+        let (_, watchdog) =
+            reveal_transition_and_begin_paint_with_clock(&mut runtime, &window, path, 2, || start);
+        assert!(watchdog.is_some());
+        let OverlayPaintAcknowledgement::Armed(replacement) =
+            acknowledge_painted_presentation(&mut runtime, path, 2, start)
+        else {
+            panic!("replacement paint arms its exact clock");
+        };
         assert_eq!(
-            dismiss_transition_for_auto_dismiss(
-                &mut runtime,
-                &window,
-                &replacement.expect("replacement clock"),
-                at(start, 10),
-            ),
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &replacement, at(start, 10),),
             DismissTransition::Dismissed
         );
-        assert!(runtime.finish_drag(&old_drag));
+        assert!(!runtime.finish_drag(&old_drag));
     }
 
     #[test]
@@ -3776,10 +5870,16 @@ mod tests {
     #[test]
     fn temporary_hide_preserves_the_exact_capture_until_explicit_restore() {
         let path = "/tmp/capso/current.png";
-        let window = FakeWindow::default();
-        window.visible.set(true);
-        let mut runtime = OverlayRuntime::default();
-        runtime.replace(capture(path));
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        let (acknowledgement, _) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+                .expect("painted preview presents");
+        assert!(matches!(
+            acknowledgement,
+            OverlayPaintAcknowledgement::Armed(_)
+        ));
+        assert!(window.visible.get());
 
         assert_eq!(
             temporary_hide_transition(&mut runtime, &window, path, 1),
@@ -3790,13 +5890,24 @@ mod tests {
         let hidden = runtime.current.as_ref().expect("capture remains current");
         assert_eq!(hidden.path, path);
         assert!(hidden.temporarily_hidden);
+        let hidden_generation = hidden.surface_generation;
+        let restored = restore_hidden_transition(&mut runtime, &window);
+        let RestoreHiddenTransition::Restored(restored_capture) = restored else {
+            panic!("exact capture begins its restored surface");
+        };
+        assert_eq!(restored_capture.path, path);
+        assert!(restored_capture.surface_generation > hidden_generation);
+        assert!(!window.visible.get());
         assert_eq!(
-            restore_hidden_transition(&mut runtime, &window),
-            RestoreHiddenTransition::Restored(capture(path))
+            *window.transitions.borrow(),
+            vec!["present", "park", "park"]
         );
-        assert!(window.visible.get());
         assert!(!runtime.temporarily_hidden);
-        assert_eq!(runtime.current, Some(capture(path)));
+        assert_eq!(
+            runtime.surface_phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert_eq!(runtime.current, Some(restored_capture));
     }
 
     #[test]
@@ -4026,6 +6137,7 @@ mod tests {
         let current = OverlayCapture {
             path: "/tmp/capso/new.png".into(),
             presentation_id: 2,
+            surface_generation: 0,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             source: OverlaySource::Capture,
             auto_dismiss_ms: Some(8_000),
@@ -4044,6 +6156,7 @@ mod tests {
         let capture = OverlayCapture {
             path: "/tmp/capso/new.png".into(),
             presentation_id: 2,
+            surface_generation: 0,
             clipboard: ClipboardStatus::Copied { bytes: 42 },
             source: OverlaySource::Capture,
             auto_dismiss_ms: Some(8_000),
@@ -4091,7 +6204,7 @@ mod tests {
     }
 
     #[test]
-    fn only_exact_fresh_capture_reveal_finishes_overlay_latency() {
+    fn only_the_exact_native_paint_presentation_finishes_overlay_latency() {
         let path = "/tmp/capso/fresh.png";
         let started_at = std::time::Instant::now();
         let visible_at = started_at + std::time::Duration::from_millis(742);
@@ -4112,22 +6225,52 @@ mod tests {
             240,
         )
         .expect("fresh capture prepares");
+        commit_hidden_dom_for_fixture(&mut runtime);
 
         assert_eq!(
             reveal_transition_with_clock(&mut runtime, &window, path, 2, || visible_at),
             RevealTransition::Stale
         );
+        let (ready, watchdog) =
+            reveal_transition_and_begin_paint_with_clock(&mut runtime, &window, path, 1, || {
+                started_at + std::time::Duration::from_millis(100)
+            });
+        assert_eq!(ready, RevealTransition::Shown(None));
+        assert!(watchdog.is_some());
+
+        let (acknowledgement, sample) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || {
+                visible_at
+            })
+            .expect("exact painted presentation");
+        assert!(matches!(
+            acknowledgement,
+            OverlayPaintAcknowledgement::Armed(_)
+        ));
         assert_eq!(
-            reveal_transition_with_clock(&mut runtime, &window, path, 1, || visible_at),
-            RevealTransition::Shown(Some(crate::latency::OverlayLatencySample::new(
+            sample,
+            Some(crate::latency::OverlayLatencySample::new(
                 CaptureMode::Region,
                 742,
-            )))
+            ))
         );
+
+        let (duplicate, duplicate_sample) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || {
+                visible_at + std::time::Duration::from_secs(1)
+            })
+            .expect("duplicate exact acknowledgement is harmless");
+        assert_eq!(duplicate, OverlayPaintAcknowledgement::AlreadyArmed);
+        assert!(duplicate_sample.is_none());
         assert_eq!(
-            reveal_transition_with_clock(&mut runtime, &window, path, 1, || visible_at),
-            RevealTransition::Shown(None),
-            "one visible presentation contributes at most one sample"
+            window
+                .transitions
+                .borrow()
+                .iter()
+                .filter(|transition| **transition == "present")
+                .count(),
+            1,
+            "one presentation contributes at most one native reveal"
         );
     }
 
@@ -4139,6 +6282,7 @@ mod tests {
         let history = OverlayCapture {
             path: history_path.into(),
             presentation_id: 1,
+            surface_generation: 0,
             clipboard: ClipboardStatus::Unchanged,
             source: OverlaySource::History,
             auto_dismiss_ms: Some(8_000),
@@ -4156,6 +6300,7 @@ mod tests {
             240,
         )
         .expect("history prepares");
+        commit_hidden_dom_for_fixture(&mut history_runtime);
         assert_eq!(
             reveal_transition_with_clock(
                 &mut history_runtime,
@@ -4278,7 +6423,7 @@ mod tests {
     }
 
     #[test]
-    fn native_drag_is_exact_single_flight_and_survives_capture_replacement() {
+    fn capture_replacement_abandons_the_old_surface_drag() {
         let old_path = "/tmp/capso/old.png";
         let new_path = "/tmp/capso/new.png";
         let mut runtime = OverlayRuntime::default();
@@ -4291,13 +6436,11 @@ mod tests {
         assert!(runtime.begin_drag(old_path, 7).is_err());
 
         runtime.replace(capture_with_id(new_path, 8));
-        assert!(runtime.begin_drag(new_path, 8).is_err());
-        assert!(runtime.finish_drag(&old_drag));
         assert!(!runtime.finish_drag(&old_drag));
 
         let new_drag = runtime
             .begin_drag(new_path, 8)
-            .expect("new capture drags after old session finishes");
+            .expect("new capture drag is not blocked by the abandoned surface");
         assert_eq!(new_drag.path, new_path);
         assert_eq!(new_drag.presentation_id, 8);
     }
@@ -4371,17 +6514,15 @@ mod tests {
         let event = OverlayDragEnded {
             path: "/tmp/capso/current.png".into(),
             presentation_id: 12,
+            surface_generation: 41,
             outcome: OverlayDragOutcome::Dropped,
         };
 
-        assert_eq!(
-            serde_json::to_value(event).expect("serialize drag completion"),
-            serde_json::json!({
-                "path": "/tmp/capso/current.png",
-                "presentationId": 12,
-                "outcome": "dropped"
-            })
-        );
+        let serialized = serde_json::to_value(event).expect("serialize drag completion");
+        assert_eq!(serialized["path"], "/tmp/capso/current.png");
+        assert_eq!(serialized["presentationId"], 12);
+        assert_eq!(serialized["outcome"], "dropped");
+        assert_eq!(serialized["surfaceGeneration"], 41);
     }
 
     #[test]
@@ -4389,6 +6530,7 @@ mod tests {
         let restored = OverlayCapture {
             path: "/tmp/capso/history.png".into(),
             presentation_id: 7,
+            surface_generation: 0,
             clipboard: ClipboardStatus::Unchanged,
             source: OverlaySource::History,
             auto_dismiss_ms: Some(8_000),
@@ -4401,6 +6543,7 @@ mod tests {
             serde_json::json!({
                 "path": "/tmp/capso/history.png",
                 "presentationId": 7,
+                "surfaceGeneration": 0,
                 "clipboard": { "status": "unchanged" },
                 "source": "history",
                 "autoDismissMs": 8000,
@@ -4460,6 +6603,7 @@ mod tests {
         let window = FakeWindow::default();
         let mut runtime = OverlayRuntime::default();
         runtime.replace(capture(old_path));
+        commit_hidden_dom_for_fixture(&mut runtime);
         assert_eq!(
             reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Shown(None)
@@ -4476,7 +6620,10 @@ mod tests {
         )
         .expect("new capture prepares");
         assert!(!window.visible.get());
-        assert_eq!(runtime.current, Some(capture(new_path)));
+        let prepared = runtime.current.as_ref().expect("new capture is current");
+        assert_eq!(prepared.path, new_path);
+        assert_eq!(prepared.presentation_id, 1);
+        assert_eq!(prepared.surface_generation, 1);
 
         // If new prepare wins first, the stale old callback is rejected and
         // cannot show the window while the new image is still decoding.
@@ -4494,6 +6641,7 @@ mod tests {
             240,
         )
         .expect("new capture prepares");
+        commit_hidden_dom_for_fixture(&mut runtime);
         assert_eq!(
             reveal_transition(&mut runtime, &window, old_path, 1),
             RevealTransition::Stale
@@ -4533,21 +6681,41 @@ mod tests {
             240,
         )
         .expect("new capture prepares");
+        commit_hidden_dom_for_fixture(&mut runtime);
         assert_eq!(
-            reveal_transition(&mut runtime, &window, new_path, 1),
+            reveal_transition_and_begin_paint_with_clock(
+                &mut runtime,
+                &window,
+                new_path,
+                1,
+                std::time::Instant::now,
+            )
+            .0,
             RevealTransition::Shown(None)
         );
+        present_painted_transition_with_clock(
+            &mut runtime,
+            &window,
+            new_path,
+            1,
+            false,
+            std::time::Instant::now,
+        )
+        .expect("new painted preview presents");
         assert!(window.visible.get());
 
         // If the new preview is already current and visible, the stale old
         // failure cannot clear it or hide its window.
-        let window = FakeWindow::default();
-        let mut runtime = OverlayRuntime::default();
-        runtime.replace(capture(new_path));
-        assert_eq!(
-            reveal_transition(&mut runtime, &window, new_path, 1),
-            RevealTransition::Shown(None)
-        );
+        let (mut runtime, window, _) = shown_pending_paint(new_path, 1, std::time::Instant::now());
+        present_painted_transition_with_clock(
+            &mut runtime,
+            &window,
+            new_path,
+            1,
+            false,
+            std::time::Instant::now,
+        )
+        .expect("new painted preview presents");
         assert!(fail_transition(
             &mut runtime,
             &window,
@@ -4562,7 +6730,7 @@ mod tests {
     }
 
     #[test]
-    fn native_show_failure_clears_and_hides_the_exact_preview() {
+    fn native_presentation_failure_clears_and_reparks_the_exact_preview() {
         let path = "/tmp/capso/current.png";
         let window = FakeWindow::default();
         window.fail_show.set(true);
@@ -4581,11 +6749,26 @@ mod tests {
             240,
         )
         .expect("fresh capture prepares");
+        commit_hidden_dom_for_fixture(&mut runtime);
 
-        let RevealTransition::Failed(failure) = reveal_transition(&mut runtime, &window, path, 1)
-        else {
-            panic!("native show failure must be reported");
-        };
+        let (ready, watchdog) = reveal_transition_and_begin_paint_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            std::time::Instant::now,
+        );
+        assert_eq!(ready, RevealTransition::Shown(None));
+        assert!(watchdog.is_some());
+        let failure = present_painted_transition_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            false,
+            std::time::Instant::now,
+        )
+        .expect_err("native presentation failure must be reported");
 
         assert_eq!(failure.code, "overlay_show_failed");
         assert!(failure.message.contains("native show rejected"));
@@ -4595,7 +6778,7 @@ mod tests {
         assert!(!window.visible.get());
         assert_eq!(
             *window.transitions.borrow(),
-            vec!["hide", "size", "position", "show", "hide"]
+            vec!["park", "size", "position", "present", "park"]
         );
     }
 
@@ -4621,7 +6804,7 @@ mod tests {
         );
         assert!(!window.visible.get());
         assert!(runtime.current.is_none());
-        assert_eq!(*window.transitions.borrow(), vec!["hide"]);
+        assert_eq!(*window.transitions.borrow(), vec!["park"]);
     }
 
     #[test]
@@ -4777,6 +6960,697 @@ mod tests {
     }
 
     #[test]
+    fn startup_surface_requires_the_exact_hidden_dom_paint_before_warming() {
+        let mut runtime = OverlayRuntime::default();
+        let window = FakeWindow::default();
+
+        assert_eq!(runtime.surface_state().surface_generation, 0);
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, 1),
+            super::WarmHiddenTransition::Stale
+        );
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, 0),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::WarmHidden
+        );
+        assert_eq!(*window.transitions.borrow(), vec!["warm"]);
+    }
+
+    #[test]
+    fn renderer_ready_atomically_reparks_and_preserves_remaining_visible_time() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        let (OverlayPaintAcknowledgement::Armed(_), _) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+                .expect("initial paint activates")
+        else {
+            panic!("initial paint arms the clock");
+        };
+        assert_eq!(
+            runtime.set_auto_dismiss_paused(path, 1, true, at(start, 2)),
+            OverlayAutoDismissUpdate::Paused
+        );
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 4,
+        };
+        begin_drag_transition_with_clock(&mut runtime, path, 1, pressed, pressed, at(start, 3))
+            .expect("drag is active when renderer reloads");
+        let visible_generation = runtime.surface_generation;
+
+        let snapshot = renderer_ready_transition_with_clock(&mut runtime, &window, || at(start, 4))
+            .expect("renderer mount is atomically parked");
+
+        assert!(runtime.surface_generation > visible_generation);
+        assert_eq!(snapshot.surface, runtime.surface_state());
+        assert_eq!(snapshot.capture, runtime.current);
+        assert_eq!(
+            snapshot.surface.phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert!(runtime.pending_paint.is_none());
+        assert!(runtime.active_drag.is_none());
+        let clock = runtime
+            .auto_dismiss_clock
+            .as_ref()
+            .expect("clock is preserved");
+        assert_eq!(clock.remaining, std::time::Duration::from_secs(8));
+        assert!(clock.deadline.is_none());
+        assert_eq!(
+            clock.pause_reasons,
+            super::OverlayAutoDismissPauseReason::TemporarilyHidden.bit()
+        );
+        assert_eq!(window.transitions.borrow().last(), Some(&"park"));
+
+        let generation = snapshot.surface.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            generation,
+            || at(start, 10),
+        )
+        .1
+        .is_some());
+        let (OverlayPaintAcknowledgement::Armed(resumed), _) =
+            present_painted_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                generation,
+                true,
+                || at(start, 11),
+            )
+            .expect("reloaded renderer exact paint reactivates")
+        else {
+            panic!("reloaded renderer paint resumes its preserved clock");
+        };
+        assert_eq!(resumed.after, std::time::Duration::from_secs(8));
+        assert_eq!(resumed.deadline, at(start, 19));
+    }
+
+    #[test]
+    fn renderer_ready_invalidates_pending_paint_and_returns_one_atomic_snapshot() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, old_watchdog) = shown_pending_paint(path, 1, start);
+
+        let snapshot = renderer_ready_transition_with_clock(&mut runtime, &window, || at(start, 1))
+            .expect("renderer reload parks pending paint");
+        assert!(runtime.pending_paint.is_none());
+        assert!(
+            !runtime.claim_pending_paint_expiry(&old_watchdog, start + OVERLAY_PAINT_ACK_TIMEOUT,)
+        );
+        assert_eq!(
+            snapshot.surface.phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert_eq!(
+            snapshot
+                .capture
+                .as_ref()
+                .map(|capture| capture.surface_generation),
+            Some(snapshot.surface.surface_generation)
+        );
+        let serialized = serde_json::to_value(&snapshot).expect("serialize atomic snapshot");
+        assert_eq!(
+            serialized["surface"]["surfaceGeneration"],
+            serialized["capture"]["surfaceGeneration"]
+        );
+        assert_eq!(serialized["surface"]["phase"], "hard_hidden");
+
+        let mut startup = OverlayRuntime::default();
+        let startup_window = FakeWindow::default();
+        let startup_snapshot =
+            renderer_ready_transition_with_clock(&mut startup, &startup_window, || start)
+                .expect("first renderer mount parks startup surface");
+        assert_eq!(startup_snapshot.surface.surface_generation, 1);
+        assert_eq!(
+            startup_snapshot.surface.phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert!(startup_snapshot.capture.is_none());
+
+        let duplicate_snapshot =
+            renderer_ready_transition_with_clock(&mut startup, &startup_window, || at(start, 1))
+                .expect("duplicate mount stays on the already parked bootstrap surface");
+        assert_eq!(duplicate_snapshot, startup_snapshot);
+        assert_eq!(startup.surface_generation, 1);
+    }
+
+    #[test]
+    fn page_load_start_parks_once_and_renderer_ready_reuses_that_hard_surface() {
+        let path = "/tmp/capso/reload.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+            .expect("surface begins visible");
+        let visible_generation = runtime.surface_generation;
+
+        let page_surface =
+            super::renderer_page_load_started_transition_with_clock(&mut runtime, &window, || {
+                at(start, 3)
+            })
+            .expect("navigation start parks before the new document paints");
+        assert!(page_surface.surface_generation > visible_generation);
+        assert_eq!(page_surface.phase, super::OverlaySurfacePhase::HardHidden);
+        let clock_after_start = runtime.auto_dismiss_clock.as_ref().map(|clock| {
+            (
+                clock.generation,
+                clock.remaining,
+                clock.deadline,
+                clock.pause_reasons,
+            )
+        });
+
+        let ready = renderer_ready_transition_with_clock(&mut runtime, &window, || at(start, 9))
+            .expect("renderer ready snapshots the page-start surface");
+        assert_eq!(ready.surface, page_surface);
+        assert_eq!(ready.capture, runtime.current);
+        assert_eq!(runtime.surface_generation, page_surface.surface_generation);
+        assert_eq!(
+            runtime.auto_dismiss_clock.as_ref().map(|clock| {
+                (
+                    clock.generation,
+                    clock.remaining,
+                    clock.deadline,
+                    clock.pause_reasons,
+                )
+            }),
+            clock_after_start
+        );
+        assert_eq!(
+            *window.transitions.borrow(),
+            vec!["present", "park", "park"]
+        );
+
+        let next_page_surface =
+            super::renderer_page_load_started_transition_with_clock(&mut runtime, &window, || {
+                at(start, 10)
+            })
+            .expect("a later navigation owns a fresh hard-hidden generation");
+        assert!(next_page_surface.surface_generation > page_surface.surface_generation);
+    }
+
+    #[test]
+    fn surface_generation_rejects_stale_ready_and_paint_for_same_path_cycles() {
+        let path = "/tmp/capso/repeated.png";
+        let start = std::time::Instant::now();
+        let mut runtime = OverlayRuntime::default();
+        let window = FakeWindow::default();
+        runtime.replace(capture_with_id(path, 9));
+        let first_generation = runtime.begin_hard_hidden_surface();
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, first_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        let (_, first_watchdog) = reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            9,
+            first_generation,
+            || start,
+        );
+        assert!(first_watchdog.is_some());
+
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 9, || at(start, 1)),
+            TemporaryHideTransition::Hidden
+        );
+        let hidden_generation = runtime.surface_state().surface_generation;
+        assert!(hidden_generation > first_generation);
+        let (restored, schedules) = restore_hidden_transition_without_resume(&mut runtime, &window);
+        assert!(matches!(restored, RestoreHiddenTransition::Restored(_)));
+        assert_eq!(schedules, OverlayResumeSchedules::default());
+        let restored_generation = runtime.surface_state().surface_generation;
+        assert!(restored_generation > hidden_generation);
+
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, hidden_generation),
+            super::WarmHiddenTransition::Stale
+        );
+        assert!(matches!(
+            present_painted_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                9,
+                first_generation,
+                true,
+                || at(start, 3),
+            )
+            .expect("stale paint is harmless")
+            .0,
+            OverlayPaintAcknowledgement::Stale
+        ));
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        let (_, restored_watchdog) = reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            9,
+            restored_generation,
+            || at(start, 4),
+        );
+        assert!(restored_watchdog.is_some());
+        let (acknowledgement, _) = present_painted_transition_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            9,
+            restored_generation,
+            true,
+            || at(start, 5),
+        )
+        .expect("exact restored paint activates");
+        assert!(matches!(
+            acknowledgement,
+            OverlayPaintAcknowledgement::Armed(_)
+        ));
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::Visible
+        );
+    }
+
+    #[test]
+    fn old_surface_commands_cannot_mutate_the_same_capture_after_restore() {
+        let path = "/tmp/capso/repeated.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        let old_generation = runtime.surface_generation;
+        present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+            .expect("first surface is visible");
+        assert_eq!(
+            temporary_hide_transition_with_clock(&mut runtime, &window, path, 1, || at(start, 2)),
+            TemporaryHideTransition::Hidden
+        );
+        let _ = restore_hidden_transition_without_resume(&mut runtime, &window);
+        let restored_generation = runtime.surface_generation;
+        assert!(restored_generation > old_generation);
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        assert!(reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 3),
+        )
+        .1
+        .is_some());
+        present_painted_transition_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            true,
+            || at(start, 4),
+        )
+        .expect("restored surface is visible");
+        let clock_snapshot = |runtime: &OverlayRuntime| {
+            runtime.auto_dismiss_clock.as_ref().map(|clock| {
+                (
+                    clock.identity.clone(),
+                    clock.generation,
+                    clock.remaining,
+                    clock.deadline,
+                    clock.pause_reasons,
+                )
+            })
+        };
+        let clock_before = clock_snapshot(&runtime);
+
+        assert_eq!(
+            temporary_hide_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                old_generation,
+                || at(start, 5),
+            ),
+            TemporaryHideTransition::Stale
+        );
+        assert_eq!(
+            runtime.set_auto_dismiss_paused_exact(path, 1, old_generation, true, at(start, 5),),
+            OverlayAutoDismissUpdate::Stale
+        );
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 8,
+        };
+        assert!(begin_drag_transition_exact_with_clock(
+            &mut runtime,
+            path,
+            1,
+            old_generation,
+            pressed,
+            pressed,
+            at(start, 5),
+        )
+        .is_err());
+        assert!(fail_transition_exact(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            old_generation,
+            "overlay_decode_failed",
+            "stale decode",
+        )
+        .is_none());
+        assert_eq!(
+            dismiss_transition_for_reason_exact(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                old_generation,
+                DismissReason::Close,
+            ),
+            DismissTransition::Stale
+        );
+
+        assert_eq!(runtime.surface_generation, restored_generation);
+        assert_eq!(runtime.surface_phase, super::OverlaySurfacePhase::Visible);
+        assert_eq!(clock_snapshot(&runtime), clock_before);
+        assert!(runtime.active_drag.is_none());
+        assert!(capture_matches(runtime.current.as_ref(), path, 1));
+    }
+
+    #[test]
+    fn temporary_hide_abandons_old_surface_interactions_and_drag_completion() {
+        let path = "/tmp/capso/drag-cycle.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        let old_generation = runtime.surface_generation;
+        present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+            .expect("first surface is visible");
+        assert_eq!(
+            runtime.set_auto_dismiss_paused_exact(path, 1, old_generation, true, at(start, 1),),
+            OverlayAutoDismissUpdate::Paused
+        );
+        let pressed = DragGestureState {
+            left_button_is_down: true,
+            left_mouse_down_counter: 17,
+        };
+        let old_drag = begin_drag_transition_exact_with_clock(
+            &mut runtime,
+            path,
+            1,
+            old_generation,
+            pressed,
+            pressed,
+            at(start, 1),
+        )
+        .expect("old surface drag starts");
+
+        assert_eq!(
+            temporary_hide_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                old_generation,
+                || at(start, 2),
+            ),
+            TemporaryHideTransition::Hidden
+        );
+        assert!(runtime.active_drag.is_none());
+        let hidden_clock = runtime
+            .auto_dismiss_clock
+            .as_ref()
+            .expect("clock is preserved");
+        assert_eq!(
+            hidden_clock.pause_reasons,
+            super::OverlayAutoDismissPauseReason::TemporarilyHidden.bit()
+        );
+
+        let _ = restore_hidden_transition_without_resume(&mut runtime, &window);
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            warm_hidden_transition(&mut runtime, &window, restored_generation),
+            super::WarmHiddenTransition::Warmed
+        );
+        let _ = reveal_transition_and_begin_paint_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            || at(start, 3),
+        );
+        present_painted_transition_exact_with_clock(
+            &mut runtime,
+            &window,
+            path,
+            1,
+            restored_generation,
+            true,
+            || at(start, 4),
+        )
+        .expect("restored surface is visible");
+        let new_drag = begin_drag_transition_exact_with_clock(
+            &mut runtime,
+            path,
+            1,
+            restored_generation,
+            pressed,
+            pressed,
+            at(start, 5),
+        )
+        .expect("restored surface drag starts");
+        assert_ne!(old_drag, new_drag);
+
+        assert_eq!(
+            finish_drag_transition_with_clock(&mut runtime, &old_drag, at(start, 6)),
+            (false, None)
+        );
+        assert_eq!(runtime.active_drag.as_ref(), Some(&new_drag));
+    }
+
+    #[test]
+    fn stale_capture_lease_cannot_restore_a_later_hide_of_the_same_capture() {
+        let path = "/tmp/capso/lease-cycle.png";
+        let start = std::time::Instant::now();
+        let mut runtime = OverlayRuntime::default();
+        let window = FakeWindow::default();
+        runtime.replace(capture_with_id(path, 1));
+        let visible_generation = runtime.begin_hard_hidden_surface();
+        assert_eq!(
+            temporary_hide_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                visible_generation,
+                || start,
+            ),
+            TemporaryHideTransition::Hidden
+        );
+        let first_hidden_generation = runtime.surface_generation;
+        assert!(matches!(
+            super::restore_exact_hidden_surface_transition_without_resume(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                first_hidden_generation,
+            )
+            .0,
+            RestoreHiddenTransition::Restored(_)
+        ));
+
+        let restored_generation = runtime.surface_generation;
+        assert_eq!(
+            temporary_hide_transition_exact_with_clock(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                restored_generation,
+                || at(start, 1),
+            ),
+            TemporaryHideTransition::Hidden
+        );
+        let second_hidden_generation = runtime.surface_generation;
+
+        assert_eq!(
+            super::restore_exact_hidden_surface_transition_without_resume(
+                &mut runtime,
+                &window,
+                path,
+                1,
+                first_hidden_generation,
+            ),
+            (
+                RestoreHiddenTransition::Stale,
+                OverlayResumeSchedules::default(),
+            )
+        );
+        assert_eq!(runtime.surface_generation, second_hidden_generation);
+        assert!(runtime.temporarily_hidden);
+        assert!(runtime
+            .current
+            .as_ref()
+            .is_some_and(|capture| capture.temporarily_hidden));
+    }
+
+    #[test]
+    fn prepare_and_dismiss_each_advance_to_a_hard_hidden_surface() {
+        let path = "/tmp/capso/current.png";
+        let mut runtime = OverlayRuntime::default();
+        let window = FakeWindow::default();
+
+        let prepared =
+            prepare_transition(&mut runtime, &window, capture(path), None, 304, 194, 10, 20)
+                .expect("prepare hard-hides first");
+        assert_eq!(prepared.surface_generation, 1);
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+
+        assert_eq!(
+            dismiss_transition(&mut runtime, &window, path, 1),
+            DismissTransition::Dismissed
+        );
+        assert_eq!(runtime.surface_state().surface_generation, 2);
+        assert_eq!(
+            runtime.surface_state().phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert!(runtime.surface_state().path.is_none());
+    }
+
+    #[test]
+    fn failed_prepare_still_invalidates_every_callback_from_the_old_surface() {
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture("/tmp/capso/old.png"));
+        runtime.surface_phase = super::OverlaySurfacePhase::Visible;
+        let window = FakeWindow::default();
+        window.fail_hide.set(true);
+
+        let failure = prepare_transition(
+            &mut runtime,
+            &window,
+            capture("/tmp/capso/new.png"),
+            None,
+            304,
+            194,
+            10,
+            20,
+        )
+        .expect_err("native hard-hide failure is reported");
+        assert_eq!(failure.code, "overlay_hide_failed");
+        assert_eq!(runtime.surface_generation, 1);
+        assert_eq!(
+            runtime.surface_phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert!(runtime.current.is_none());
+    }
+
+    #[test]
+    fn timeout_dismiss_invalidates_the_visible_surface_generation() {
+        let path = "/tmp/capso/current.png";
+        let start = std::time::Instant::now();
+        let (mut runtime, window, _) = shown_pending_paint(path, 1, start);
+        let (OverlayPaintAcknowledgement::Armed(schedule), _) =
+            present_painted_transition_with_clock(&mut runtime, &window, path, 1, false, || start)
+                .expect("exact paint activates")
+        else {
+            panic!("visible paint arms timeout");
+        };
+        let visible_generation = runtime.surface_generation;
+
+        assert_eq!(
+            dismiss_transition_for_auto_dismiss(&mut runtime, &window, &schedule, at(start, 10),),
+            DismissTransition::Dismissed
+        );
+        assert!(runtime.surface_generation > visible_generation);
+        assert_eq!(
+            runtime.surface_phase,
+            super::OverlaySurfacePhase::HardHidden
+        );
+        assert!(runtime.current.is_none());
+    }
+
+    #[test]
+    fn surface_and_targeted_lifecycle_payloads_serialize_the_exact_generation() {
+        let mut runtime = OverlayRuntime::default();
+        runtime.replace(capture_with_id("/tmp/capso/current.png", 12));
+        let surface_generation = runtime.begin_hard_hidden_surface();
+
+        assert_eq!(
+            serde_json::to_value(runtime.surface_state()).expect("serialize surface state"),
+            serde_json::json!({
+                "surfaceGeneration": surface_generation,
+                "phase": "hard_hidden",
+                "path": "/tmp/capso/current.png",
+                "presentationId": 12
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(OverlayRestored {
+                path: "/tmp/capso/current.png",
+                presentation_id: 12,
+                surface_generation,
+            })
+            .expect("serialize restored surface"),
+            serde_json::json!({
+                "path": "/tmp/capso/current.png",
+                "presentationId": 12,
+                "surfaceGeneration": surface_generation
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(OverlayDismissed {
+                path: "/tmp/capso/current.png",
+                presentation_id: 12,
+                surface_generation,
+                reason: DismissReason::Timeout,
+            })
+            .expect("serialize dismissed surface"),
+            serde_json::json!({
+                "path": "/tmp/capso/current.png",
+                "presentationId": 12,
+                "surfaceGeneration": surface_generation,
+                "reason": "timeout"
+            })
+        );
+    }
+
+    #[test]
     fn bundled_overlay_window_is_hidden_non_activating_and_capture_scoped() {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
@@ -4798,6 +7672,10 @@ mod tests {
         assert_eq!(overlay["visibleOnAllWorkspaces"], true);
         assert_eq!(overlay["decorations"], false);
         assert_eq!(overlay["resizable"], false);
+        assert_eq!(overlay["transparent"], true);
+        assert_eq!(overlay["backgroundThrottling"], "disabled");
+        assert_eq!(overlay["contentProtected"], true);
+        assert_eq!(overlay["shadow"], false);
 
         assert_eq!(config["app"]["security"]["assetProtocol"]["enable"], true);
         assert_eq!(

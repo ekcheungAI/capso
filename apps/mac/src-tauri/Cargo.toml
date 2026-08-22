@@ -60,8 +60,9 @@ tokio = { version = "1.53.1", features = ["time"] }
 objc2 = "0.6.4"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFNumber", "CFPreferences", "CFPropertyList", "CFString"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGEventSource", "CGEventTypes", "CGImage", "CGWindow"] }
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CATransaction"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibilityProtocols", "NSPasteboard", "NSResponder", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSObject", "NSString", "NSURL"] }
 objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMTime"] }
 # AVAssetImageGenerator decodes local H.264 through Apple's on-device media
 # stack and applies the source track transform before each bounded GIF frame.

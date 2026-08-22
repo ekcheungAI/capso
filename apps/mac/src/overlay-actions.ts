@@ -38,6 +38,14 @@ export class OverlayActionCoordinator {
     return this.captureGeneration;
   }
 
+  deactivateCapture(path: string) {
+    if (this.currentPath !== path) return false;
+    this.captureGeneration += 1;
+    this.currentPath = null;
+    this.active = null;
+    return true;
+  }
+
   begin(path: string, kind: OverlayActionKind): OverlayActionToken | null {
     if (this.active !== null || this.currentPath !== path) return null;
     this.actionGeneration += 1;

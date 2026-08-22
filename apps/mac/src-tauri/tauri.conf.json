@@ -109,7 +109,8 @@
         "alwaysOnTop": true,
         "visibleOnAllWorkspaces": true,
         "skipTaskbar": true,
-        "shadow": true,
+        "contentProtected": true,
+        "shadow": false,
         "acceptFirstMouse": true,
         "dragDropEnabled": false
       },

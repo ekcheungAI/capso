@@ -3438,6 +3438,7 @@ html[data-surface="area-selector"] #root {
   border: 1px solid var(--line);
   border-radius: 15px;
   background: var(--surface);
+  visibility: hidden;
   opacity: 0;
   transform: translate3d(calc(24px + var(--capture-overlay-swipe-x)), 8px, 0) scale(0.985);
   transition:
@@ -3637,6 +3638,7 @@ html[data-surface="area-selector"] #root {
 @media (prefers-reduced-motion: reduce) {
   .capture-overlay {
     animation: none;
+    transition: none;
   }
 
   .capture-overlay__action[data-busy="true"] svg {
@@ -3647,6 +3649,7 @@ html[data-surface="area-selector"] #root {
 /* The native webview is transparent so the card can leave the frame cleanly
    during a two-finger swipe dismissal. */
 .capture-overlay[data-revealed="true"] {
+  visibility: visible;
   opacity: var(--capture-overlay-swipe-opacity);
   transform: translate3d(var(--capture-overlay-swipe-x), 0, 0) scale(1);
 }

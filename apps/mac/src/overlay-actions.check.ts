@@ -52,3 +52,17 @@ test("annotation stays serialized until save or cancel refreshes the presentatio
   assert.equal(coordinator.isCurrent(annotate), false);
   assert.ok(coordinator.begin("/captures/current.png", "copy"));
 });
+
+test("a native timeout invalidates the exact renderer capture and every old action", () => {
+  const coordinator = new OverlayActionCoordinator();
+  const presentation = coordinator.activateCapture("/captures/current.png");
+  const action = coordinator.begin("/captures/current.png", "copy");
+  assert.ok(action);
+
+  assert.equal(coordinator.deactivateCapture("/captures/other.png"), false);
+  assert.equal(coordinator.generation(), presentation);
+  assert.equal(coordinator.deactivateCapture("/captures/current.png"), true);
+  assert.equal(coordinator.generation(), presentation + 1);
+  assert.equal(coordinator.isCurrent(action), false);
+  assert.equal(coordinator.begin("/captures/current.png", "copy"), null);
+});

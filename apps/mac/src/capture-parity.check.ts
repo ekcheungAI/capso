@@ -324,35 +324,115 @@ test("Quick Access reveals exactly Copy and Save over the image", async () => {
   assert.match(cargo, /tauri\s*=\s*\{[^}]*"macos-private-api"/);
 });
 
-test("Quick Access enters after native reveal and trackpad-swipes right to dismiss", async () => {
+test("Quick Access paints exact pixels after native show and trackpad-swipes right to dismiss", async () => {
   const [overlay, swipe, css] = await Promise.all([
     readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
     readFile(new URL("./overlay-swipe.ts", import.meta.url), "utf8"),
     readFile(new URL("./App.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(overlay, /await invoke<boolean>\("overlay_image_ready"/);
   assert.match(
     overlay,
-    /await image\.decode\(\)[\s\S]*?setImageReady\(true\)[\s\S]*?void reveal\(\)/,
+    /const commitPrepared = useCallback\([\s\S]*?setPreparedPresentation\(presentation\)[\s\S]*?const requestNativeShow = useCallback\([\s\S]*?invoke<boolean>\("overlay_image_ready"/,
+  );
+  assert.doesNotMatch(
+    overlay,
+    /setPreparedPresentation\(presentation\)[\s\S]{0,800}?setRevealedPresentation\(presentation\)/,
   );
   assert.match(
     overlay,
-    /if \(!revealed[\s\S]*?revealRequestedPresentation\.current = null/,
+    /await image\.decode\(\)[\s\S]*?setImageReady\(true\)[\s\S]*?commitPrepared\(\)/,
   );
   assert.match(
     overlay,
-    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?revealRequestedPresentation\.current = null[\s\S]*?setTemporarilyHidden\(false\)/,
+    /revealResult === "shown"[\s\S]*?setNativeShownPresentation\(presentation\)/,
   );
   assert.match(
     overlay,
-    /shouldRequestOverlayReveal\([\s\S]*?imageReady[\s\S]*?temporarilyHidden[\s\S]*?void reveal\(\)/,
+    /requestNativeOverlayRevealWithRetry\([\s\S]*?invoke<boolean>\("overlay_image_ready"[\s\S]*?window\.setTimeout[\s\S]*?3[\s\S]*?\)/,
   );
   assert.match(
     overlay,
-    /const isRevealed =[\s\S]*?imageReady[\s\S]*?!imageFailed[\s\S]*?revealedPresentation === capture\.presentation/,
+    /revealResult === "not_shown"[\s\S]*?revealRequestedPresentation\.current = null/,
+  );
+  assert.match(
+    overlay,
+    /revealResult === "failed"[\s\S]*?invoke<boolean>\("overlay_dismiss",\s*\{[\s\S]*?path,[\s\S]*?presentationId,[\s\S]*?reason: "close"[\s\S]*?\}\)[\s\S]*?setCapture/,
+  );
+  assert.match(
+    overlay,
+    /revealResult === "failed"[\s\S]*?let dismissed = false[\s\S]*?dismissed = await invoke<boolean>\("overlay_dismiss"[\s\S]*?if \(!dismissed\)[\s\S]*?return;[\s\S]*?actionCoordinator\.current\?\.dismiss/,
+  );
+  assert.doesNotMatch(
+    overlay,
+    /invoke<boolean>\("overlay_dismiss"[\s\S]{0,700}?\.finally\(\(\) =>[\s\S]{0,500}?setCapture/,
+  );
+  assert.match(
+    overlay,
+    /const dismiss = useCallback\([\s\S]*?\{ path, presentationId, surfaceGeneration \} = capture[\s\S]*?invoke<boolean>\("overlay_dismiss",\s*\{\s*path,\s*presentationId,\s*surfaceGeneration,\s*reason,?\s*\}\)/,
+  );
+  assert.match(
+    overlay,
+    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?setTemporarilyHidden\(false\)/,
+  );
+  assert.match(
+    overlay,
+    /listen<OverlayDismissed>[\s\S]*?"capture-overlay-dismissed"[\s\S]*?scheduleDomHiddenAck[\s\S]*?setCapture\(null\)/,
+  );
+  assert.match(
+    overlay,
+    /scheduleOverlayDomHiddenAcknowledgement\([\s\S]*?surfaceGeneration[\s\S]*?overlay_dom_hidden_painted/,
+  );
+  assert.match(
+    overlay,
+    /invoke<OverlayRendererSnapshot>\(\s*"overlay_renderer_ready"/,
+  );
+  assert.match(overlay, /reduceOverlayLifecycle\(lifecycleState\(\),/);
+  assert.match(
+    overlay,
+    /if \(lifecycle\.decision === "resync"\)[\s\S]*?resyncRenderer\(lifecycle\.state\.surfaceGeneration\)/,
+  );
+  assert.doesNotMatch(
+    overlay,
+    /Promise\.all\([\s\S]*?get_overlay_surface_state[\s\S]*?get_overlay_capture/,
+  );
+  assert.match(
+    overlay,
+    /shouldRequestOverlayReveal\([\s\S]*?imageReady[\s\S]*?temporarilyHidden[\s\S]*?commitPrepared\(\)/,
+  );
+  assert.match(
+    overlay,
+    /const isPrepared =[\s\S]*?imageReady[\s\S]*?!imageFailed[\s\S]*?preparedPresentation === capture\.presentation/,
+  );
+  assert.match(
+    overlay,
+    /const isSurfaceWarm =[\s\S]*?warmedSurfaceGeneration === capture\.surfaceGeneration/,
+  );
+  assert.match(
+    overlay,
+    /const isRevealed =[\s\S]*?isSurfaceWarm[\s\S]*?!temporarilyHidden/,
+  );
+  assert.match(
+    overlay,
+    /nativeShownPresentation !== capture\.presentation[\s\S]*?scheduleOverlayPaintAcknowledgement\([\s\S]*?flushSync\(\(\) => setRevealedPresentation\(presentation\)\)/,
+  );
+  assert.match(
+    overlay,
+    /invoke<boolean>\("overlay_presentation_painted",\s*\{\s*path,\s*presentationId,\s*surfaceGeneration,\s*reducedMotion,?\s*\}\)/,
+  );
+  assert.match(
+    overlay,
+    /const shouldRunAutoDismiss =[\s\S]*?!nativeRuntime[\s\S]*?isRevealed/,
   );
   assert.match(overlay, /data-revealed=/);
+  assert.match(overlay, /data-native-runtime=\{nativeRuntime\}/);
+  assert.match(overlay, /aria-hidden=\{!isRevealed\}/);
+  assert.match(overlay, /inert=\{!isRevealed\}/);
+  assert.match(css, /\.capture-overlay\s*\{[\s\S]*?visibility:\s*hidden;/);
+  assert.match(
+    css,
+    /\.capture-overlay\[data-revealed="true"\]\s*\{[\s\S]*?visibility:\s*visible;/,
+  );
   assert.match(
     overlay,
     /const timerPresentation = capture\?\.presentation[\s\S]*?actionCoordinator\.current\?\.generation\(\) !== timerPresentation[\s\S]*?dismissRef\.current\("timeout"\)/,
@@ -360,6 +440,55 @@ test("Quick Access enters after native reveal and trackpad-swipes right to dismi
   assert.match(overlay, /addEventListener\("wheel"/);
   assert.match(overlay, /new OverlaySwipeGesture/);
   assert.match(overlay, /invoke<boolean>\("overlay_set_auto_dismiss_paused"/);
+  assert.match(
+    overlay,
+    /invoke<boolean>\("overlay_set_auto_dismiss_paused",\s*\{\s*path,\s*presentationId,\s*surfaceGeneration,\s*paused,?\s*\}\)/,
+  );
+  assert.match(
+    overlay,
+    /invoke<OverlayDragStarted>\("overlay_start_drag",\s*\{\s*path,\s*presentationId,\s*surfaceGeneration,/,
+  );
+  assert.match(
+    overlay,
+    /listen<OverlayDragEnded>\("overlay-drag-ended"[\s\S]*?active\.surfaceGeneration !== event\.payload\.surfaceGeneration[\s\S]*?captureRef\.current\?\.surfaceGeneration !== event\.payload\.surfaceGeneration/,
+  );
+  assert.match(
+    overlay,
+    /invoke<boolean>\("overlay_image_failed",\s*\{[\s\S]*?surfaceGeneration: failed\.surfaceGeneration/,
+  );
+  assert.match(
+    overlay,
+    /handleImageFailure = useCallback[\s\S]*?invoke<boolean>\("overlay_image_failed"[\s\S]*?if \(!accepted\) return;/,
+  );
+  assert.match(
+    overlay,
+    /presentation=\$\{capture\.presentationId\}&surface=\$\{capture\.surfaceGeneration\}/,
+  );
+  assert.match(
+    overlay,
+    /key=\{`\$\{capture\.path\}:\$\{capture\.presentationId\}:\$\{capture\.surfaceGeneration\}`\}/,
+  );
+  assert.match(
+    overlay,
+    /onLoad=[\s\S]*?isExactOverlayRendererIdentity\([\s\S]*?surfaceGenerationRef\.current[\s\S]*?loadedCapture/,
+  );
+  assert.match(overlay, /const \[toolbarHovered, setToolbarHovered\] = useState\(false\)/);
+  assert.match(
+    overlay,
+    /rendererOwnsAutoDismissPause\([\s\S]*?busyAction,[\s\S]*?toolbarHovered[\s\S]*?\)/,
+  );
+  assert.match(
+    overlay,
+    /const setToolbarAutoDismissPaused = useCallback\([\s\S]*?setToolbarHovered\(paused\)[\s\S]*?setRendererAutoDismissPaused\(capture, shouldPause\)/,
+  );
+  assert.match(
+    overlay,
+    /onPointerEnter=\{\(\) => setToolbarAutoDismissPaused\(true\)\}/,
+  );
+  assert.match(
+    overlay,
+    /onPointerLeave=\{\(\) => setToolbarAutoDismissPaused\(false\)\}/,
+  );
   assert.match(
     overlay,
     /async function copyCapture\(\)[\s\S]*?await setRendererAutoDismissPaused\(capture, true\)[\s\S]*?invoke<ClipboardStatus>\("overlay_copy_capture"/,
@@ -380,8 +509,45 @@ test("Quick Access enters after native reveal and trackpad-swipes right to dismi
   assert.match(swipe, /directionInvertedFromDevice/);
   assert.match(swipe, /Math\.min\(96,\s*width \* 0\.25\)/);
   assert.match(css, /\.capture-overlay\[data-revealed="true"\]/);
+  assert.doesNotMatch(
+    css,
+    /\.capture-overlay\[data-native-runtime="true"\]\[data-swipe-phase="idle"\]\s*\{\s*transition:\s*none;/,
+  );
   assert.match(css, /\.capture-overlay\[data-swipe-phase="exiting"\]/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]{0,300}?\.capture-overlay\s*\{[\s\S]*?transition:\s*none;/,
+  );
+});
+
+test("Quick Access restore cannot strand an active decoded-image reveal lease", async () => {
+  const overlay = await readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8");
+  const restoreStart = overlay.indexOf(
+    'unlistenRestore = await listen<OverlayRestored>("overlay-restored"',
+  );
+  const restoreEnd = overlay.indexOf("unlistenDismissed =", restoreStart);
+  const restoreHandler = restoreStart >= 0 && restoreEnd > restoreStart
+    ? overlay.slice(restoreStart, restoreEnd)
+    : "";
+  const revealCurrency = overlay.match(
+    /const isCurrent = \(\) =>[\s\S]*?const revealResult =/,
+  )?.[0] ?? "";
+
+  assert.notEqual(restoreHandler, "");
+  assert.match(
+    restoreHandler,
+    /activateCapture\(current\.path\)[\s\S]*?surfaceGeneration: event\.payload\.surfaceGeneration[\s\S]*?scheduleDomHiddenAck/,
+  );
+  assert.match(
+    restoreHandler,
+    /scheduleDomHiddenAck[\s\S]*?setTemporarilyHidden\(false\)/,
+  );
+  assert.match(
+    revealCurrency,
+    /surfaceGenerationRef\.current === surfaceGeneration/,
+  );
+  assert.doesNotMatch(restoreHandler, /setNativeShownPresentation\(presentation\)/);
 });
 
 test("settings separate general, shortcuts, account, and advanced decisions", async () => {

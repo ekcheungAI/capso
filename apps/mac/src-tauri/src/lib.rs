@@ -1509,6 +1509,18 @@ fn should_reveal_main_on_reopen(has_visible_windows: bool) -> bool {
     !has_visible_windows
 }
 
+#[cfg(target_os = "macos")]
+fn has_logically_visible_windows(app: &AppHandle) -> bool {
+    let overlay_presented = overlay::has_logically_presented_capture(app);
+    app.webview_windows().into_values().any(|window| {
+        if window.label() == overlay::OVERLAY_LABEL {
+            overlay_presented
+        } else {
+            window.is_visible().unwrap_or(false)
+        }
+    })
+}
+
 fn shortcut_settings_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -2349,6 +2361,20 @@ pub fn run() {
                 })
                 .build(),
         )
+        .on_page_load(|webview, payload| {
+            if webview.label() == overlay::OVERLAY_LABEL
+                && payload.event() == tauri::webview::PageLoadEvent::Started
+            {
+                // WKNavigation's committed-page callback runs before Capso's
+                // bootstrap scripts, so native pixels are parked before the
+                // replacement document can paint its default React surface.
+                if let Err(error) =
+                    overlay::overlay_renderer_page_load_started_on_main(webview.app_handle())
+                {
+                    eprintln!("Could not park Quick Access at page-load start: {error}");
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             capture::capture_screen,
             get_shortcut_settings,
@@ -2407,18 +2433,22 @@ pub fn run() {
             request_reconnect_email,
             sign_out,
             overlay::get_overlay_capture,
+            overlay::get_overlay_surface_state,
+            overlay::overlay_renderer_ready,
             overlay::get_overlay_sync_status,
             overlay::get_overlay_file_info,
             overlay::reveal_overlay_capture,
             overlay::open_overlay_capture,
             overlay::assign_overlay_project,
             overlay::overlay_image_ready,
+            overlay::overlay_dom_hidden_painted,
             overlay::overlay_image_failed,
             overlay::overlay_copy_capture,
             overlay::overlay_save_capture,
             overlay::overlay_start_drag,
             overlay::overlay_hide_temporarily,
             overlay::overlay_set_auto_dismiss_paused,
+            overlay::overlay_presentation_painted,
             overlay::overlay_dismiss,
             pin::pin_overlay_capture,
             pin::get_pin_capture,
@@ -2489,10 +2519,11 @@ pub fn run() {
             let latency_report = latency::initialize_for_app(app.handle())
                 .map_err(|error| format!("Could not initialize overlay timing state: {error}"))?;
 
-            // The panel remains non-focusable but accepts deliberate Quick
-            // Access clicks without activating Capso or blocking outside it.
+            // Keep Quick Access ordered front at alpha zero and click-through.
+            // WebKit then retains a warm layer tree instead of thawing a hidden
+            // webview only after every screenshot.
             if let Some(overlay_window) = app.get_webview_window(overlay::OVERLAY_LABEL) {
-                overlay_window.set_ignore_cursor_events(false)?;
+                overlay::initialize_warm_overlay(&overlay_window)?;
             }
             if let Err(error) = pin::restore_pinned_captures(app.handle()) {
                 eprintln!("Could not restore pinned captures: {error}");
@@ -2706,12 +2737,8 @@ pub fn run() {
 
     app.run(|app, event| {
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen {
-            has_visible_windows,
-            ..
-        } = event
-        {
-            if should_reveal_main_on_reopen(has_visible_windows) {
+        if let tauri::RunEvent::Reopen { .. } = event {
+            if should_reveal_main_on_reopen(has_logically_visible_windows(app)) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
@@ -2735,6 +2762,23 @@ mod tests {
     fn only_an_active_annotation_blocks_global_capture_shortcuts() {
         assert!(!super::should_ignore_global_shortcut(false));
         assert!(super::should_ignore_global_shortcut(true));
+    }
+
+    #[test]
+    fn only_overlay_page_load_start_parks_the_renderer_before_bootstrap() {
+        let implementation = include_str!("lib.rs");
+        let page_load_hook = [".on_page", "_load("].concat();
+        let hook = implementation
+            .split(&page_load_hook)
+            .nth(1)
+            .and_then(|tail| tail.split(".invoke_handler(").next())
+            .expect("the app builder owns an early page-load hook");
+
+        assert!(hook.contains("webview.label() == overlay::OVERLAY_LABEL"));
+        assert!(hook.contains("tauri::webview::PageLoadEvent::Started"));
+        assert!(hook.contains("overlay_renderer_page_load_started_on_main"));
+        assert!(!hook.contains("PageLoadEvent::Finished"));
+        assert!(!hook.contains("emit"));
     }
 
     fn latency_report(
