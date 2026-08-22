@@ -68,7 +68,7 @@ type SystemStatus = ScreenRecordingAccess & {
 
 type OverlayPlacement = "top_left" | "top_right" | "bottom_left" | "bottom_right";
 type OverlaySize = "compact" | "regular" | "large";
-type OverlayAutoDismiss = "ten_seconds" | "never";
+type OverlayAutoDismiss = "ten_seconds";
 type OverlayQuickActions = {
   pin: boolean;
   annotate: boolean;
@@ -192,7 +192,7 @@ const PREVIEW_OVERLAY_SETTINGS: OverlaySettingsSnapshot = {
       preferences: {
         placement: "top_right",
         size: "regular",
-        autoDismiss: "never",
+        autoDismiss: "ten_seconds",
         quickActions: { pin: true, annotate: true, copy: false, save: true },
       },
     },
@@ -724,21 +724,6 @@ function App() {
     setOverlayDraft(DEFAULT_OVERLAY_PREFERENCES);
     setSaveAsDraft(DEFAULT_SAVE_AS_PREFERENCES);
     setOverlayNotice("Default Quick Access and Save As choices are ready to save.");
-    setOverlayNoticeIsError(false);
-  }
-
-  function setOverlayQuickAction(
-    action: keyof OverlayQuickActions,
-    enabled: boolean,
-  ) {
-    const quickActions = { ...overlayDraft.quickActions, [action]: enabled };
-    if (!Object.values(quickActions).some(Boolean)) {
-      setOverlayNotice("Keep at least one Quick Access action visible.");
-      setOverlayNoticeIsError(false);
-      return;
-    }
-    setOverlayDraft({ ...overlayDraft, quickActions });
-    setOverlayNotice("Action visibility is ready to save for this display.");
     setOverlayNoticeIsError(false);
   }
 
@@ -1744,34 +1729,9 @@ function App() {
                   })}
                 >
                   <option value="ten_seconds">After 10 seconds</option>
-                  <option value="never">Never</option>
                 </select>
               </label>
             </div>
-
-            <fieldset className="quick-access-settings__actions">
-              <legend>Quick actions</legend>
-              <p>Keep at least one Quick Access action visible.</p>
-              <div>
-                {([
-                  ["pin", "Pin"],
-                  ["annotate", "Annotate"],
-                  ["copy", "Copy"],
-                  ["save", "Save"],
-                ] as const).map(([action, label]) => (
-                  <label key={action}>
-                    <input
-                      type="checkbox"
-                      aria-label={`Show ${label} in Quick Access`}
-                      checked={overlayDraft.quickActions[action]}
-                      disabled={overlaySaving}
-                      onChange={(event) => setOverlayQuickAction(action, event.currentTarget.checked)}
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
 
             <fieldset className="quick-access-settings__save-as">
               <legend>Save defaults <span>Every display</span></legend>

@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("the quick access overlay can turn a capture into an always-on-top pin", async () => {
-  const [overlay, entrypoint, native, pinNative, config, pinCapability] = await Promise.all([
-    readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
+test("native pin windows remain bounded independently of the compact Quick Access UI", async () => {
+  const [entrypoint, native, pinNative, config, pinCapability] = await Promise.all([
     readFile(new URL("./main.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/pin.rs", import.meta.url), "utf8"),
@@ -12,8 +11,6 @@ test("the quick access overlay can turn a capture into an always-on-top pin", as
     readFile(new URL("../src-tauri/capabilities/pinned-capture.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(overlay, /aria-label="Pin capture"/);
-  assert.match(overlay, /invoke<[^>]+>\("pin_overlay_capture"/);
   assert.match(entrypoint, /surface === "pin"/);
   assert.match(native, /pin_overlay_capture/);
   assert.match(
@@ -133,17 +130,12 @@ test("recording editor exports bounded native GIF copies without an ffmpeg depen
   assert.doesNotMatch(cargo, /^ffmpeg\s*=/m);
 });
 
-test("Quick Access exposes only the exact current local original to Finder and the default app", async () => {
-  const [overlay, native, history] = await Promise.all([
-    readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
+test("native local-original actions accept only the exact current capture", async () => {
+  const [native, history] = await Promise.all([
     readFile(new URL("../src-tauri/src/overlay.rs", import.meta.url), "utf8"),
     readFile(new URL("../src-tauri/src/history.rs", import.meta.url), "utf8"),
   ]);
 
-  assert.match(overlay, /aria-label="Capture file information"/);
-  assert.match(overlay, /Show in Finder/);
-  assert.match(overlay, /"reveal_overlay_capture"/);
-  assert.match(overlay, /"open_overlay_capture"/);
   assert.match(native, /fn validated_current_local_capture/);
   assert.match(native, /current_capture_path\(runtime, path, presentation_id\)\?/);
   assert.match(native, /resolve_recent_capture_for_app\(app, id\)\?/);
@@ -257,16 +249,23 @@ test("Quick Access remembers corner, size, and autoclose per connected display",
   assert.match(settings, /aria-label="Quick Access position"/);
   assert.match(settings, /aria-label="Quick Access size"/);
   assert.match(settings, /aria-label="Quick Access autoclose"/);
+  assert.doesNotMatch(settings, /<option value="never">/);
   assert.match(settings, /invoke<OverlaySettingsSnapshot>\("get_overlay_settings"\)/);
   assert.match(settings, /invoke<OverlaySettingsSnapshot>\("update_overlay_settings"/);
   assert.match(settings, /Save or discard changes before switching displays/);
   assert.match(settings, />Discard changes</);
   assert.match(overlay, /autoDismissMs: number \| null/);
   assert.match(overlay, /createOverlayAutoDismissTimer/);
+  assert.doesNotMatch(overlay, /!hovered/);
   assert.match(timing, /if \(durationMs === null\) return null/);
   assert.match(native, /OVERLAY_SETTINGS_FILE/);
   assert.match(native, /profiles: BTreeMap<String, OverlayPreferences>/);
   assert.match(native, /fn update_overlay_settings/);
+  assert.match(
+    native,
+    /OverlayAutoDismiss::EightSeconds\s*\|\s*OverlayAutoDismiss::FifteenSeconds\s*\|\s*OverlayAutoDismiss::Never/,
+  );
+  assert.match(native, /Self::Never\s*=>\s*Some\(10_000\)/);
   assert.match(native, /window\.size_overlay\(width, height\)[\s\S]*?window\.position_overlay\(x, y\)/);
 });
 
@@ -280,44 +279,81 @@ test("settings cards keep their intrinsic height so compact windows scroll inste
   assert.match(css, /body\s*\{[^}]*min-width:\s*min\(520px,\s*100vw\)/s);
 });
 
-test("every Quick Access size gives its extra height to the preview instead of empty chrome", async () => {
-  const css = await readFile(new URL("./App.css", import.meta.url), "utf8");
-
-  assert.match(
-    css,
-    /\.capture-overlay\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-rows:\s*minmax\(0,\s*1fr\)\s+51px;/,
-  );
-  assert.match(
-    css,
-    /\.capture-overlay__preview\s*\{[\s\S]*?height:\s*auto;/,
-  );
-});
-
-test("Quick Access actions are configurable and temporary hide remains restorable", async () => {
-  const [settings, overlay, native, app] = await Promise.all([
-    readFile(new URL("./App.tsx", import.meta.url), "utf8"),
+test("every Quick Access size is a full-bleed preview with no bottom row", async () => {
+  const [overlay, css] = await Promise.all([
     readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/src/overlay.rs", import.meta.url), "utf8"),
-    readFile(new URL("../src-tauri/src/lib.rs", import.meta.url), "utf8"),
+    readFile(new URL("./App.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(settings, /Quick actions/);
-  assert.match(settings, /aria-label={`Show \$\{label\} in Quick Access`}/);
-  assert.match(settings, /\["pin", "Pin"\]/);
-  assert.match(settings, /\["annotate", "Annotate"\]/);
-  assert.match(settings, /\["copy", "Copy"\]/);
-  assert.match(settings, /\["save", "Save"\]/);
-  assert.match(settings, /Keep at least one Quick Access action visible/);
-  assert.match(overlay, /capture\.quickActions\.pin/);
-  assert.match(overlay, /capture\.quickActions\.annotate/);
-  assert.match(overlay, /capture\.quickActions\.copy/);
-  assert.match(overlay, /capture\.quickActions\.save/);
-  assert.match(overlay, /aria-label="Hide Quick Access temporarily"/);
-  assert.match(overlay, /"overlay_hide_temporarily"/);
-  assert.match(overlay, /"overlay-restored"/);
-  assert.match(native, /fn temporary_hide_transition/);
-  assert.match(native, /pub\(crate\) fn restore_temporarily_hidden_overlay/);
-  assert.match(app, /SHOW_HIDDEN_OVERLAY_MENU_ID/);
+  assert.match(
+    css,
+    /\.capture-overlay__preview\s*\{[\s\S]*?inset:\s*0;/,
+  );
+  assert.doesNotMatch(overlay, /capture-overlay__footer/);
+  assert.doesNotMatch(css, /\.capture-overlay__footer\s*\{/);
+});
+
+test("Quick Access reveals exactly Copy and Save over the image", async () => {
+  const [settings, overlay, css, config, cargo] = await Promise.all([
+    readFile(new URL("./App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
+    readFile(new URL("./App.css", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(overlay, /className="capture-overlay__hover-actions"/);
+  assert.match(overlay, /aria-label="Copy capture"/);
+  assert.match(overlay, /aria-label="Save capture as PNG or JPEG"/);
+  assert.doesNotMatch(overlay, /aria-label="Pin capture"/);
+  assert.doesNotMatch(overlay, /aria-label="Annotate capture"/);
+  assert.doesNotMatch(overlay, /aria-label="Hide Quick Access temporarily"/);
+  assert.doesNotMatch(overlay, /aria-label="Capture file information"/);
+  assert.doesNotMatch(settings, /className="quick-access-settings__actions"/);
+  assert.match(css, /\.capture-overlay__hover-actions\s*\{[\s\S]*?opacity:\s*0;/);
+  assert.match(css, /\.capture-overlay:hover\s+\.capture-overlay__hover-actions/);
+  assert.match(config, /"label":\s*"capture-overlay"[\s\S]*?"transparent":\s*true/);
+  assert.match(config, /"macOSPrivateApi":\s*true/);
+  assert.match(cargo, /tauri\s*=\s*\{[^}]*"macos-private-api"/);
+});
+
+test("Quick Access enters after native reveal and trackpad-swipes right to dismiss", async () => {
+  const [overlay, swipe, css] = await Promise.all([
+    readFile(new URL("./CaptureOverlay.tsx", import.meta.url), "utf8"),
+    readFile(new URL("./overlay-swipe.ts", import.meta.url), "utf8"),
+    readFile(new URL("./App.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(overlay, /await invoke<boolean>\("overlay_image_ready"/);
+  assert.match(
+    overlay,
+    /await image\.decode\(\)[\s\S]*?setImageReady\(true\)[\s\S]*?void reveal\(\)/,
+  );
+  assert.match(
+    overlay,
+    /if \(!revealed[\s\S]*?revealRequestedPresentation\.current = null/,
+  );
+  assert.match(
+    overlay,
+    /listen<OverlayRestored>\("overlay-restored"[\s\S]*?setRevealedPresentation\(current\.presentation\)/,
+  );
+  assert.match(
+    overlay,
+    /const isRevealed =[\s\S]*?imageReady[\s\S]*?!imageFailed[\s\S]*?revealedPresentation === capture\.presentation/,
+  );
+  assert.match(overlay, /data-revealed=/);
+  assert.match(overlay, /addEventListener\("wheel"/);
+  assert.match(overlay, /new OverlaySwipeGesture/);
+  assert.match(
+    overlay,
+    /rawEvent\.preventDefault\(\);[\s\S]{0,600}?clearTimeout\(swipeSettleTimer\.current\)[\s\S]{0,600}?result\.kind === "tracking"/,
+  );
+  assert.match(overlay, /prefers-reduced-motion/);
+  assert.match(swipe, /directionInvertedFromDevice/);
+  assert.match(swipe, /Math\.min\(96,\s*width \* 0\.25\)/);
+  assert.match(css, /\.capture-overlay\[data-revealed="true"\]/);
+  assert.match(css, /\.capture-overlay\[data-swipe-phase="exiting"\]/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("settings separate general, shortcuts, account, and advanced decisions", async () => {
@@ -374,6 +410,7 @@ test("local history is a dedicated bounded surface that restores through Quick A
   assert.match(view, /Keep this Mac version/);
   assert.match(view, /invoke\("restore_history_capture", \{ id: capture\.id \}\)/);
   assert.match(view, /Open in Quick Access/);
+  assert.doesNotMatch(view, /copy, save or pin it there/i);
   assert.match(native, /"Capture History…"/);
   assert.match(native, /get_local_history/);
   assert.match(native, /restore_history_capture/);

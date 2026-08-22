@@ -73,7 +73,7 @@ impl OverlayAutoDismiss {
     fn milliseconds(self) -> Option<u64> {
         match self {
             Self::EightSeconds | Self::FifteenSeconds | Self::TenSeconds => Some(10_000),
-            Self::Never => None,
+            Self::Never => Some(10_000),
         }
     }
 }
@@ -279,7 +279,7 @@ fn settings_for_display(stored: &StoredOverlaySettings, display_id: &str) -> Ove
 fn update_stored_preferences(
     stored: &mut StoredOverlaySettings,
     display_id: &str,
-    preferences: OverlayPreferences,
+    mut preferences: OverlayPreferences,
 ) -> Result<(), String> {
     if display_id.is_empty() || display_id.len() > 256 || display_id.chars().any(char::is_control) {
         return Err("The Quick Access display identifier is invalid.".into());
@@ -292,6 +292,7 @@ fn update_stored_preferences(
     if !preferences.quick_actions.any() {
         return Err("Keep at least one Quick Access action visible.".into());
     }
+    preferences.auto_dismiss = OverlayAutoDismiss::TenSeconds;
     stored.profiles.insert(display_id.into(), preferences);
     Ok(())
 }
@@ -315,7 +316,9 @@ fn load_stored_overlay_settings(path: &Path) -> Result<StoredOverlaySettings, St
     for preferences in stored.profiles.values_mut() {
         if matches!(
             preferences.auto_dismiss,
-            OverlayAutoDismiss::EightSeconds | OverlayAutoDismiss::FifteenSeconds
+            OverlayAutoDismiss::EightSeconds
+                | OverlayAutoDismiss::FifteenSeconds
+                | OverlayAutoDismiss::Never
         ) {
             preferences.auto_dismiss = OverlayAutoDismiss::TenSeconds;
         }
@@ -2800,13 +2803,13 @@ mod tests {
         let studio = OverlayPreferences {
             placement: OverlayPlacement::TopRight,
             size: OverlaySize::Regular,
-            auto_dismiss: OverlayAutoDismiss::FifteenSeconds,
+            auto_dismiss: OverlayAutoDismiss::TenSeconds,
             quick_actions: OverlayQuickActions::default(),
         };
         let laptop = OverlayPreferences {
             placement: OverlayPlacement::BottomLeft,
             size: OverlaySize::Large,
-            auto_dismiss: OverlayAutoDismiss::Never,
+            auto_dismiss: OverlayAutoDismiss::TenSeconds,
             quick_actions: OverlayQuickActions::default(),
         };
         update_stored_preferences(&mut stored, "studio", studio).expect("store Studio profile");
@@ -2850,6 +2853,30 @@ mod tests {
             ..OverlayPreferences::default()
         };
         assert!(update_stored_preferences(&mut stored, "studio", invalid).is_err());
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn legacy_never_autoclose_is_normalized_to_ten_seconds() {
+        assert_eq!(OverlayAutoDismiss::Never.milliseconds(), Some(10_000));
+
+        let root = std::env::temp_dir().join(format!(
+            "capso-overlay-legacy-autoclose-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = root.join("overlay-settings.json");
+        fs::create_dir_all(&root).expect("create fixture folder");
+        fs::write(
+            &path,
+            br#"{"version":1,"profiles":{"studio":{"placement":"bottom_right","size":"compact","autoDismiss":"never"}}}"#,
+        )
+        .expect("write legacy preferences");
+
+        let stored = load_stored_overlay_settings(&path).expect("load legacy preferences");
+        assert_eq!(
+            settings_for_display(&stored, "studio").auto_dismiss,
+            OverlayAutoDismiss::TenSeconds
+        );
         fs::remove_dir_all(root).expect("remove fixture");
     }
 

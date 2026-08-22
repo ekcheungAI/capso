@@ -45,7 +45,7 @@ html[data-surface="overlay"] #root {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--surface);
+  background: transparent;
 }
 
 html[data-surface="annotate"],
@@ -3428,18 +3428,25 @@ html[data-surface="area-selector"] #root {
 }
 
 .capture-overlay {
+  --capture-overlay-swipe-x: 0px;
+  --capture-overlay-swipe-opacity: 1;
+  position: relative;
   width: 100%;
   height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) 51px;
+  display: block;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 15px;
   background: var(--surface);
+  opacity: 0;
+  transform: translate3d(calc(24px + var(--capture-overlay-swipe-x)), 8px, 0) scale(0.985);
+  transition:
+    opacity var(--dur-panel) var(--ease-out-strong),
+    transform var(--dur-panel) var(--ease-out-strong);
   box-shadow:
     0 18px 48px rgb(0 0 0 / 0.24),
     0 3px 12px rgb(0 0 0 / 0.14);
-  animation: capture-overlay-enter 180ms var(--ease-out-strong);
+  will-change: transform, opacity;
 }
 
 .capture-overlay--waiting {
@@ -3447,10 +3454,13 @@ html[data-surface="area-selector"] #root {
 }
 
 .capture-overlay__preview {
-  position: relative;
-  height: auto;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
+  border-radius: inherit;
   background: var(--organise-surface);
 }
 
@@ -3464,8 +3474,9 @@ html[data-surface="area-selector"] #root {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
-  object-position: top;
+  object-fit: contain;
+  object-position: center;
+  background: rgb(17 17 19);
   user-select: none;
   cursor: grab;
   touch-action: none;
@@ -3476,270 +3487,7 @@ html[data-surface="area-selector"] #root {
   cursor: grabbing;
 }
 
-.capture-overlay__project-scrim {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  background: rgb(20 20 22 / 0.26);
-}
-
-.capture-overlay__project-chip {
-  position: absolute;
-  z-index: 3;
-  left: 0.48rem;
-  bottom: 0.48rem;
-  max-width: 11rem;
-  min-height: 1.72rem;
-  padding: 0.25rem 0.56rem;
-  display: flex;
-  align-items: center;
-  gap: 0.32rem;
-  overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 0.2) !important;
-  border-radius: var(--radius-pill);
-  background: rgb(20 20 22 / 0.68);
-  color: rgb(255 255 255 / 0.9);
-  font-size: 0.75rem;
-  font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 0.2rem 0.7rem rgb(0 0 0 / 0.16);
-}
-
-.capture-overlay__project-chip span {
-  flex: 0 0 auto;
-  color: rgb(255 255 255 / 0.66);
-  font-size: 0.8rem;
-}
-
-.capture-overlay__project-chip:hover:not(:disabled),
-.capture-overlay__project-chip:focus-visible {
-  background: rgb(20 20 22 / 0.86);
-  outline: 2px solid rgb(255 255 255 / 0.68);
-  outline-offset: 1px;
-}
-
-.capture-overlay__project-chip:disabled {
-  cursor: default;
-  opacity: 0.52;
-}
-
-.capture-overlay__project-menu {
-  position: absolute;
-  z-index: 4;
-  left: 0.48rem;
-  bottom: 2.55rem;
-  width: 12.2rem;
-  max-height: 5.9rem;
-  padding: 0.34rem;
-  overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
-  border-radius: 0.72rem;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  color: var(--foreground);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-  box-shadow: 0 0.65rem 1.6rem rgb(0 0 0 / 0.24);
-}
-
-.capture-overlay__project-menu > strong {
-  display: block;
-  padding: 0.26rem 0.42rem 0.32rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 640;
-}
-
-.capture-overlay__project-menu > button {
-  width: 100%;
-  min-height: 1.82rem;
-  padding: 0.32rem 0.42rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  border-radius: 0.48rem;
-  background: transparent;
-  color: var(--foreground);
-  font-size: 0.75rem;
-  text-align: left;
-}
-
-.capture-overlay__project-menu > button:hover,
-.capture-overlay__project-menu > button:focus-visible,
-.capture-overlay__project-menu > button[aria-checked="true"] {
-  background: color-mix(in srgb, var(--foreground) 8%, transparent);
-  outline: none;
-}
-
-.capture-overlay__project-menu > button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.capture-overlay__project-menu > button small {
-  color: var(--intent-design-inspiration);
-}
-
-.capture-overlay__project-menu > p {
-  margin: 0;
-  padding: 0.34rem 0.42rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.3;
-}
-
-.capture-overlay__project-menu > p[data-error="true"] {
-  color: var(--danger);
-}
-
-.capture-overlay__file-menu {
-  position: absolute;
-  z-index: 4;
-  top: 2.55rem;
-  left: 0.48rem;
-  width: 12.6rem;
-  max-height: 5.9rem;
-  padding: 0.42rem;
-  overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
-  border-radius: 0.72rem;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  color: var(--foreground);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-  box-shadow: 0 0.65rem 1.6rem rgb(0 0 0 / 0.24);
-}
-
-.capture-overlay__file-menu > strong {
-  display: block;
-  color: var(--foreground);
-  font-size: 0.75rem;
-  font-weight: 720;
-}
-
-.capture-overlay__file-menu > p {
-  display: grid;
-  gap: 0.08rem;
-  margin: 0.16rem 0 0.35rem;
-  color: var(--muted);
-  font-size: 0.68rem;
-  line-height: 1.25;
-}
-
-.capture-overlay__file-menu > p small {
-  overflow: hidden;
-  font-size: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.capture-overlay__file-menu > p[data-error="true"] {
-  max-height: 2.5rem;
-  overflow: auto;
-  color: var(--danger);
-}
-
-.capture-overlay__file-menu > div {
-  display: grid;
-  grid-template-columns: 0.72fr 1.28fr;
-  gap: 0.3rem;
-}
-
-.capture-overlay__file-menu > div button {
-  min-height: 1.78rem;
-  padding: 0 0.48rem;
-  border-radius: 0.48rem;
-  background: color-mix(in srgb, var(--foreground) 8%, transparent);
-  color: var(--foreground);
-  font-size: 0.68rem;
-  font-weight: 680;
-  white-space: nowrap;
-}
-
-.capture-overlay__file-menu > div button:hover:not(:disabled),
-.capture-overlay__file-menu > div button:focus-visible {
-  background: color-mix(in srgb, var(--intent-reference) 20%, transparent);
-  outline: 2px solid color-mix(in srgb, var(--intent-reference) 38%, transparent);
-  outline-offset: 1px;
-}
-
-.capture-overlay__file-menu > div button:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.capture-overlay__footer {
-  height: 51px;
-  padding: 0 0.48rem 0 0.68rem;
-  display: flex;
-  align-items: center;
-  gap: 0.46rem;
-  border-top: 1px solid var(--line);
-}
-
-.capture-overlay__mark {
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: 0 0 auto;
-  border: 5px solid var(--foreground);
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 2px var(--surface);
-}
-
-.capture-overlay__mark[data-tone="ready"] {
-  border-color: var(--intent-design-inspiration);
-}
-
-.capture-overlay__mark[data-tone="warning"] {
-  border-color: var(--danger);
-}
-
-.capture-overlay__message {
-  min-width: 0;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 0.08rem;
-}
-
-.capture-overlay__message strong {
-  font-size: 0.75rem;
-  font-weight: 640;
-  letter-spacing: -0.01em;
-}
-
-.capture-overlay__message small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 0.75rem;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.capture-overlay__message small[data-warning="true"] {
-  color: var(--danger);
-}
-
-.capture-overlay__actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.2rem;
-}
-
-.capture-overlay__action,
-.capture-overlay__close,
-.capture-overlay__hide,
-.capture-overlay__file-chip {
+.capture-overlay__action {
   display: grid;
   place-items: center;
   padding: 0;
@@ -3758,10 +3506,7 @@ html[data-surface="area-selector"] #root {
   height: 2rem;
 }
 
-.capture-overlay__action svg,
-.capture-overlay__close svg,
-.capture-overlay__hide svg,
-.capture-overlay__file-chip svg {
+.capture-overlay__action svg {
   width: 1.1rem;
   height: 1.1rem;
   fill: none;
@@ -3772,73 +3517,23 @@ html[data-surface="area-selector"] #root {
 }
 
 .capture-overlay__action:hover:not(:disabled),
-.capture-overlay__action:focus-visible,
-.capture-overlay__close:hover:not(:disabled),
-.capture-overlay__close:focus-visible,
-.capture-overlay__hide:hover:not(:disabled),
-.capture-overlay__hide:focus-visible,
-.capture-overlay__file-chip:hover:not(:disabled),
-.capture-overlay__file-chip:focus-visible {
+.capture-overlay__action:focus-visible {
   background: color-mix(in srgb, var(--foreground) 8%, transparent);
   color: var(--foreground);
   outline: none;
 }
 
-.capture-overlay__action:active:not(:disabled),
-.capture-overlay__close:active:not(:disabled),
-.capture-overlay__hide:active:not(:disabled),
-.capture-overlay__file-chip:active:not(:disabled) {
+.capture-overlay__action:active:not(:disabled) {
   transform: scale(0.93);
 }
 
-.capture-overlay__action:disabled,
-.capture-overlay__close:disabled,
-.capture-overlay__hide:disabled,
-.capture-overlay__file-chip:disabled {
+.capture-overlay__action:disabled {
   cursor: default;
   opacity: 0.38;
 }
 
 .capture-overlay__action[data-busy="true"] svg {
   animation: capture-overlay-pulse 700ms ease-in-out infinite alternate;
-}
-
-.capture-overlay__close,
-.capture-overlay__hide,
-.capture-overlay__file-chip {
-  position: absolute;
-  z-index: 5;
-  top: 0.48rem;
-  width: 1.7rem;
-  height: 1.7rem;
-  border: 1px solid rgb(255 255 255 / 0.2) !important;
-  background: rgb(20 20 22 / 0.66);
-  color: rgb(255 255 255 / 0.82);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 0.2rem 0.7rem rgb(0 0 0 / 0.16);
-}
-
-.capture-overlay__close {
-  right: 0.48rem;
-}
-
-.capture-overlay__hide {
-  right: 2.55rem;
-}
-
-.capture-overlay__file-chip {
-  left: 0.48rem;
-}
-
-.capture-overlay__close:hover:not(:disabled),
-.capture-overlay__close:focus-visible,
-.capture-overlay__hide:hover:not(:disabled),
-.capture-overlay__hide:focus-visible,
-.capture-overlay__file-chip:hover:not(:disabled),
-.capture-overlay__file-chip:focus-visible {
-  background: rgb(20 20 22 / 0.82);
-  color: white;
 }
 
 .capture-overlay__demo {
@@ -3946,6 +3641,150 @@ html[data-surface="area-selector"] #root {
 
   .capture-overlay__action[data-busy="true"] svg {
     animation: none;
+  }
+}
+
+/* The native webview is transparent so the card can leave the frame cleanly
+   during a two-finger swipe dismissal. */
+.capture-overlay[data-revealed="true"] {
+  opacity: var(--capture-overlay-swipe-opacity);
+  transform: translate3d(var(--capture-overlay-swipe-x), 0, 0) scale(1);
+}
+
+.capture-overlay[data-swipe-phase="tracking"] {
+  transition: none;
+}
+
+.capture-overlay[data-swipe-phase="settling"] {
+  transition:
+    opacity 160ms var(--ease-out-strong),
+    transform 160ms var(--ease-out-strong);
+}
+
+.capture-overlay[data-swipe-phase="exiting"] {
+  opacity: 0;
+  transition:
+    opacity 140ms cubic-bezier(0.3, 0, 1, 1),
+    transform 140ms cubic-bezier(0.3, 0, 1, 1);
+}
+
+.capture-overlay__hover-actions {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 0.72rem;
+  min-height: 3rem;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: var(--radius-pill);
+  background: rgb(20 20 22 / 0.76);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 6px) scale(0.98);
+  transition:
+    opacity var(--dur-press) var(--ease-out-strong),
+    transform var(--dur-press) var(--ease-out-strong);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 0.45rem 1.3rem rgb(0 0 0 / 0.28);
+}
+
+.capture-overlay:hover .capture-overlay__hover-actions,
+.capture-overlay:focus-within .capture-overlay__hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.capture-overlay__hover-actions .capture-overlay__action {
+  width: auto;
+  min-width: 5.25rem;
+  min-height: 2.5rem;
+  padding: 0 0.8rem;
+  display: flex;
+  place-items: unset;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: rgb(255 255 255 / 0.88);
+  font-size: 0.75rem;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.capture-overlay__hover-actions .capture-overlay__action:hover:not(:disabled),
+.capture-overlay__hover-actions .capture-overlay__action:focus-visible {
+  background: rgb(255 255 255 / 0.15);
+  color: white;
+  outline: 2px solid rgb(255 255 255 / 0.62);
+  outline-offset: -2px;
+}
+
+.capture-overlay__hover-actions .capture-overlay__action svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+}
+
+.capture-overlay__status {
+  position: absolute;
+  z-index: 5;
+  top: 0.7rem;
+  left: 50%;
+  max-width: calc(100% - 1.4rem);
+  min-height: 1.75rem;
+  padding: 0.34rem 0.68rem;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: var(--radius-pill);
+  background: rgb(20 20 22 / 0.76);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 650;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translate(-50%, -5px);
+  transition:
+    opacity var(--dur-pop) var(--ease-out-strong),
+    transform var(--dur-pop) var(--ease-out-strong);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+.capture-overlay__status[data-visible="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.capture-overlay__status[data-warning="true"] {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 48%, rgb(20 20 22));
+}
+
+@media (hover: none), (pointer: coarse) {
+  .capture-overlay__hover-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-overlay,
+  .capture-overlay[data-revealed="true"],
+  .capture-overlay[data-swipe-phase="settling"],
+  .capture-overlay[data-swipe-phase="exiting"],
+  .capture-overlay__hover-actions,
+  .capture-overlay__status {
+    transition: none;
   }
 }
 
@@ -5751,64 +5590,6 @@ html[data-surface="area-selector"] #root {
 
 .quick-access-settings__grid select:focus-visible {
   border-color: var(--intent-reference);
-  outline: 2px solid color-mix(in srgb, var(--intent-reference) 24%, transparent);
-  outline-offset: 1px;
-}
-
-.quick-access-settings__actions {
-  margin: 0;
-  padding: 0.58rem 0.75rem 0.66rem;
-  border: 0;
-  border-top: 1px solid var(--line);
-}
-
-.quick-access-settings__actions legend {
-  float: left;
-  margin: 0;
-  padding: 0;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 650;
-}
-
-.quick-access-settings__actions p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.65rem;
-  text-align: right;
-}
-
-.quick-access-settings__actions > div {
-  clear: both;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.38rem;
-  padding-top: 0.46rem;
-}
-
-.quick-access-settings__actions label {
-  min-height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.34rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-input);
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 0.68rem;
-  font-weight: 620;
-  cursor: pointer;
-}
-
-.quick-access-settings__actions input {
-  width: 0.9rem;
-  height: 0.9rem;
-  margin: 0;
-  accent-color: var(--intent-reference);
-}
-
-.quick-access-settings__actions label:has(input:focus-visible) {
   outline: 2px solid color-mix(in srgb, var(--intent-reference) 24%, transparent);
   outline-offset: 1px;
 }

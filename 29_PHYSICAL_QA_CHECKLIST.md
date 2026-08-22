@@ -79,16 +79,24 @@ Result: ______  Note: __________________________________________
 - [ ] Overlay appears on the **same display** as the capture (test on a second monitor).
 - [ ] Overlay **stays above** other windows and **never steals focus** (the app you were
       typing in keeps the cursor).
-- [ ] Copy, Save, Annotate, drag-out, and Close all work from the overlay.
+- [ ] The result is full-bleed with no bottom row. Hover reveals exactly **Copy** and
+      **Save**, with no Pin, Annotate, file, or project controls on this compact surface.
+- [ ] **Copy** pastes the exact screenshot into another app.
 - [ ] Choose a fresh destination folder in Settings, take a capture, and click **Save**:
       no file dialog appears and one PNG with the configured naming format lands in that
       exact folder.
-- [ ] Take another capture and click **Discard screenshot**: the preview closes, the
-      capture is absent from Recent Captures, and previously saved files are untouched.
-- [ ] Drag the thumbnail **out to Finder**; a PNG lands and the original is untouched.
+- [ ] Two-finger swipe the result right past the threshold: it follows the gesture,
+      exits cleanly, and remains available under Recent Captures. Repeat once with
+      **Natural scrolling on** and once with it **off**.
+- [ ] Make a short right swipe: the result settles back and remains actionable.
+- [ ] Drag the thumbnail **rightward out to Finder**, then into another app; each receives
+      a PNG and the protected original is untouched. Swipe handling never steals the drag.
 - [ ] Mixed-scale test: capture on a Retina display and an external non-Retina display;
       the overlay is correctly sized on each.
-- [ ] With no action, the overlay disappears about 10 seconds after its image appears.
+- [ ] With no action, the overlay disappears about 10 seconds after its image appears,
+      even if the pointer was already resting over the bottom-right corner.
+- [ ] Enable **Reduce motion** in macOS Accessibility and confirm the same actions and
+      swipe dismissal work without translated entrance or settle animation.
 - [ ] Restore a capture from **"Recent Captures"** in the tray.
 
 Result: ______  Note: __________________________________________

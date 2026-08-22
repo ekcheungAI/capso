@@ -477,7 +477,7 @@ export default function HistoryView() {
       if (nativeRuntime) {
         await invoke("restore_history_capture", { id: capture.id });
       }
-      setNotice("Opened in Quick Access — copy, save or pin it there.");
+      setNotice("Opened in Quick Access — copy or save it there.");
     } catch (reason) {
       setError(String(reason));
     } finally {
